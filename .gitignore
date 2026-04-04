@@ -13,3 +13,6 @@ video-engine/out/
 video-engine/runs/
 video-engine/public/runs/
 video-engine/assets/envato/
+
+__pycache__/
+.debug-caption-check/
