@@ -1,0 +1,30 @@
+{
+  "name": "video-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "make": "node scripts/make-video.mjs",
+    "make:plan1": "node scripts/make-plan1-video.mjs",
+    "preview": "node scripts/make-plan1-video.mjs --preview-only",
+    "envato:session": "node scripts/ensure-envato-session.mjs",
+    "envato:download": "node scripts/download-envato-asset.mjs",
+    "envato:fetch": "node scripts/fetch-envato-overrides.mjs",
+    "secrets:keychain": "node scripts/store-secrets-in-keychain.mjs",
+    "publish:retry": "node scripts/retry-agendador-failed-posts.mjs",
+    "validate": "node scripts/validate-run.mjs",
+    "voice:samples": "node scripts/generate-voice-samples.mjs"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.434",
+    "dotenv": "^16.6.1",
+    "google-auth-library": "^9.15.1",
+    "microsoft-cognitiveservices-speech-sdk": "^1.48.0",
+    "playwright-core": "^1.58.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "remotion": "4.0.434",
+    "zod": "4.3.6"
+  }
+}

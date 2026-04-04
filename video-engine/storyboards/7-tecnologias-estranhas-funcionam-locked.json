@@ -1,0 +1,127 @@
+{
+  "videoTitle": "7 Tecnologias Estranhas Que Realmente Funcionam",
+  "hook": "Algumas tecnologias parecem piada quando aparecem pela primeira vez. O problema e que varias delas ja estao funcionando agora.",
+  "postCaption": "Sete tecnologias estranhas que parecem inventadas para um filme, mas ja estao a sair do laboratorio e entrando na vida real.",
+  "hashtags": ["#tecnologia", "#inovacao", "#futuro", "#curiosidades", "#tech"],
+  "cta": "Se quiseres mais listas de tecnologia que parecem mentira, segue para a proxima.",
+  "styleNotes": "Usar cenas concretas, verticais, com objetos claramente identificaveis e pessoas a usar tecnologia real.",
+  "scenes": [
+    {
+      "title": "Abertura",
+      "narration": "Quando uma tecnologia parece estranha demais, muita gente ri primeiro. So que varias dessas ideias ja estao a funcionar e comecam a sair do nicho.",
+      "searchQuery": "person testing futuristic gadget at home",
+      "overlay": "Estranhas e reais",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa a experimentar um gadget incomum em casa, com atmosfera de curiosidade e novidade.",
+      "candidateQueries": [
+        "person testing futuristic gadget at home",
+        "woman using unusual tech device indoors",
+        "person using futuristic device at home"
+      ]
+    },
+    {
+      "title": "Implante neural",
+      "narration": "Agora pensa num implante neural a ligar sinais do cerebro a sistemas digitais. Parece ficcao cientifica, mas ja esta a ser testado com pacientes reais.",
+      "searchQuery": "neurologist examining patient neural implant",
+      "overlay": "Implante neural",
+      "sceneType": "stock",
+      "visualGoal": "Profissional de saude examinando paciente com implante ou interface neural.",
+      "candidateQueries": [
+        "neurologist examining patient neural implant",
+        "doctor examining neural implant patient",
+        "brain implant patient consultation"
+      ]
+    },
+    {
+      "title": "Assistente projetado",
+      "narration": "Ao mesmo tempo, um assistente virtual projetado no espaco parece efeito especial. So que interfaces desse tipo ja aparecem em demonstracoes e produtos emergentes.",
+      "searchQuery": "virtual assistant projection",
+      "overlay": "Assistente projetado",
+      "sceneType": "stock",
+      "visualGoal": "Projecao ou interface de assistente virtual com aparencia futurista e real.",
+      "candidateQueries": [
+        "virtual assistant projection",
+        "futuristic virtual assistant hologram",
+        "digital assistant projection interface"
+      ]
+    },
+    {
+      "title": "Orgao impresso",
+      "narration": "E e aqui que a estranheza sobe de nivel: impressao 3D de tecidos e orgaos. O que parecia impossivel ja entrou no vocabulario da medicina avancada.",
+      "searchQuery": "3D printed organ doctor",
+      "overlay": "Orgao impresso",
+      "sceneType": "stock",
+      "visualGoal": "Medico ou laboratorio mostrando estrutura biologica impressa em 3D.",
+      "candidateQueries": [
+        "3D printed organ doctor",
+        "doctor holding 3d printed organ",
+        "medical 3d printed organ laboratory"
+      ]
+    },
+    {
+      "title": "Realidade aumentada",
+      "narration": "So que usar o telemovel para ver objetos digitais encaixados na tua casa parecia brincadeira. Hoje, a realidade aumentada ja serve para medir, testar e orientar.",
+      "searchQuery": "person using augmented reality app measure room",
+      "overlay": "Realidade aumentada",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa usando app de realidade aumentada para medir ou visualizar um espaco real.",
+      "candidateQueries": [
+        "person using augmented reality app measure room",
+        "smartphone augmented reality home measurement",
+        "augmented reality app room measurement"
+      ]
+    },
+    {
+      "title": "Carne cultivada",
+      "narration": "Na pratica, criar carne em laboratorio parecia tema de debate absurdo. Hoje, a pesquisa ja avanca com laboratorios e prototipos bastante serios.",
+      "searchQuery": "cultured meat research",
+      "overlay": "Carne cultivada",
+      "sceneType": "stock",
+      "visualGoal": "Ambiente de pesquisa alimentar ou laboratorio ligado a carne cultivada.",
+      "candidateQueries": [
+        "cultured meat research",
+        "lab grown meat research",
+        "food technology laboratory cultured meat"
+      ]
+    },
+    {
+      "title": "Robo de entrega",
+      "narration": "Agora repara nos pequenos robos de entrega. Eles parecem lentos e estranhos, mas ja levam comida e encomendas por passeios e campus.",
+      "searchQuery": "delivery robot sidewalk",
+      "overlay": "Robo de entrega",
+      "sceneType": "stock",
+      "visualGoal": "Robo autonomo pequeno a circular no passeio com compartimento de entrega.",
+      "candidateQueries": [
+        "delivery robot sidewalk",
+        "delivery robot on sidewalk city",
+        "small delivery robot urban street"
+      ]
+    },
+    {
+      "title": "Oculos com blueprint",
+      "narration": "Ao mesmo tempo, usar oculos para ver instrucoes e projetos sobrepostos ao mundo real parecia exagero. Hoje, isso ja ajuda manutencao, obra e industria.",
+      "searchQuery": "construction worker augmented reality glasses blueprint",
+      "overlay": "Oculos com blueprint",
+      "sceneType": "stock",
+      "visualGoal": "Profissional usando oculos de realidade aumentada com blueprint ou instrucoes sobrepostos.",
+      "candidateQueries": [
+        "construction worker augmented reality glasses blueprint",
+        "augmented reality glasses industrial worker",
+        "worker using smart glasses blueprint overlay"
+      ]
+    },
+    {
+      "title": "Fecho",
+      "narration": "Por isso, tecnologia estranha normalmente e so tecnologia nova. O que hoje parece absurdo pode ser a coisa mais banal daqui a poucos anos.",
+      "searchQuery": "person using futuristic consumer gadgets at home",
+      "overlay": "Vai virar normal",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa usando varios gadgets modernos em casa, reforcando a ideia de normalizacao.",
+      "candidateQueries": [
+        "person using futuristic consumer gadgets at home",
+        "young adult using modern smart devices indoors",
+        "people using innovative gadgets at home"
+      ]
+    }
+  ]
+}

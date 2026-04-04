@@ -1,0 +1,12 @@
+{
+  "name": "videos-flux2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "web": "node web/server.mjs",
+    "make": "node scripts/foiumaideia.mjs --asset-mode flux2",
+    "make:batch": "node scripts/make-batch.mjs --asset-mode flux2",
+    "make:original": "node scripts/foiumaideia.mjs",
+    "generate-assets": "node scripts/generate-flux2-assets.mjs"
+  }
+}

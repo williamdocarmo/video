@@ -1,0 +1,145 @@
+{
+  "videoTitle": "9 Invencoes Tecnologicas Que Ninguem Acreditava Que Funcionariam",
+  "hook": "Muita tecnologia que hoje parece normal ja foi tratada como ideia impossivel ou ridicula.",
+  "postCaption": "Nove invencoes que pareciam improvaveis e hoje mudaram completamente a forma como vivemos.",
+  "hashtags": [
+    "#tecnologia",
+    "#inovacao",
+    "#curiosidades",
+    "#shorts"
+  ],
+  "cta": "Segue para mais curiosidades sobre tecnologia.",
+  "styleNotes": "Cenas concretas, humanas e facilmente encontraveis em stock. Evitar visual abstrato e futurista demais.",
+  "scenes": [
+    {
+      "title": "Hook",
+      "narration": "Muita tecnologia que hoje parece comum ja foi tratada como loucura, exagero ou pura fantasia.",
+      "searchQuery": "person reacting to old technology display",
+      "overlay": "Parecia impossivel",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa observando uma vitrine ou exposicao de tecnologia antiga com expressao de surpresa.",
+      "candidateQueries": [
+        "person reacting to old technology display",
+        "museum visitor looking at vintage technology",
+        "person surprised by retro tech exhibit"
+      ]
+    },
+    {
+      "title": "Internet",
+      "narration": "A internet foi vista durante anos como algo tecnico demais para chegar ao dia a dia de toda a gente.",
+      "searchQuery": "dial up internet computer close up",
+      "overlay": "1. Internet",
+      "sceneType": "stock",
+      "visualGoal": "Computador antigo com interface de internet ou conexao dial-up em uso.",
+      "candidateQueries": [
+        "dial up internet computer close up",
+        "vintage computer internet connection",
+        "retro desktop computer online"
+      ]
+    },
+    {
+      "title": "Celular",
+      "narration": "Os primeiros celulares pareciam trambolhos caros e pouco praticos. Hoje sao extensao da nossa vida.",
+      "searchQuery": "old mobile phone in hand close up",
+      "overlay": "2. Celular",
+      "sceneType": "stock",
+      "visualGoal": "Close em telemovel antigo grande sendo segurado por uma pessoa.",
+      "candidateQueries": [
+        "old mobile phone in hand close up",
+        "brick cell phone close up",
+        "vintage mobile phone person using"
+      ]
+    },
+    {
+      "title": "Carro Eletrico",
+      "narration": "Carros eletricos foram tratados como lentos, caros e inviaveis. Agora estao no centro da industria automovel.",
+      "searchQuery": "electric car charging station close up",
+      "overlay": "3. Carro eletrico",
+      "sceneType": "stock",
+      "visualGoal": "Carro eletrico moderno sendo carregado num posto.",
+      "candidateQueries": [
+        "electric car charging station close up",
+        "electric vehicle plugged in charger",
+        "ev charging at station"
+      ]
+    },
+    {
+      "title": "GPS",
+      "narration": "Usar satelites para encontrar qualquer rota parecia exagero. Hoje muita gente nem sai sem GPS.",
+      "searchQuery": "car dashboard gps navigation screen",
+      "overlay": "4. GPS",
+      "sceneType": "stock",
+      "visualGoal": "Painel de carro com mapa GPS ou smartphone mostrando navegacao.",
+      "candidateQueries": [
+        "car dashboard gps navigation screen",
+        "smartphone navigation in car",
+        "driver using gps map on phone"
+      ]
+    },
+    {
+      "title": "Impressao 3D",
+      "narration": "A ideia de fabricar objetos camada por camada parecia coisa de laboratorio. Hoje a impressao 3D ja esta por todo lado.",
+      "searchQuery": "3D printer printing object close up",
+      "overlay": "5. Impressao 3D",
+      "sceneType": "stock",
+      "visualGoal": "Impressora 3D em funcionamento a criar uma peca real.",
+      "candidateQueries": [
+        "3D printer printing object close up",
+        "desktop 3D printer working",
+        "3D printer creating prototype"
+      ]
+    },
+    {
+      "title": "Pagamento Digital",
+      "narration": "Tambem parecia estranho pagar sem dinheiro fisico ou cartao. Hoje um toque no telemovel resolve tudo.",
+      "searchQuery": "contactless payment with smartphone close up",
+      "overlay": "6. Pagamento digital",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa pagando com smartphone ou relogio num terminal.",
+      "candidateQueries": [
+        "contactless payment with smartphone close up",
+        "person paying with phone at terminal",
+        "mobile payment at store counter"
+      ]
+    },
+    {
+      "title": "Assistente Virtual",
+      "narration": "Falar com uma maquina e receber resposta util parecia artificial demais. Agora isso ja faz parte da rotina.",
+      "searchQuery": "person using smart speaker at home",
+      "overlay": "7. Assistente virtual",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa a usar comando de voz num altifalante inteligente ou telefone em casa.",
+      "candidateQueries": [
+        "person using smart speaker at home",
+        "voice assistant device in living room",
+        "person talking to smart speaker"
+      ]
+    },
+    {
+      "title": "Drone",
+      "narration": "Drones pareciam brinquedo ou experimento sem utilidade. Hoje filmam, entregam e inspecionam lugares dificeis.",
+      "searchQuery": "drone flying outdoors close up",
+      "overlay": "8. Drone",
+      "sceneType": "stock",
+      "visualGoal": "Drone real voando em ambiente urbano ou aberto com boa legibilidade.",
+      "candidateQueries": [
+        "drone flying outdoors close up",
+        "quadcopter flying in city",
+        "drone in flight cinematic"
+      ]
+    },
+    {
+      "title": "Realidade Virtual",
+      "narration": "Por fim, a realidade virtual parecia um nicho estranho. Hoje entra em jogos, treino, saude e educacao.",
+      "searchQuery": "person wearing vr headset at home",
+      "overlay": "9. Realidade virtual",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa usando headset de realidade virtual num ambiente domestico.",
+      "candidateQueries": [
+        "person wearing vr headset at home",
+        "woman using virtual reality headset",
+        "man playing in vr headset living room"
+      ]
+    }
+  ]
+}

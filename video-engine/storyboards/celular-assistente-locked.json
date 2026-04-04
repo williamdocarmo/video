@@ -1,0 +1,133 @@
+{
+  "videoTitle": "Como o celular está virando seu assistente pessoal",
+  "hook": "O celular já não serve só para abrir app. Em silêncio, ele está começando a organizar, prever e resolver partes inteiras do seu dia.",
+  "postCaption": "Lembrete na hora certa, rota recalculada, texto traduzido, alerta de fraude e saúde no bolso. O celular está virando um assistente pessoal de verdade.",
+  "hashtags": [
+    "#celular",
+    "#tecnologia",
+    "#assistentevirtual",
+    "#smartphone",
+    "#inovacao"
+  ],
+  "cta": "Qual função do celular já parece um assistente para você no dia a dia?",
+  "styleNotes": "Usar ações claras com smartphone em ambientes reais: rua, carro, casa, café e escritório. Priorizar mãos, tela, reação humana e situações reconhecíveis. Evitar visual abstrato.",
+  "scenes": [
+    {
+      "title": "Agenda Inteligente",
+      "narration": "O primeiro sinal aparece logo cedo: o celular lembra a reunião, sugere a hora de sair e já traz o compromisso antes mesmo de você abrir a agenda.",
+      "searchQuery": "person checking smartphone calendar reminder morning routine",
+      "overlay": "Sua agenda antes",
+      "sceneType": "stock",
+      "visualGoal": "A person checking a smartphone calendar or reminder during a morning routine.",
+      "candidateQueries": [
+        "person checking smartphone calendar reminder morning routine",
+        "phone reminder notification daily routine",
+        "person looking at mobile calendar"
+      ]
+    },
+    {
+      "title": "Mapa que Decide",
+      "narration": "Depois, ele já escolhe o melhor caminho, recalcula a rota com trânsito e tira minutos do trajeto sem você precisar pensar em cada alternativa.",
+      "searchQuery": "driver using smartphone gps traffic route navigation",
+      "overlay": "Rota mais rápida",
+      "sceneType": "stock",
+      "visualGoal": "A person driving or commuting while following smartphone GPS navigation with traffic updates.",
+      "candidateQueries": [
+        "driver using smartphone gps traffic route navigation",
+        "smartphone navigation app traffic avoidance",
+        "person following phone maps in car"
+      ]
+    },
+    {
+      "title": "Voz que Resolve",
+      "narration": "E não para aí: você dita mensagem, pede música, liga para alguém e cria lembrete só falando. Quanto menos toque e mais conversa, mais ele vira assistente de verdade.",
+      "searchQuery": "person using phone voice assistant speaking message",
+      "overlay": "Só falar",
+      "sceneType": "stock",
+      "visualGoal": "A person speaking to a smartphone voice assistant and sending a message hands-free.",
+      "candidateQueries": [
+        "person using phone voice assistant speaking message",
+        "woman talking to smartphone voice command",
+        "voice assistant on smartphone close up"
+      ]
+    },
+    {
+      "title": "Câmera que Lê",
+      "narration": "A câmera também já faz muito mais do que foto. Ela traduz placa, lê texto, identifica produto e transforma o que você vê em ação quase imediata.",
+      "searchQuery": "smartphone camera translating sign text in real time",
+      "overlay": "A câmera entende",
+      "sceneType": "stock",
+      "visualGoal": "A smartphone camera translating a sign or scanning text in real time.",
+      "candidateQueries": [
+        "smartphone camera translating sign text in real time",
+        "phone camera translate app street sign",
+        "smartphone scanning text with translation"
+      ]
+    },
+    {
+      "title": "Banco que Avisa",
+      "narration": "Na prática, o celular também virou vigia financeiro. Ele percebe compra fora do padrão, manda alerta na hora e pede confirmação antes do prejuízo crescer.",
+      "searchQuery": "person checking mobile banking app on smartphone close up",
+      "overlay": "Alerta na hora",
+      "sceneType": "stock",
+      "visualGoal": "A person checking a mobile banking app or transaction notification on a smartphone, suggesting financial monitoring in real time.",
+      "candidateQueries": [
+        "person checking mobile banking app on smartphone close up",
+        "mobile banking app notification on phone",
+        "person using banking app on smartphone"
+      ]
+    },
+    {
+      "title": "Filtro de Golpes",
+      "narration": "E é aqui que ele começa a te proteger sozinho: chamada suspeita, link estranho e spam vão sendo barrados antes de roubar seu tempo.",
+      "searchQuery": "smartphone spam call blocked security screen",
+      "overlay": "Golpe barrado",
+      "sceneType": "stock",
+      "visualGoal": "A smartphone screen showing a spam call warning or blocked suspicious message.",
+      "candidateQueries": [
+        "smartphone spam call blocked security screen",
+        "phone scam warning incoming call",
+        "mobile phone blocking spam message"
+      ]
+    },
+    {
+      "title": "Saúde no Bolso",
+      "narration": "Ao longo do dia, ele ainda monitora passos, sono, batimentos e horário de remédio. O aparelho junta sinais do corpo e devolve orientação na hora certa.",
+      "searchQuery": "person checking health stats smartphone smartwatch",
+      "overlay": "Saúde acompanhada",
+      "sceneType": "stock",
+      "visualGoal": "A person checking health or fitness stats on a smartphone connected to a smartwatch.",
+      "candidateQueries": [
+        "person checking health stats smartphone smartwatch",
+        "smartphone health app wellness data",
+        "phone fitness tracking app close up"
+      ]
+    },
+    {
+      "title": "Memória Organizada",
+      "narration": "Até suas fotos e arquivos aparecem quando você precisa. O celular reconhece rosto, lugar, data e contexto para trazer a memória certa sem aquela busca manual demorada.",
+      "searchQuery": "person searching photos on smartphone gallery faces memories",
+      "overlay": "Ele lembra por você",
+      "sceneType": "stock",
+      "visualGoal": "A person searching old photos or memories in a smartphone gallery interface.",
+      "candidateQueries": [
+        "person searching photos on smartphone gallery faces memories",
+        "smartphone photo search memories app",
+        "person browsing old photos on phone"
+      ]
+    },
+    {
+      "title": "Seu Novo Assistente",
+      "narration": "No fim, o celular está deixando de ser só uma tela para virar um assistente pessoal discreto: ele observa padrão, antecipa necessidade e economiza sua atenção ao longo do dia.",
+      "searchQuery": "person holding smartphone in city using digital assistant app",
+      "overlay": "Assistente no bolso",
+      "sceneType": "stock",
+      "visualGoal": "A person using a smartphone in daily life while multiple assistant-like functions feel integrated and natural.",
+      "candidateQueries": [
+        "person holding smartphone in city using digital assistant app",
+        "person using smartphone everyday life technology",
+        "smartphone assistant app daily routine"
+      ]
+    }
+  ]
+}

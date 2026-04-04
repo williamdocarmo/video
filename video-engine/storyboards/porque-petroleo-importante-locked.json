@@ -1,0 +1,146 @@
+{
+  "videoTitle": "Por que o petroleo e tao importante?",
+  "hook": "Quando falam em petroleo, muita gente pensa so em combustivel. Mas ele continua presente em muito mais coisas do que parece.",
+  "postCaption": "O petroleo nao aparece so na bomba de gasolina. Ele ainda sustenta transporte, industria, embalagens, infraestrutura e varios produtos do dia a dia. #petroleo #energia #industria #infraestrutura #curiosidades",
+  "hashtags": [
+    "#petroleo",
+    "#energia",
+    "#industria",
+    "#infraestrutura",
+    "#curiosidades"
+  ],
+  "cta": "Se este video te fez olhar o dia a dia de outro jeito, segue o perfil para ver mais explicacoes simples sobre tecnologia, energia e economia.",
+  "styleNotes": "Usar cenas concretas de industria, transporte, produtos e infraestrutura. Priorizar imagens legiveis e humanas, evitando abstracoes futuristas.",
+  "scenes": [
+    {
+      "title": "Abertura: Mundo em movimento",
+      "narration": "O petroleo continua importante porque ainda ajuda a mover transporte, industria e parte da infraestrutura que sustenta a vida moderna.",
+      "searchQuery": "modern city skyline industry logistics",
+      "overlay": "Muito alem do combustivel",
+      "sceneType": "stock",
+      "visualGoal": "Cidade moderna com movimento e operacao economica sugerindo consumo de energia, transporte e atividade industrial.",
+      "candidateQueries": [
+        "modern city skyline logistics",
+        "city skyline time lapse",
+        "urban industry aerial"
+      ]
+    },
+    {
+      "title": "Refino e derivados",
+      "narration": "Ao mesmo tempo, refinarias e plantas industriais transformam o petroleo bruto em combustiveis e materias-primas que depois entram em milhares de produtos.",
+      "searchQuery": "industrial refinery plant",
+      "overlay": "Refino e derivados",
+      "sceneType": "stock",
+      "visualGoal": "Planta industrial grande, com estrutura metalica e atmosfera de processamento de energia e materiais.",
+      "candidateQueries": [
+        "industrial refinery plant",
+        "energy plant industrial",
+        "processing plant pipes"
+      ]
+    },
+    {
+      "title": "Transporte global",
+      "narration": "Agora, a cadeia do petroleo tambem depende de transporte pesado por mar, ligando producao, distribuicao e consumo em escala global.",
+      "searchQuery": "industrial ship at sea",
+      "overlay": "Transporte global",
+      "sceneType": "stock",
+      "visualGoal": "Navio industrial moderno em alto mar, com sensacao de escala e logistica internacional.",
+      "candidateQueries": [
+        "industrial ship at sea",
+        "large cargo ship ocean",
+        "ship offshore aerial"
+      ]
+    },
+    {
+      "title": "Aviacao",
+      "narration": "So que a importancia do petroleo fica evidente na aviacao, porque o querosene ainda e parte central da forma como pessoas e cargas cruzam grandes distancias.",
+      "searchQuery": "airplane taking off runway",
+      "overlay": "Aviacao",
+      "sceneType": "stock",
+      "visualGoal": "Aviao decolando para representar a dependencia energetica do transporte aereo.",
+      "candidateQueries": [
+        "airplane taking off runway",
+        "aircraft departure runway",
+        "airplane airport takeoff"
+      ]
+    },
+    {
+      "title": "Embalagens e consumo",
+      "narration": "Na pratica, muitos plasticos e embalagens que protegem alimentos, bebidas e produtos de limpeza nascem de derivados do petroleo.",
+      "searchQuery": "packaged goods checkout",
+      "overlay": "Embalagens do dia a dia",
+      "sceneType": "stock",
+      "visualGoal": "Produtos embalados em contexto de mercado ou checkout, sugerindo embalagens e consumo de massa.",
+      "candidateQueries": [
+        "packaged goods checkout",
+        "grocery products scanner",
+        "supermarket packaged food"
+      ]
+    },
+    {
+      "title": "Campo e diesel",
+      "narration": "E e aqui que o campo entra na historia, porque tratores, colheitas e boa parte da mecanizacao agricola ainda dependem fortemente de diesel e insumos industriais.",
+      "searchQuery": "tractor farming field",
+      "overlay": "Campo e diesel",
+      "sceneType": "stock",
+      "visualGoal": "Maquina agricola em atividade real, mostrando escala, terra e producao.",
+      "candidateQueries": [
+        "tractor farming field",
+        "autonomous tractor farming",
+        "farm machinery working"
+      ]
+    },
+    {
+      "title": "Obras e infraestrutura",
+      "narration": "Ao mesmo tempo, obras, pavimentacao, maquinas pesadas e infraestrutura urbana tambem consomem derivados do petroleo para manter cidades e estradas funcionando.",
+      "searchQuery": "construction site infrastructure",
+      "overlay": "Obras e infraestrutura",
+      "sceneType": "stock",
+      "visualGoal": "Canteiro de obras ou montagem estrutural moderna que represente infraestrutura pesada.",
+      "candidateQueries": [
+        "construction site infrastructure",
+        "modular construction building site",
+        "heavy construction project"
+      ]
+    },
+    {
+      "title": "Tecidos sinteticos",
+      "narration": "Agora, fibras sinteticas derivadas do petroleo tambem aparecem em roupas esportivas, uniformes, mochilas e tecidos tecnicos que usamos sem pensar.",
+      "searchQuery": "synthetic clothing technology",
+      "overlay": "Fibras sinteticas",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa usando roupa tecnica ou tecido de alta performance, destacando material sintetico no uso real.",
+      "candidateQueries": [
+        "synthetic clothing technology",
+        "smart clothing health monitoring",
+        "wearable technology fashion"
+      ]
+    },
+    {
+      "title": "Eletronicos",
+      "narration": "So que o petroleo tambem ajuda na fabricacao de eletronicos, em resinas, plasticos tecnicos e isolamentos que protegem componentes delicados.",
+      "searchQuery": "semiconductor manufacturing cleanroom",
+      "overlay": "Eletronicos",
+      "sceneType": "stock",
+      "visualGoal": "Ambiente tecnico de semicondutores ou microeletronica que represente fabricacao e protecao de componentes.",
+      "candidateQueries": [
+        "semiconductor manufacturing cleanroom",
+        "semiconductor wafer inspection",
+        "microchip fabrication lab"
+      ]
+    },
+    {
+      "title": "Cosmeticos e higiene",
+      "narration": "Na pratica, cremes, pomadas, cosmeticos e varios itens de higiene tambem usam bases, solventes, embalagens e derivados que passam pela cadeia do petroleo.",
+      "searchQuery": "product formulation laboratory",
+      "overlay": "Cosmeticos e higiene",
+      "sceneType": "stock",
+      "visualGoal": "Laboratorio ou ambiente de formulacao de produtos para representar desenvolvimento de itens de cuidado pessoal.",
+      "candidateQueries": [
+        "product formulation laboratory",
+        "researcher analyzing samples",
+        "cosmetic product laboratory"
+      ]
+    }
+  ]
+}

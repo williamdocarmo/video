@@ -1,0 +1,15 @@
+last-run.json
+.venv-esrgan/
+.esrgan-models/
+.web-ui/
+.cache/
+.env
+.env.bak
+.DS_Store
+._*
+*.mp4
+video-preview.html
+video-engine/out/
+video-engine/runs/
+video-engine/public/runs/
+video-engine/assets/envato/

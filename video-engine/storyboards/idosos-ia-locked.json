@@ -1,0 +1,133 @@
+{
+  "videoTitle": "Os idosos estao usando IA sem saber",
+  "hook": "Você tem mais de 60? A inteligência artificial facilita seu dia a dia sem você perceber! Presente em coisas simples, torna sua vida mais prática e segura.",
+  "postCaption": "A inteligência artificial está presente em diversas ferramentas que facilitam a vida dos idosos, desde a saúde e o lazer até a segurança e a comunicação. Compartilhe este vídeo para mostrar como a IA pode ser útil e acessível!",
+  "hashtags": [
+    "#inteligenciaartificial",
+    "#idosos",
+    "#tecnologia",
+    "#inovacao",
+    "#terceiraidade"
+  ],
+  "cta": "Comente: qual ferramenta com IA você já usa ou gostaria de usar?",
+  "styleNotes": "Focus on positive and relatable scenarios of older adults using AI in everyday life. Prioritize clear visuals and avoid overly technical or futuristic imagery. Maintain a warm and friendly tone.",
+  "scenes": [
+    {
+      "title": "Abertura",
+      "narration": "Imagine: uma senhora sorrindo em videochamada com os netos no tablet. A inteligência artificial está mais perto do que imagina, presente nos momentos importantes!",
+      "searchQuery": "elderly woman smiling video call tablet family grandchildren",
+      "overlay": "A IA te ajuda!",
+      "sceneType": "stock",
+      "visualGoal": "An elderly woman smiling and waving during a video call with her grandchildren on a tablet. The scene should convey warmth and connection.",
+      "candidateQueries": [
+        "elderly woman video call grandchildren tablet smiling",
+        "senior woman video chat family tablet happy",
+        "older woman using tablet video call"
+      ]
+    },
+    {
+      "title": "Reconhecimento Facial",
+      "narration": "Ao mesmo tempo, desbloquear o celular com um olhar? A IA te reconhece e protege seus dados bancários e informações pessoais com segurança.",
+      "searchQuery": "elderly man unlocking smartphone with face recognition smiling secure data",
+      "overlay": "Sua face é a senha!",
+      "sceneType": "stock",
+      "visualGoal": "An elderly man unlocking his smartphone with facial recognition, smiling confidently. The scene should emphasize security and ease of use.",
+      "candidateQueries": [
+        "elderly man unlocking smartphone face recognition smiling",
+        "senior man using facial recognition phone secure",
+        "older man unlocking phone with face scan"
+      ]
+    },
+    {
+      "title": "Alertas de Remédios",
+      "narration": "Agora, esqueceu o remédio? Apps com IA te lembram com notificações, garantindo que siga o tratamento e cuide da saúde.",
+      "searchQuery": "elderly woman taking medicine from pill organizer smartphone reminder notification",
+      "overlay": "Remédio na hora certa!",
+      "sceneType": "stock",
+      "visualGoal": "An elderly woman taking medication from a pill organizer, with a smartphone displaying a reminder notification. The scene should highlight health and well-being.",
+      "candidateQueries": [
+        "elderly woman taking medicine pill organizer smartphone reminder",
+        "senior woman medication reminder app phone",
+        "older woman taking pills with phone alarm"
+      ]
+    },
+    {
+      "title": "Assistentes de Voz",
+      "narration": "Só que, peça à Alexa para tocar sua música favorita ou ligar para os netos. A IA te conecta com o mundo e facilita a comunicação!",
+      "searchQuery": "elderly woman talking to amazon alexa smart speaker smiling music grandkids",
+      "overlay": "Sua voz, seu comando!",
+      "sceneType": "stock",
+      "visualGoal": "An elderly woman talking to a smart speaker, sorrindo e aproveitando música. A cena deve transmitir facilidade e conexão.",
+      "candidateQueries": [
+        "elderly woman talking to amazon alexa smart speaker smiling music",
+        "senior woman using voice assistant home happy",
+        "older woman talking to smart home device"
+      ]
+    },
+    {
+      "title": "GPS Inteligente",
+      "narration": "Na prática, dirigindo? O GPS com IA te guia em tempo real, recalculando rotas para evitar trânsito e te levando pelo caminho mais seguro.",
+      "searchQuery": "elderly man driving car using gps navigation system traffic avoidance",
+      "overlay": "Chegue com segurança!",
+      "sceneType": "stock",
+      "visualGoal": "An elderly man driving a car, using a GPS navigation system with real-time traffic updates. The scene should emphasize safety and convenience.",
+      "candidateQueries": [
+        "elderly man driving car using gps navigation system traffic avoidance",
+        "senior man driving with gps app safe route",
+        "older man using car gps for directions"
+      ]
+    },
+    {
+      "title": "Tradutores Instantâneos",
+      "narration": "E é aqui que, viajando? A IA traduz idiomas na hora, permitindo que converse com moradores, peça informações e aproveite a cultura sem barreiras.",
+      "searchQuery": "elderly couple using language translation app on smartphone vacation interacting locals",
+      "overlay": "Sem barreiras linguísticas!",
+      "sceneType": "stock",
+      "visualGoal": "An elderly couple using a language translation app on a smartphone while traveling, interacting with locals. The scene should highlight cultural exchange and ease of communication.",
+      "candidateQueries": [
+        "elderly couple using language translation app on smartphone vacation interacting locals",
+        "senior couple travel translate app phone",
+        "older couple using translator app abroad"
+      ]
+    },
+    {
+      "title": "Filtro Anti-Spam",
+      "narration": "Ao mesmo tempo, recebeu e-mail suspeito? A IA te protege de golpes online, filtrando mensagens e mantendo sua caixa de entrada limpa e segura.",
+      "searchQuery": "elderly man looking suspiciously at spam email on computer fraud protection",
+      "overlay": "Proteção online garantida!",
+      "sceneType": "stock",
+      "visualGoal": "An elderly man looking suspiciously at a spam email on a computer, with a clear indication of fraud protection. The scene should emphasize online safety.",
+      "candidateQueries": [
+        "elderly man looking suspiciously at spam email on computer fraud protection",
+        "senior man avoiding phishing email scam",
+        "older man deleting spam email"
+      ]
+    },
+    {
+      "title": "Recomendação de Filmes",
+      "narration": "Agora, cansado de procurar o que assistir? A IA sugere filmes e séries baseados nos seus gostos, poupando tempo e garantindo diversão.",
+      "searchQuery": "elderly woman watching tablet at home",
+      "overlay": "Filmes que você vai amar!",
+      "sceneType": "stock",
+      "visualGoal": "An elderly woman watching content on a tablet at home, relaxed and engaged. The scene should convey entertainment and leisure.",
+      "candidateQueries": [
+        "elderly woman watching tablet at home",
+        "senior woman using tablet at home smiling",
+        "older woman streaming on tablet"
+      ]
+    },
+    {
+      "title": "Suporte ao Cliente",
+      "narration": "Só que, precisa de ajuda no computador? Chatbots com IA te atendem 24h, oferecendo soluções rápidas para suas dúvidas e dificuldades técnicas.",
+      "searchQuery": "elderly man interacting with customer service chatbot on laptop technical support",
+      "overlay": "Ajuda a qualquer hora!",
+      "sceneType": "stock",
+      "visualGoal": "An elderly man interacting with a customer service chatbot on a laptop, receiving technical support. The scene should emphasize accessibility and problem-solving.",
+      "candidateQueries": [
+        "elderly man interacting with customer service chatbot on laptop technical support",
+        "senior man using online chat support computer",
+        "older man getting help from chatbot on laptop"
+      ]
+    }
+  ]
+}

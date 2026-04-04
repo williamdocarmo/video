@@ -1,0 +1,153 @@
+{
+  "videoTitle": "10 Coisas Incriveis Que a Tecnologia Permite Fazer Hoje",
+  "hook": "O mais impressionante da tecnologia atual nao e parecer futurista. E fazer coisas incriveis parecerem completamente normais.",
+  "postCaption": "De pagar com o telemovel a falar com um medico a distancia: dez coisas que a tecnologia ja permite fazer hoje sem parecer ficcao cientifica.",
+  "hashtags": ["#tecnologia", "#smartphone", "#inovacao", "#futuro", "#produtividade"],
+  "cta": "Se quiseres mais listas praticas de tecnologia do dia a dia, segue para a proxima.",
+  "styleNotes": "Preferir acoes humanas claras com telemovel, casa, saude, compras, trabalho remoto e objetos bem identificaveis.",
+  "scenes": [
+    {
+      "title": "Abertura",
+      "narration": "Ha pouco tempo, varias destas coisas pareciam luxo ou exagero. Hoje, ja cabem no bolso e entraram no dia a dia de muita gente.",
+      "searchQuery": "woman using smartphone in busy city street",
+      "overlay": "Hoje e possivel",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa a usar smartphone num ambiente urbano moderno.",
+      "candidateQueries": [
+        "woman using smartphone in busy city street",
+        "people using smartphones in city",
+        "young adult using mobile phone downtown"
+      ]
+    },
+    {
+      "title": "Pagar sem carteira",
+      "narration": "Agora, pagar sem tirar a carteira do bolso ja virou reflexo. Basta aproximar o telemovel ou o relogio e a compra esta resolvida.",
+      "searchQuery": "woman paying contactless with smartphone at store",
+      "overlay": "Pagar com o telemovel",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa a pagar numa loja com pagamento por aproximacao pelo telemovel.",
+      "candidateQueries": [
+        "woman paying contactless with smartphone at store",
+        "contactless payment smartphone checkout",
+        "phone tap to pay retail store"
+      ]
+    },
+    {
+      "title": "Saude no pulso",
+      "narration": "Ao mesmo tempo, um relogio ja consegue acompanhar passos, pulso, sono e ate alertar para sinais que antes passavam despercebidos.",
+      "searchQuery": "person checking smartwatch health metrics",
+      "overlay": "Saude no pulso",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa olhando dados de saude num smartwatch.",
+      "candidateQueries": [
+        "person checking smartwatch health metrics",
+        "smartwatch health app close up",
+        "woman reviewing heart rate on smartwatch"
+      ]
+    },
+    {
+      "title": "Traduzir conversas",
+      "narration": "So que entender outra lingua em tempo real ja nao parece impossivel. Aplicacoes de traducao quebram o gelo em viagens, reunioes e atendimentos.",
+      "searchQuery": "tourists using translation app conversation",
+      "overlay": "Traducao instantanea",
+      "sceneType": "stock",
+      "visualGoal": "Duas pessoas usando app de traducao durante uma conversa.",
+      "candidateQueries": [
+        "tourists using translation app conversation",
+        "language translation app conversation",
+        "phone translator app talking people"
+      ]
+    },
+    {
+      "title": "Falar por video",
+      "narration": "E e aqui que a tecnologia muda a rotina: falar por video com colegas, clientes ou pessoas queridas ficou simples e quase automatico.",
+      "searchQuery": "team video call subtitles laptop office",
+      "overlay": "Videochamada",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa ou familia a fazer videochamada num ambiente domestico.",
+      "candidateQueries": [
+        "team video call subtitles laptop office",
+        "online meeting laptop office",
+        "people talking on video call laptop"
+      ]
+    },
+    {
+      "title": "Controlar a casa",
+      "narration": "Na pratica, ja da para acender luzes, mudar a temperatura e ligar aparelhos sem tocar em quase nada, so com voz ou app.",
+      "searchQuery": "woman using smart home app controlling lights",
+      "overlay": "Casa inteligente",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa controlando luzes ou aparelhos por app ou assistente virtual.",
+      "candidateQueries": [
+        "woman using smart home app controlling lights",
+        "person using phone smart home control",
+        "smart home app control living room"
+      ]
+    },
+    {
+      "title": "Saude conectada",
+      "narration": "Agora, a tecnologia tambem encurtou caminho na saude. Medicos usam dados, tablets e acompanhamento digital para tornar o atendimento mais rapido e preciso.",
+      "searchQuery": "doctor using technology for patient care",
+      "overlay": "Saude conectada",
+      "sceneType": "stock",
+      "visualGoal": "Paciente em videochamada com medico no laptop ou telemovel.",
+      "candidateQueries": [
+        "doctor using technology for patient care",
+        "doctor reviewing digital health data tablet patient",
+        "doctor using tablet explaining to patient"
+      ]
+    },
+    {
+      "title": "Imprimir objetos",
+      "narration": "Ao mesmo tempo, impressoras 3D ja criam pecas, acessorios e ate prototipos medicos sob medida. O que era laboratorio virou ferramenta real.",
+      "searchQuery": "3d printer creating prosthetic hand",
+      "overlay": "Impressao 3D",
+      "sceneType": "stock",
+      "visualGoal": "Impressora 3D a fabricar uma peca util ou protese.",
+      "candidateQueries": [
+        "3d printer creating prosthetic hand",
+        "3d printer making custom object",
+        "desktop 3d printer working close up"
+      ]
+    },
+    {
+      "title": "Estacionar sozinho",
+      "narration": "So que ate os carros ficaram mais capazes. Sistemas de apoio ja ajudam a estacionar, travar e manter distancia com muito mais precisao.",
+      "searchQuery": "car self parking assistance dashboard",
+      "overlay": "Assistencia no carro",
+      "sceneType": "stock",
+      "visualGoal": "Interior de carro mostrando assistencia de conducao ou estacionamento.",
+      "candidateQueries": [
+        "car self parking assistance dashboard",
+        "driver assistance car interior screen",
+        "autonomous parking car dashboard"
+      ]
+    },
+    {
+      "title": "Trabalho online",
+      "narration": "E talvez a mudanca mais discreta seja esta: trabalhar, estudar e organizar tarefas com equipas conectadas online, mesmo quando cada pessoa esta num lugar diferente.",
+      "searchQuery": "team collaborating remotely online",
+      "overlay": "Trabalho online",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa trabalhando remotamente num cafe ou ambiente flexivel.",
+      "candidateQueries": [
+        "team collaborating remotely online",
+        "professional using laptop and smartphone at modern desk",
+        "person working online with laptop"
+      ]
+    },
+    {
+      "title": "Fecho",
+      "narration": "Por isso, o incrivel da tecnologia atual nao e so o que ela faz. E a velocidade com que transforma algo impressionante em rotina.",
+      "searchQuery": "group of friends looking at smartphones laughing cafe outdoors",
+      "overlay": "Virou rotina",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa cercada por varios dispositivos digitais na rotina diaria.",
+      "candidateQueries": [
+        "group of friends looking at smartphones laughing cafe outdoors",
+        "people using smartphones in city",
+        "modern digital lifestyle people devices"
+      ]
+    }
+  ]
+}

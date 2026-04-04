@@ -1,0 +1,133 @@
+{
+  "videoTitle": "5 sinais de que a IA ja esta organizando seu trabalho sem voce perceber",
+  "hook": "Voce pode ate nao notar, mas parte do seu trabalho ja esta sendo filtrada, resumida e organizada por IA todos os dias.",
+  "postCaption": "Agenda que se ajusta, e-mail que prioriza, reuniao que vira resumo, arquivo que aparece na hora certa e risco que some antes do clique. A IA ja esta organizando o trabalho em silencio.",
+  "hashtags": [
+    "#ia",
+    "#trabalho",
+    "#tecnologia",
+    "#produtividade",
+    "#automacao"
+  ],
+  "cta": "Qual dessas tarefas voce acha que a IA ja esta fazendo no seu trabalho hoje?",
+  "styleNotes": "Usar cenas reais de escritorio, home office, videochamada, laptop, smartphone, calendario, e-mail, times colaborando e alertas de seguranca. Evitar hologramas, robos e interfaces futuristas irreais.",
+  "scenes": [
+    {
+      "title": "Agenda Prioriza",
+      "narration": "O primeiro sinal aparece na agenda: reunioes mudam, lembretes sobem de prioridade e o dia vai sendo reorganizado para voce perder menos tempo.",
+      "searchQuery": "professional checking calendar on laptop and phone office",
+      "overlay": "Agenda inteligente",
+      "sceneType": "stock",
+      "visualGoal": "A professional checking calendar updates on a laptop or phone in an office or home office.",
+      "candidateQueries": [
+        "professional checking calendar on laptop and phone office",
+        "business person looking at schedule on laptop office",
+        "office worker using digital calendar computer"
+      ]
+    },
+    {
+      "title": "Inbox Filtra",
+      "narration": "Logo depois, a caixa de entrada fica menos caotica. O que importa sobe, o que parece ruido perde espaco e voce decide mais rapido.",
+      "searchQuery": "professional reading email inbox on laptop office",
+      "overlay": "Inbox mais limpa",
+      "sceneType": "stock",
+      "visualGoal": "A person reviewing email on a laptop in a work setting, with a focused and productive mood.",
+      "candidateQueries": [
+        "professional reading email inbox on laptop office",
+        "office worker checking emails computer desk",
+        "businesswoman managing inbox on laptop"
+      ]
+    },
+    {
+      "title": "Reuniao Vira Resumo",
+      "narration": "Em seguida, a reuniao deixa de ser so conversa. Ferramentas ja transformam fala em anotacao, destacam decisoes e apontam o que ficou para depois.",
+      "searchQuery": "professional typing notes during video meeting laptop",
+      "overlay": "Resumo automatico",
+      "sceneType": "stock",
+      "visualGoal": "A professional in a video meeting typing notes on a laptop, suggesting meeting summaries and follow-ups.",
+      "candidateQueries": [
+        "professional typing notes during video meeting laptop",
+        "person on video conference taking notes office",
+        "remote worker in laptop meeting writing notes"
+      ]
+    },
+    {
+      "title": "Busca Encontra",
+      "narration": "Depois, procurar arquivo fica menos sofrido. Voce escreve uma ideia, uma palavra solta, e o documento certo aparece muito antes do normal.",
+      "searchQuery": "person searching documents on laptop office",
+      "overlay": "Arquivo na hora",
+      "sceneType": "stock",
+      "visualGoal": "A worker searching for files or documents on a laptop and quickly finding the right result.",
+      "candidateQueries": [
+        "person searching documents on laptop office",
+        "office worker finding file on computer",
+        "businessman using laptop search documents"
+      ]
+    },
+    {
+      "title": "Chamadas Traduzem",
+      "narration": "E quando a conversa envolve gente de lugares diferentes, legenda e traducao entram para reduzir atrito e manter todo mundo no mesmo contexto.",
+      "searchQuery": "team video call subtitles laptop office",
+      "overlay": "Fala sem barreira",
+      "sceneType": "stock",
+      "visualGoal": "A remote team on a video call, with the feeling of captions or translation helping communication.",
+      "candidateQueries": [
+        "team video call subtitles laptop office",
+        "remote team meeting on laptop communication",
+        "business video conference laptop office"
+      ]
+    },
+    {
+      "title": "Risco E Bloqueio",
+      "narration": "Ao mesmo tempo, boa parte do risco e barrada antes do clique. Link estranho, mensagem suspeita e acesso fora do padrao passam por filtro.",
+      "searchQuery": "security warning on laptop suspicious email office",
+      "overlay": "Risco filtrado",
+      "sceneType": "stock",
+      "visualGoal": "A laptop showing a suspicious email or security warning in an office context.",
+      "candidateQueries": [
+        "security warning on laptop suspicious email office",
+        "office worker noticing phishing email laptop",
+        "computer security alert business office"
+      ]
+    },
+    {
+      "title": "Atendimento Basico",
+      "narration": "No atendimento, a IA tambem ja entrou no fluxo. Ela resolve duvidas repetidas, encaminha melhor os casos e deixa a equipe livre para o que e mais humano.",
+      "searchQuery": "customer support agent laptop headset office",
+      "overlay": "Suporte mais agil",
+      "sceneType": "stock",
+      "visualGoal": "A customer support or service professional at a computer, suggesting assisted support and triage.",
+      "candidateQueries": [
+        "customer support agent laptop headset office",
+        "help desk worker at computer office",
+        "customer service representative computer headset"
+      ]
+    },
+    {
+      "title": "Tarefas Ganham Ordem",
+      "narration": "No fim do dia, tarefas, prazos e prioridades parecem mais claros. Nao porque voce fez tudo sozinho, mas porque a tecnologia ja foi limpando o caminho.",
+      "searchQuery": "team reviewing tasks on laptop and sticky notes office",
+      "overlay": "Tudo mais claro",
+      "sceneType": "stock",
+      "visualGoal": "A team or professional reviewing tasks and priorities in a workspace with laptop, notes or planning board.",
+      "candidateQueries": [
+        "team reviewing tasks on laptop and sticky notes office",
+        "office planning tasks on computer teamwork",
+        "professional organizing work tasks at desk"
+      ]
+    },
+    {
+      "title": "IA Invisivel",
+      "narration": "Esse e o ponto: a IA que mais avanca no trabalho nem sempre chama atencao. Ela tira ruido, organiza o fluxo e devolve foco para o que realmente importa.",
+      "searchQuery": "professional finishing work relaxed with laptop office",
+      "overlay": "Organizacao invisivel",
+      "sceneType": "stock",
+      "visualGoal": "A calm professional at the end of a productive work session, feeling organized and in control.",
+      "candidateQueries": [
+        "professional finishing work relaxed with laptop office",
+        "businesswoman satisfied after working on laptop",
+        "office worker calm productive end of day"
+      ]
+    }
+  ]
+}

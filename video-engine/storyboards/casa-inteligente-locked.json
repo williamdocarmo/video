@@ -1,0 +1,120 @@
+{
+  "videoTitle": "3 sinais de que sua casa já está ficando inteligente sem você perceber",
+  "hook": "Sua casa talvez já esteja aprendendo a sua rotina sem você chamar isso de tecnologia.",
+  "postCaption": "Luz que acende sozinha, câmera que te avisa do pacote, ar que se ajusta antes do calor apertar. A casa inteligente já começou e muita gente nem percebeu.",
+  "hashtags": [
+    "#casainteligente",
+    "#tecnologia",
+    "#smarthome",
+    "#inovacao",
+    "#automacao"
+  ],
+  "cta": "Qual desses sinais já apareceu na sua casa?",
+  "styleNotes": "Mostrar ambientes domésticos reais, objetos fáceis de reconhecer e ações claras. Priorizar cenas verticais com sala, cozinha, porta, smartphone e rotina de casa.",
+  "scenes": [
+    {
+      "title": "Luz Automática",
+      "narration": "Você entra em casa e a luz acende sozinha. Parece detalhe, mas esse é o primeiro sinal de que a sua casa já começou a responder ao seu comportamento.",
+      "searchQuery": "person entering home lights turning on automatically smart home",
+      "overlay": "Luz que entende",
+      "sceneType": "stock",
+      "visualGoal": "A person entering a home hallway or living room while smart lights turn on automatically.",
+      "candidateQueries": [
+        "person entering home lights turning on automatically smart home",
+        "smart home lights turning on when person enters",
+        "person walking into house automatic lights"
+      ]
+    },
+    {
+      "title": "Assistente de Voz",
+      "narration": "Ao mesmo tempo, você pede uma música, pergunta a previsão do tempo ou liga o ventilador só com a voz. Quando a casa começa a obedecer comandos naturais, a automação já está instalada.",
+      "searchQuery": "woman talking to smart speaker at home voice assistant",
+      "overlay": "A casa escuta",
+      "sceneType": "stock",
+      "visualGoal": "A person at home talking to a smart speaker and controlling devices with voice.",
+      "candidateQueries": [
+        "woman talking to smart speaker at home voice assistant",
+        "person using voice assistant in living room smart home",
+        "smart speaker home voice control"
+      ]
+    },
+    {
+      "title": "Temperatura Inteligente",
+      "narration": "Agora, o ar ou o aquecedor ajusta a temperatura quase sem você tocar no painel. O sistema aprende horário, clima e preferência para deixar o ambiente confortável antes mesmo do incômodo.",
+      "searchQuery": "person adjusting smart thermostat home climate control",
+      "overlay": "Clima ajustado",
+      "sceneType": "stock",
+      "visualGoal": "A person using a smart thermostat or checking home climate control on the wall or phone.",
+      "candidateQueries": [
+        "person adjusting smart thermostat home climate control",
+        "smart thermostat in modern home person using app",
+        "home climate control smart thermostat"
+      ]
+    },
+    {
+      "title": "Câmera na Porta",
+      "narration": "Só que o sinal mais claro aparece na porta. A campainha avisa no celular, mostra quem chegou e ainda detecta pacote ou movimento antes de você olhar pela janela.",
+      "searchQuery": "video doorbell package delivery notification smartphone",
+      "overlay": "Porta conectada",
+      "sceneType": "stock",
+      "visualGoal": "A video doorbell or smart camera sending a package or visitor alert to a smartphone.",
+      "candidateQueries": [
+        "video doorbell package delivery notification smartphone",
+        "smart doorbell alert on phone package",
+        "doorbell camera smartphone notification"
+      ]
+    },
+    {
+      "title": "Robô de Limpeza",
+      "narration": "Na prática, até a limpeza já acontece sozinha em muita casa. O robô passa enquanto você trabalha, desvia dos móveis e segue uma rotina que antes dependia de lembrar e começar.",
+      "searchQuery": "robot vacuum cleaning living room around furniture",
+      "overlay": "Limpeza sozinha",
+      "sceneType": "stock",
+      "visualGoal": "A robot vacuum cleaning a living room and navigating around furniture.",
+      "candidateQueries": [
+        "robot vacuum cleaning living room around furniture",
+        "robot vacuum smart home floor cleaning",
+        "robot vacuum working in apartment"
+      ]
+    },
+    {
+      "title": "Tomadas Inteligentes",
+      "narration": "E é aqui que a tecnologia fica invisível de verdade: tomadas programadas ligam cafeteira, abajur ou carregador no horário certo, como se a casa antecipasse pequenos hábitos do seu dia.",
+      "searchQuery": "smart plug coffee maker scheduled automation home",
+      "overlay": "Rotina programada",
+      "sceneType": "stock",
+      "visualGoal": "A smart plug or home automation routine turning on a coffee maker or lamp automatically.",
+      "candidateQueries": [
+        "smart plug coffee maker scheduled automation home",
+        "smart plug automation lamp home routine",
+        "home automation smart plug kitchen appliance"
+      ]
+    },
+    {
+      "title": "TV que Sugere",
+      "narration": "Ao mesmo tempo, a TV já sugere o próximo filme, a próxima série e até o horário em que você costuma assistir. Quando o conteúdo aparece antes da busca, já existe inteligência lendo padrão.",
+      "searchQuery": "couple watching smart tv recommendations living room",
+      "overlay": "Tela que prevê",
+      "sceneType": "stock",
+      "visualGoal": "People in a living room watching a smart TV interface with recommendations.",
+      "candidateQueries": [
+        "couple watching smart tv recommendations living room",
+        "smart tv recommendations at home streaming",
+        "family watching streaming tv in living room"
+      ]
+    },
+    {
+      "title": "Tudo Conectado",
+      "narration": "No fim, casa inteligente não é só gadget bonito. É quando luz, câmera, voz, temperatura e rotina começam a trabalhar juntas sem você perceber que já está vivendo dentro desse sistema.",
+      "searchQuery": "smart home app controlling lights camera thermostat on smartphone",
+      "overlay": "A casa aprendeu",
+      "sceneType": "stock",
+      "visualGoal": "A smartphone smart home app controlling lights, cameras and temperature in a real home.",
+      "candidateQueries": [
+        "smart home app controlling lights camera thermostat on smartphone",
+        "smart home dashboard phone lights camera climate",
+        "person controlling smart home with smartphone"
+      ]
+    }
+  ]
+}

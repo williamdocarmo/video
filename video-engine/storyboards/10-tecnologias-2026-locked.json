@@ -1,0 +1,146 @@
+{
+  "videoTitle": "10 Tecnologias que Estão Mudando o Mundo em 2026",
+  "hook": "Em 2026, a tecnologia deixou de ser só promessa. Ela já está entrando no trabalho, na saúde, na energia e até na forma como a gente confia no que vê.",
+  "postCaption": "Agentes de IA, robôs mais úteis, IA no dispositivo, saúde conectada, segurança mais inteligente, energia mais previsível e conteúdo mais verificável. Estas são 10 tecnologias que já estão mudando o mundo em 2026.",
+  "hashtags": [
+    "#tecnologia",
+    "#2026",
+    "#inovacao",
+    "#ia",
+    "#futuro"
+  ],
+  "cta": "Qual dessas tecnologias você acha que vai impactar mais a sua vida nos próximos meses?",
+  "styleNotes": "Usar cenas concretas e realistas: escritório, fábrica, armazém, smartphone, hospital, data center, cidade, carro elétrico, sala de aula. Evitar hologramas, interfaces sci-fi e robôs exagerados.",
+  "scenes": [
+    {
+      "title": "Agentes de IA",
+      "narration": "A primeira tecnologia é a mais visível: agentes de IA já começam a executar tarefas completas, resumir contexto, sugerir próximos passos e acelerar trabalho de verdade.",
+      "searchQuery": "professional using ai assistant on laptop office",
+      "overlay": "Agentes de IA",
+      "sceneType": "stock",
+      "visualGoal": "A professional using an AI assistant on a laptop in a real office or home-office setting.",
+      "candidateQueries": [
+        "professional using ai assistant on laptop office",
+        "person working with laptop and digital assistant office",
+        "office worker using productivity software laptop"
+      ]
+    },
+    {
+      "title": "Robôs Mais Úteis",
+      "narration": "Logo depois vem a IA física: robôs e drones estão ficando mais úteis em armazéns, inspeção, logística e tarefas repetitivas que antes exigiam muito tempo humano.",
+      "searchQuery": "warehouse robot automation worker inspection",
+      "overlay": "IA física",
+      "sceneType": "stock",
+      "visualGoal": "Robots or automation systems working in a warehouse or industrial environment with human supervision.",
+      "candidateQueries": [
+        "warehouse robot automation worker inspection",
+        "industrial robot warehouse logistics",
+        "automation warehouse worker checking robot"
+      ]
+    },
+    {
+      "title": "IA no Bolso",
+      "narration": "Outra mudança forte é a IA rodando no próprio dispositivo. Celular e laptop já resolvem tradução, busca, escrita e organização sem depender sempre da nuvem.",
+      "searchQuery": "person using smartphone ai assistant daily life",
+      "overlay": "IA no aparelho",
+      "sceneType": "stock",
+      "visualGoal": "A person using AI-like features on a smartphone or laptop in daily life.",
+      "candidateQueries": [
+        "person using smartphone ai assistant daily life",
+        "person using smart features on phone close up",
+        "laptop and smartphone productivity technology"
+      ]
+    },
+    {
+      "title": "Saúde Preditiva",
+      "narration": "Na saúde, wearables e monitoramento inteligente já acompanham sono, batimentos, rotina e sinais do corpo para antecipar risco e orientar melhor o cuidado.",
+      "searchQuery": "person checking smartwatch health data smartphone",
+      "overlay": "Saúde conectada",
+      "sceneType": "stock",
+      "visualGoal": "A person checking wearable health data on a smartwatch and smartphone.",
+      "candidateQueries": [
+        "person checking smartwatch health data smartphone",
+        "smartwatch health tracking close up",
+        "person reviewing fitness health app phone"
+      ]
+    },
+    {
+      "title": "Energia Inteligente",
+      "narration": "A energia também está mudando. Sistemas mais preditivos ajudam a equilibrar consumo, infraestrutura e operação crítica num mundo que exige muito mais computação.",
+      "searchQuery": "engineer monitoring energy system control room",
+      "overlay": "Energia preditiva",
+      "sceneType": "stock",
+      "visualGoal": "An engineer monitoring energy systems, utilities or control-room dashboards.",
+      "candidateQueries": [
+        "engineer monitoring energy system control room",
+        "technician checking power grid monitors",
+        "control room engineer infrastructure screens"
+      ]
+    },
+    {
+      "title": "Ciberdefesa com IA",
+      "narration": "Ao mesmo tempo, a segurança digital está ficando mais automatizada. Ferramentas detectam anomalia, priorizam alerta e respondem mais rápido antes do dano crescer.",
+      "searchQuery": "cybersecurity analyst monitoring alerts office",
+      "overlay": "Ciberdefesa",
+      "sceneType": "stock",
+      "visualGoal": "A cybersecurity analyst reviewing alerts and threat dashboards in a real office.",
+      "candidateQueries": [
+        "cybersecurity analyst monitoring alerts office",
+        "security analyst computer screens office",
+        "it security professional watching threat dashboard"
+      ]
+    },
+    {
+      "title": "Cidade Sensível",
+      "narration": "Sensores, câmeras e dados urbanos também ganham peso. Em 2026, tecnologia de cidade inteligente já ajuda a ler tráfego, fluxo e operação em tempo quase real.",
+      "searchQuery": "smart city traffic monitoring control center",
+      "overlay": "Cidade inteligente",
+      "sceneType": "stock",
+      "visualGoal": "Traffic monitoring, smart city infrastructure or urban control center visuals.",
+      "candidateQueries": [
+        "smart city traffic monitoring control center",
+        "urban traffic control center screens",
+        "city monitoring technology traffic cameras"
+      ]
+    },
+    {
+      "title": "Baterias Melhores",
+      "narration": "Outra frente é a mobilidade elétrica. Baterias e sistemas mais eficientes estão mexendo com autonomia, recarga e custo de tecnologias que já saíram do laboratório.",
+      "searchQuery": "electric car charging battery technology close up",
+      "overlay": "Energia móvel",
+      "sceneType": "stock",
+      "visualGoal": "Electric vehicles charging or battery technology in real-world use.",
+      "candidateQueries": [
+        "electric car charging battery technology close up",
+        "ev charging station driver technology",
+        "electric vehicle battery manufacturing"
+      ]
+    },
+    {
+      "title": "Conteúdo Verificável",
+      "narration": "Com tanta imagem sintética no ar, cresce a busca por prova de origem. Verificação, rastro digital e sinais de autenticidade viram parte da tecnologia do dia a dia.",
+      "searchQuery": "person verifying digital content on laptop",
+      "overlay": "Mais confiança",
+      "sceneType": "stock",
+      "visualGoal": "A person reviewing or verifying digital content on a laptop or phone.",
+      "candidateQueries": [
+        "person verifying digital content on laptop",
+        "journalist checking information on computer",
+        "person reviewing online content carefully"
+      ]
+    },
+    {
+      "title": "Aprender Melhor",
+      "narration": "E no fim, até aprender está mudando. Tutoria personalizada, apoio digital e conteúdo adaptado tornam o estudo mais flexível, mais contínuo e mais individual.",
+      "searchQuery": "student using laptop in classroom",
+      "overlay": "Aprendizado adaptado",
+      "sceneType": "stock",
+      "visualGoal": "A student or learner using a laptop in a classroom or study setting, suggesting personalized digital learning.",
+      "candidateQueries": [
+        "student using laptop in classroom",
+        "young person studying with laptop at desk",
+        "student taking online class on laptop"
+      ]
+    }
+  ]
+}

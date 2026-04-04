@@ -1,0 +1,166 @@
+{
+  "videoTitle": "20 Exemplos de Tecnologia Que Estao Mudando o Mundo",
+  "hook": "Nao faltam discursos sobre inovacao. O que realmente importa e ver onde a tecnologia ja esta a mexer com dinheiro, saude, energia, trabalho e mobilidade.",
+  "postCaption": "Uma sequencia de exemplos concretos que mostram como a tecnologia ja esta a mudar o mundo agora, muito alem do hype.",
+  "hashtags": ["#tecnologia", "#inovacao", "#ia", "#futuro", "#mundo"],
+  "cta": "Se quiseres mais listas concretas e menos hype, segue para a proxima.",
+  "styleNotes": "Usar exemplos concretos do mundo real, com pessoas, cidades, energia, transportes, medicina e interfaces digitais bem identificaveis.",
+  "scenes": [
+    {
+      "title": "Abertura",
+      "narration": "Quando se fala em tecnologia a mudar o mundo, a conversa fica vaga muito depressa. Por isso vale olhar para exemplos que ja estao em operacao agora.",
+      "searchQuery": "futuristic city skyline time lapse",
+      "overlay": "Ja esta a acontecer",
+      "sceneType": "stock",
+      "visualGoal": "Cidade moderna com sensacao de transformacao digital e ritmo acelerado.",
+      "candidateQueries": [
+        "futuristic city skyline time lapse",
+        "modern city with advanced technology",
+        "smart city night time lapse"
+      ]
+    },
+    {
+      "title": "Pagamentos digitais",
+      "narration": "Agora pensa em pagamentos por aproximacao, QR code e carteira digital. Mudar a forma de pagar tambem muda comercio, velocidade e inclusao financeira.",
+      "searchQuery": "contactless payment smartphone retail store",
+      "overlay": "Pagamentos digitais",
+      "sceneType": "stock",
+      "visualGoal": "Pagamento digital em loja com smartphone ou QR code.",
+      "candidateQueries": [
+        "contactless payment smartphone retail store",
+        "qr code payment cafe",
+        "digital wallet phone payment"
+      ]
+    },
+    {
+      "title": "Mobilidade guiada",
+      "narration": "Ao mesmo tempo, mapas em tempo real, apps de transporte e rotas inteligentes mudaram a forma como as pessoas atravessam a cidade todos os dias.",
+      "searchQuery": "man using smartphone to find parking spot city street downtown",
+      "overlay": "Mobilidade",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa usando navegacao no telemovel na rua ou em transporte.",
+      "candidateQueries": [
+        "man using smartphone to find parking spot city street downtown",
+        "gps navigation phone walking city",
+        "mobile map app urban commute"
+      ]
+    },
+    {
+      "title": "Telemedicina",
+      "narration": "So que a saude tambem mudou. Medicos usam dados, tablets e sistemas digitais para tomar decisoes mais rapidas e acompanhar pacientes com mais precisao.",
+      "searchQuery": "doctor using technology for patient care",
+      "overlay": "Saude digital",
+      "sceneType": "stock",
+      "visualGoal": "Paciente e medico conectados por videochamada.",
+      "candidateQueries": [
+        "doctor using technology for patient care",
+        "doctor reviewing digital health data tablet patient",
+        "doctor using AI diagnosis"
+      ]
+    },
+    {
+      "title": "Armazens roboticos",
+      "narration": "E e aqui que o impacto economico aparece: armazens com robos a mover mercadoria aumentam velocidade, reduzem erro e mudam a logistica inteira.",
+      "searchQuery": "industrial robot and worker warehouse",
+      "overlay": "Logistica robotica",
+      "sceneType": "stock",
+      "visualGoal": "Robos ou sistemas automatizados movimentando caixas em armazem.",
+      "candidateQueries": [
+        "industrial robot and worker warehouse",
+        "robot warehouse logistics",
+        "automated fulfillment center robots"
+      ]
+    },
+    {
+      "title": "Energia limpa",
+      "narration": "Na pratica, paineis solares, turbinas e sistemas de baterias estao a redesenhar a maneira como cidades e empresas produzem e armazenam energia.",
+      "searchQuery": "solar panels and wind turbines aerial",
+      "overlay": "Energia limpa",
+      "sceneType": "stock",
+      "visualGoal": "Vista aerea de energia solar e eolica em escala real.",
+      "candidateQueries": [
+        "solar panels and wind turbines aerial",
+        "renewable energy farm aerial",
+        "wind turbines solar power field"
+      ]
+    },
+    {
+      "title": "Carros eletricos",
+      "narration": "Agora soma a isso os carros eletricos e a rede de carregamento. A mobilidade comeca a trocar combustivel por software, bateria e infraestrutura nova.",
+      "searchQuery": "electric car charging station city",
+      "overlay": "Carros eletricos",
+      "sceneType": "stock",
+      "visualGoal": "Carro eletrico a ser carregado num posto moderno.",
+      "candidateQueries": [
+        "electric car charging station city",
+        "ev charging station close up",
+        "electric vehicle charging urban"
+      ]
+    },
+    {
+      "title": "Traducao ao vivo",
+      "narration": "Ao mesmo tempo, ferramentas de traducao em tempo real aproximam pessoas, equipas e negocios que antes esbarravam na barreira da lingua.",
+      "searchQuery": "language translation app conversation",
+      "overlay": "Traducao ao vivo",
+      "sceneType": "stock",
+      "visualGoal": "Conversa com app ou dispositivo de traducao instantanea.",
+      "candidateQueries": [
+        "language translation app conversation",
+        "real time translator app people talking",
+        "translation device conversation"
+      ]
+    },
+    {
+      "title": "IA no escritorio",
+      "narration": "So que a mudanca mais silenciosa talvez esteja no escritorio. Assistentes de IA ja resumem texto, organizam tarefas e aceleram trabalho de rotina.",
+      "searchQuery": "professional using ai workflow on laptop office",
+      "overlay": "IA no trabalho",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa trabalhando no laptop com contexto de automacao digital ou assistente virtual.",
+      "candidateQueries": [
+        "professional using ai workflow on laptop office",
+        "professional checking meeting summary laptop office",
+        "employee working with digital assistant screen"
+      ]
+    },
+    {
+      "title": "Aprender conectado",
+      "narration": "E a educacao tambem mudou. Plataformas digitais e colaboracao em nuvem abriram acesso a conteudo e trabalho em grupo de um jeito muito mais flexivel.",
+      "searchQuery": "students collaborating on cloud based project",
+      "overlay": "Aprender conectado",
+      "sceneType": "stock",
+      "visualGoal": "Aluno acompanhando aula online no laptop em casa.",
+      "candidateQueries": [
+        "students collaborating on cloud based project",
+        "teacher reviewing student performance data on computer",
+        "smart classroom with interactive whiteboard and sensors"
+      ]
+    },
+    {
+      "title": "Impressao 3D",
+      "narration": "Agora repara na impressao 3D. Ela acelera prototipos, produz pecas sob medida e ja entra em medicina, engenharia e pequenas fabricas.",
+      "searchQuery": "3d printer creating prosthetic hand",
+      "overlay": "Impressao 3D",
+      "sceneType": "stock",
+      "visualGoal": "Impressora 3D a produzir uma peca de valor real, como protese.",
+      "candidateQueries": [
+        "3d printer creating prosthetic hand",
+        "3d printer making industrial prototype",
+        "desktop 3d printer manufacturing"
+      ]
+    },
+    {
+      "title": "Fecho",
+      "narration": "Por isso, a tecnologia nao muda o mundo de uma vez so. Ela muda primeiro pequenas rotinas, e quando percebemos, a estrutura inteira ja esta diferente.",
+      "searchQuery": "smart city digital twin",
+      "overlay": "Mudanca real",
+      "sceneType": "stock",
+      "visualGoal": "Montagem de pessoas usando tecnologia no dia a dia, reforcando a transformacao acumulada.",
+      "candidateQueries": [
+        "smart city digital twin",
+        "people using smartphones in city",
+        "technology changing everyday life people"
+      ]
+    }
+  ]
+}

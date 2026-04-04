@@ -1,0 +1,150 @@
+{
+  "videoTitle": "12 Tecnologias Que Estao Construindo o Futuro",
+  "hook": "O futuro nao vai chegar de uma vez. Ele ja esta aparecendo em pedacos muito concretos do nosso dia a dia.",
+  "postCaption": "Doze tecnologias que ja estao saindo do laboratorio e entrando na rotina, na industria e nas cidades.",
+  "hashtags": [
+    "#tecnologia",
+    "#futuro",
+    "#inovacao",
+    "#ia",
+    "#shorts"
+  ],
+  "cta": "Qual dessas tecnologias voce acha que vai impactar mais a sua vida primeiro?",
+  "styleNotes": "Cenas concretas, humanas e stock-friendly. Evitar hologramas exagerados, interfaces irreais e sci-fi genérico.",
+  "scenes": [
+    {
+      "title": "Abertura",
+      "narration": "O futuro nao depende de uma unica invencao. Ele esta sendo construido por varias tecnologias que ja comecaram a mudar a realidade.",
+      "searchQuery": "futuristic city at night hyperlapse vertical",
+      "overlay": "O futuro ja comecou",
+      "sceneType": "stock",
+      "visualGoal": "Cidade moderna em ritmo acelerado, sugerindo movimento e progresso.",
+      "candidateQueries": [
+        "futuristic city at night hyperlapse vertical"
+      ]
+    },
+    {
+      "title": "Inteligencia Artificial",
+      "narration": "A inteligencia artificial conecta software, decisao e automacao, aparecendo em carros, interfaces e processos que aprendem com dados reais.",
+      "searchQuery": "artificial intelligence self driving car",
+      "overlay": "Inteligencia artificial",
+      "sceneType": "stock",
+      "visualGoal": "Cena concreta de IA aplicada a mobilidade ou operacao automatizada.",
+      "candidateQueries": [
+        "artificial intelligence self driving car",
+        "autonomous car city street",
+        "doctor using AI diagnosis"
+      ]
+    },
+    {
+      "title": "Internet das Coisas",
+      "narration": "Sensores e objetos conectados tornam casas e servicos mais responsivos, com informacao em tempo real e mais automacao.",
+      "searchQuery": "smart refrigerator ordering groceries iot vertical",
+      "overlay": "Internet das Coisas",
+      "sceneType": "stock",
+      "visualGoal": "Dispositivo conectado em contexto domestico ou urbano.",
+      "candidateQueries": [
+        "smart refrigerator ordering groceries iot vertical"
+      ]
+    },
+    {
+      "title": "Blockchain",
+      "narration": "Blockchain continua ganhando espaco onde confianca, rastreio e seguranca importam mais do que velocidade pura.",
+      "searchQuery": "blockchain data blocks digital security vertical",
+      "overlay": "Blockchain",
+      "sceneType": "stock",
+      "visualGoal": "Representacao visual de seguranca e integridade de dados.",
+      "candidateQueries": [
+        "blockchain data blocks digital security vertical"
+      ]
+    },
+    {
+      "title": "Realidade Aumentada e Virtual",
+      "narration": "Realidade aumentada e virtual deixam de ser curiosidade e viram ferramenta para trabalho, treino e entretenimento.",
+      "searchQuery": "augmented reality glasses futuristic interface",
+      "overlay": "AR e VR",
+      "sceneType": "stock",
+      "visualGoal": "Pessoa usando interface imersiva de forma crivel.",
+      "candidateQueries": [
+        "augmented reality glasses futuristic interface"
+      ]
+    },
+    {
+      "title": "Impressao 3D",
+      "narration": "A impressao 3D acelera prototipos, producao personalizada e solucoes medicas que antes levavam muito mais tempo.",
+      "searchQuery": "3D printer creating complex object time lapse vertical",
+      "overlay": "Impressao 3D",
+      "sceneType": "stock",
+      "visualGoal": "Impressora 3D em funcionamento produzindo algo util e visivel.",
+      "candidateQueries": [
+        "3D printer creating complex object time lapse vertical"
+      ]
+    },
+    {
+      "title": "Biotecnologia",
+      "narration": "Na biotecnologia, a combinacao de pesquisa, dados e laboratorio ja empurra novos alimentos, terapias e diagnósticos.",
+      "searchQuery": "scientist working with dna biotechnology vertical",
+      "overlay": "Biotecnologia",
+      "sceneType": "stock",
+      "visualGoal": "Cientista em ambiente de laboratorio com foco em DNA ou pesquisa aplicada.",
+      "candidateQueries": [
+        "scientist working with dna biotechnology vertical"
+      ]
+    },
+    {
+      "title": "Energia Renovavel",
+      "narration": "A transicao energetica depende de sistemas renovaveis mais previsiveis e baratos, com operacao integrada em escala.",
+      "searchQuery": "wind turbines and solar panels farm aerial view vertical",
+      "overlay": "Energia renovavel",
+      "sceneType": "stock",
+      "visualGoal": "Paisagem de energia limpa, com escala e clareza.",
+      "candidateQueries": [
+        "wind turbines and solar panels farm aerial view vertical"
+      ]
+    },
+    {
+      "title": "Veiculos Autonomos",
+      "narration": "Veiculos autonomos continuam amadurecendo em entregas, mobilidade e operacoes limitadas, cada vez mais orientados por dados.",
+      "searchQuery": "autonomous delivery vehicle driving street vertical",
+      "overlay": "Veiculos autonomos",
+      "sceneType": "stock",
+      "visualGoal": "Veiculo autonomo em uso real ou semi-controlado.",
+      "candidateQueries": [
+        "autonomous delivery vehicle driving street vertical"
+      ]
+    },
+    {
+      "title": "Robotica Avancada",
+      "narration": "Robos deixam de ser apenas repeticao mecanica e passam a colaborar mais com pessoas e ambientes complexos.",
+      "searchQuery": "futuristic robot arm assembling car in factory",
+      "overlay": "Robotica avancada",
+      "sceneType": "stock",
+      "visualGoal": "Robotica industrial util e legivel, sem exagero visual.",
+      "candidateQueries": [
+        "futuristic robot arm assembling car in factory"
+      ]
+    },
+    {
+      "title": "Computacao Quantica",
+      "narration": "Computacao quantica ainda esta em transicao, mas ja influencia pesquisa, expectativa de mercado e estrategia tecnologica.",
+      "searchQuery": "quantum computer futuristic server room vertical",
+      "overlay": "Computacao quantica",
+      "sceneType": "stock",
+      "visualGoal": "Infraestrutura de computacao avancada com clima tecnico e realista.",
+      "candidateQueries": [
+        "quantum computer futuristic server room vertical"
+      ]
+    },
+    {
+      "title": "Conclusao",
+      "narration": "O ponto mais importante e este: o futuro nao parece filme. Ele parece infraestrutura, produto e habito novo entrando devagar na rotina.",
+      "searchQuery": "futuristic technology city skyline animation vertical",
+      "overlay": "O futuro entra aos poucos",
+      "sceneType": "stock",
+      "visualGoal": "Fecho com cidade ou tecnologia integrada ao cotidiano.",
+      "candidateQueries": [
+        "futuristic technology city skyline animation vertical"
+      ]
+    }
+  ]
+}

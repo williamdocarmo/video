@@ -1,0 +1,133 @@
+{
+  "videoTitle": "Como a Inteligência Artificial Está Transformando o Dia a Dia das Pessoas",
+  "hook": "A inteligência artificial já não vive só em laboratório. Ela está entrando em coisas pequenas, úteis e repetidas do seu dia, quase sempre sem fazer alarde.",
+  "postCaption": "A IA já organiza agenda, filtra spam, traduz conversa, acompanha saúde, acelera atendimento e melhora acessibilidade. O impacto maior está no cotidiano, não no discurso.",
+  "hashtags": [
+    "#ia",
+    "#inteligenciaartificial",
+    "#tecnologia",
+    "#cotidiano",
+    "#inovacao"
+  ],
+  "cta": "Em qual parte do seu dia você já percebe a IA trabalhando sem chamar atenção?",
+  "styleNotes": "Usar pessoas reais com smartphone, laptop, videochamada, compras, transporte, casa e trabalho. Foco em gestos humanos e situações reconhecíveis, não em visual futurista.",
+  "scenes": [
+    {
+      "title": "Assistente no Celular",
+      "narration": "A transformação começa no bolso. O celular já lembra horário, sugere rota, dita mensagem e organiza partes do seu dia com cada vez menos atrito.",
+      "searchQuery": "person using smartphone assistant daily routine",
+      "overlay": "Assistente diário",
+      "sceneType": "stock",
+      "visualGoal": "A person using smartphone assistant-like features during a daily routine.",
+      "candidateQueries": [
+        "person using smartphone assistant daily routine",
+        "person checking phone reminders and messages",
+        "smartphone productivity daily life close up"
+      ]
+    },
+    {
+      "title": "Tradução Instantânea",
+      "narration": "Quando a barreira é idioma, a IA encurta o caminho. Tradução em tempo real já ajuda a viajar, conversar, comprar e entender contexto muito mais rápido.",
+      "searchQuery": "person using phone translation app travel",
+      "overlay": "Idioma sem barreira",
+      "sceneType": "stock",
+      "visualGoal": "A person using a phone translation app in travel or street context.",
+      "candidateQueries": [
+        "person using phone translation app travel",
+        "smartphone live translation app street",
+        "traveler using translator app on phone"
+      ]
+    },
+    {
+      "title": "Golpe Filtrado",
+      "narration": "Na segurança, a IA já barra chamadas suspeitas, separa spam, destaca risco e evita que mensagens ruins cheguem até você com a mesma força de antes.",
+      "searchQuery": "smartphone spam call warning close up",
+      "overlay": "Risco menor",
+      "sceneType": "stock",
+      "visualGoal": "A phone showing spam call warning or suspicious message filtering.",
+      "candidateQueries": [
+        "smartphone spam call warning close up",
+        "phone blocking scam call screen",
+        "mobile security alert suspicious message"
+      ]
+    },
+    {
+      "title": "Saúde no Pulso",
+      "narration": "No cuidado pessoal, relógio e aplicativo já monitoram corpo, rotina e descanso. O efeito não é só medir: é ajudar a perceber padrão antes do problema.",
+      "searchQuery": "person checking smartwatch health stats phone",
+      "overlay": "Saúde no pulso",
+      "sceneType": "stock",
+      "visualGoal": "A person reviewing health metrics from smartwatch and phone.",
+      "candidateQueries": [
+        "person checking smartwatch health stats phone",
+        "wellness app smartwatch smartphone close up",
+        "person reviewing health data on phone"
+      ]
+    },
+    {
+      "title": "Acessibilidade Melhor",
+      "narration": "A IA também melhora acessibilidade. Legenda automática, leitura em voz, comando por fala e transcrição já tornam tecnologia mais inclusiva para muita gente.",
+      "searchQuery": "person using voice command and captions on laptop",
+      "overlay": "Mais acessível",
+      "sceneType": "stock",
+      "visualGoal": "A person using captions, voice commands or assistive tech on phone or laptop.",
+      "candidateQueries": [
+        "person using voice command and captions on laptop",
+        "automatic subtitles video call laptop",
+        "person using accessibility features smartphone"
+      ]
+    },
+    {
+      "title": "Trabalho Menos Pesado",
+      "narration": "No trabalho, ela resume reunião, limpa caixa de entrada, destaca prioridade e tira tarefas repetidas da frente para devolver foco ao que importa.",
+      "searchQuery": "professional checking meeting summary laptop office",
+      "overlay": "Menos ruído",
+      "sceneType": "stock",
+      "visualGoal": "A professional reviewing meeting summaries, email or tasks on a laptop.",
+      "candidateQueries": [
+        "professional checking meeting summary laptop office",
+        "office worker reviewing tasks on laptop",
+        "person using productivity tools on laptop office"
+      ]
+    },
+    {
+      "title": "Atendimento Mais Rápido",
+      "narration": "Quando você pede ajuda, muita resposta inicial já passa por IA. Isso acelera triagem, agenda horário e resolve dúvida simples em poucos segundos.",
+      "searchQuery": "customer support chatbot smartphone scheduling",
+      "overlay": "Resposta rápida",
+      "sceneType": "stock",
+      "visualGoal": "A person getting support or scheduling help through phone or laptop chat.",
+      "candidateQueries": [
+        "customer support chatbot smartphone scheduling",
+        "person chatting with online support phone",
+        "customer service help on laptop chat"
+      ]
+    },
+    {
+      "title": "Compra Mais Inteligente",
+      "narration": "Na hora de comprar, ela compara opção, recomenda produto e organiza busca. O resultado é menos tempo perdido e decisão mais guiada por contexto.",
+      "searchQuery": "person shopping online smartphone recommendations",
+      "overlay": "Escolha guiada",
+      "sceneType": "stock",
+      "visualGoal": "A person shopping online or comparing options on a smartphone.",
+      "candidateQueries": [
+        "person shopping online smartphone recommendations",
+        "woman browsing products on phone at home",
+        "online shopping smartphone close up"
+      ]
+    },
+    {
+      "title": "IA Invisível",
+      "narration": "Esse é o ponto central: a IA que mais muda a vida das pessoas nem sempre parece espetacular. Ela só faz o dia fluir melhor, com menos fricção.",
+      "searchQuery": "person ending day relaxed using smartphone at home",
+      "overlay": "Mudança silenciosa",
+      "sceneType": "stock",
+      "visualGoal": "A calm end-of-day scene with a person using technology naturally and comfortably.",
+      "candidateQueries": [
+        "person ending day relaxed using smartphone at home",
+        "woman sitting at home using phone calmly",
+        "person using technology naturally at home"
+      ]
+    }
+  ]
+}

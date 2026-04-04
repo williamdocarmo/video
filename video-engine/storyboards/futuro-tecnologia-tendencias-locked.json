@@ -1,0 +1,133 @@
+{
+  "videoTitle": "O Futuro da Tecnologia: Tendências que Você Precisa Conhecer",
+  "hook": "Se você quer entender o próximo passo da tecnologia, não basta olhar para gadgets. O que importa agora é como IA, energia, segurança e dispositivos vão se conectar.",
+  "postCaption": "O futuro da tecnologia passa por IA mais autônoma, robótica mais útil, modelos rodando no dispositivo, nova pressão por energia, camadas de confiança e saúde mais personalizada.",
+  "hashtags": [
+    "#futuro",
+    "#tecnologia",
+    "#tendencias",
+    "#ia",
+    "#inovacao"
+  ],
+  "cta": "Qual dessas tendências você acha que vai sair do discurso e entrar de vez na sua rotina?",
+  "styleNotes": "Usar escritório, laboratório, hospital, data center, smartphone, robótica leve, cidade e casa. Visual limpo, concreto e profissional. Evitar exagero sci-fi.",
+  "scenes": [
+    {
+      "title": "IA Mais Autônoma",
+      "narration": "A primeira tendência é a IA mais autônoma. Ela sai do formato de resposta única e começa a planejar, executar e revisar tarefas com menos intervenção.",
+      "searchQuery": "professional using ai workflow on laptop office",
+      "overlay": "IA autônoma",
+      "sceneType": "stock",
+      "visualGoal": "A professional using AI-driven workflows on a computer in a real work environment.",
+      "candidateQueries": [
+        "professional using ai workflow on laptop office",
+        "person automating tasks on laptop office",
+        "office worker using advanced software laptop"
+      ]
+    },
+    {
+      "title": "IA Física",
+      "narration": "Depois vem a IA física. Robôs mais práticos, máquinas mais adaptáveis e automação mais sensível ao ambiente tendem a ganhar espaço nos próximos ciclos.",
+      "searchQuery": "robot automation factory worker supervision",
+      "overlay": "Máquinas mais úteis",
+      "sceneType": "stock",
+      "visualGoal": "Robotics or adaptive automation in a factory or warehouse with human supervision.",
+      "candidateQueries": [
+        "robot automation factory worker supervision",
+        "industrial robot and worker warehouse",
+        "factory automation robotic arm operator"
+      ]
+    },
+    {
+      "title": "IA Privada no Dispositivo",
+      "narration": "Outra tendência forte é a IA rodando localmente. Isso importa porque reduz atraso, melhora privacidade e leva inteligência para o aparelho que você já usa.",
+      "searchQuery": "person using laptop and smartphone ai features",
+      "overlay": "IA local",
+      "sceneType": "stock",
+      "visualGoal": "A person using AI-like features on laptop and smartphone in a private or work setting.",
+      "candidateQueries": [
+        "person using laptop and smartphone ai features",
+        "person using smart features on laptop close up",
+        "laptop smartphone productivity workflow"
+      ]
+    },
+    {
+      "title": "Software Nativo de IA",
+      "narration": "O software também muda de forma. Em vez de só menu e formulário, veremos mais produto nativo de IA, com interface que conversa e se adapta.",
+      "searchQuery": "designer or developer working on software interface laptop",
+      "overlay": "Software nativo",
+      "sceneType": "stock",
+      "visualGoal": "A developer or designer working with modern software interfaces on a laptop.",
+      "candidateQueries": [
+        "designer or developer working on software interface laptop",
+        "developer coding on laptop office modern software",
+        "product designer using laptop at desk"
+      ]
+    },
+    {
+      "title": "Energia e Computação",
+      "narration": "Só que o futuro da IA depende de energia. Data center, chip, refrigeração e infraestrutura viram tendência central, porque sem isso o resto não escala.",
+      "searchQuery": "data center engineer servers infrastructure",
+      "overlay": "Energia para escalar",
+      "sceneType": "stock",
+      "visualGoal": "Engineers or technicians working in data centers and infrastructure-heavy environments.",
+      "candidateQueries": [
+        "data center engineer servers infrastructure",
+        "technician walking in server room",
+        "engineer checking data center equipment"
+      ]
+    },
+    {
+      "title": "Confiança e Segurança",
+      "narration": "Também cresce a pressão por confiança. Segurança, origem de conteúdo, proteção contra fraude e validação de identidade passam a ser parte do produto.",
+      "searchQuery": "person verifying identity or digital security on laptop",
+      "overlay": "Tecnologia confiável",
+      "sceneType": "stock",
+      "visualGoal": "A person dealing with digital identity, verification or security checks on a computer.",
+      "candidateQueries": [
+        "person verifying identity or digital security on laptop",
+        "business person checking secure login computer",
+        "digital verification process on laptop"
+      ]
+    },
+    {
+      "title": "Saúde Personalizada",
+      "narration": "Na saúde, a grande tendência é personalização prática. Mais dados do corpo, mais acompanhamento contínuo e decisões mais ajustadas a cada pessoa.",
+      "searchQuery": "doctor reviewing digital health data tablet patient",
+      "overlay": "Saúde mais pessoal",
+      "sceneType": "stock",
+      "visualGoal": "A doctor or patient reviewing digital health data on tablet or laptop.",
+      "candidateQueries": [
+        "doctor reviewing digital health data tablet patient",
+        "medical professional looking at patient data laptop",
+        "patient health monitoring tablet hospital"
+      ]
+    },
+    {
+      "title": "Cidades e Operação",
+      "narration": "Outro vetor é a operação em tempo real: cidade, trânsito, logística e serviços ficam mais inteligentes quando sensores e modelos começam a trabalhar juntos.",
+      "searchQuery": "smart city operations traffic monitoring",
+      "overlay": "Operação em tempo real",
+      "sceneType": "stock",
+      "visualGoal": "Urban traffic or operations monitoring with smart systems in real environments.",
+      "candidateQueries": [
+        "smart city operations traffic monitoring",
+        "traffic management control room city",
+        "urban monitoring systems infrastructure"
+      ]
+    },
+    {
+      "title": "O Que Vem Agora",
+      "narration": "No fim, o futuro da tecnologia não será uma peça isolada. O avanço real vem da combinação entre inteligência, energia, confiança e utilidade concreta.",
+      "searchQuery": "professional looking at future technology screens office",
+      "overlay": "Tudo conectado",
+      "sceneType": "stock",
+      "visualGoal": "A calm, reflective technology scene that feels forward-looking but realistic.",
+      "candidateQueries": [
+        "professional looking at future technology screens office",
+        "person thinking in modern office with laptop",
+        "technology professional in control room"
+      ]
+    }
+  ]
+}

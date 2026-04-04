@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Gemini Video Local</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Gemini Video Local</p>
+          <h1>Gerar vídeo a partir de um título ou de um artigo inteiro.</h1>
+          <p class="lede">
+            Preencha o assunto ou cole o texto completo, escolha idioma, duração, voz e tom.
+            O servidor local chama o pipeline que já existe neste projeto.
+          </p>
+        </div>
+
+        <div class="hero-card">
+          <div class="hero-stat">
+            <span class="stat-label">Pendentes</span>
+            <strong id="queueCount">0</strong>
+          </div>
+          <div class="hero-stat">
+            <span class="stat-label">Fila roteiro</span>
+            <strong id="previewQueueCount">0</strong>
+          </div>
+          <div class="hero-stat">
+            <span class="stat-label">Fila render</span>
+            <strong id="heavyQueueCount">0</strong>
+          </div>
+          <div class="hero-stat">
+            <span class="stat-label">Servidor</span>
+            <strong>local</strong>
+          </div>
+        </div>
+      </header>
+
+      <div class="tabbar" role="tablist" aria-label="Seções do app">
+        <button type="button" class="tab-button active" data-tab-target="workspace">Criar</button>
+        <button type="button" class="tab-button" data-tab-target="videos">Vídeos</button>
+      </div>
+
+      <section class="tab-panel" data-tab-panel="workspace">
+        <main class="layout">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Novo vídeo</h2>
+              <p>Se vier só com título, ele precisa ser bem específico. Para temas soltos ou amplos, cole um texto-base completo.</p>
+            </div>
+
+            <form id="generateForm" class="stack">
+              <label class="field">
+                <span>Título / assunto</span>
+                <input type="text" name="title" placeholder="Ex.: Como a IA vai mudar o trabalho em 2030">
+                <small id="titleHint" class="field-hint">Se não colar texto-base, use um título específico com pelo menos 6 palavras.</small>
+              </label>
+
+              <label class="field">
+                <span>Texto completo para o Gemini usar como base</span>
+                <textarea
+                  name="sourceText"
+                  rows="9"
+                  placeholder="Cole aqui o artigo inteiro, notas, briefing ou qualquer texto-base. Se deixar vazio, o pipeline usa só o título."
+                ></textarea>
+                <small id="sourceTextHint" class="field-hint">Com texto-base, o pipeline fica mais estável e reduz falhas do Gemini no storyboard/plano visual.</small>
+              </label>
+
+              <div class="grid two">
+                <label class="field">
+                  <span>Idioma</span>
+                  <select name="language" id="generateLanguage"></select>
+                </label>
+
+                <label class="field">
+                  <span>Formato de saída</span>
+                  <select name="outputProfile" id="generateOutputProfile"></select>
+                  <small id="outputProfileHint" class="field-hint"></small>
+                </label>
+              </div>
+
+              <div class="grid two">
+                <label class="field">
+                  <span>Duração</span>
+                  <select name="targetSeconds" id="generateDuration"></select>
+                  <small id="durationHint" class="field-hint"></small>
+                </label>
+
+                <label class="field">
+                  <span>Motor de imagem</span>
+                  <select name="assetMode" id="generateAssetMode"></select>
+                  <small id="assetModeHint" class="field-hint"></small>
+                </label>
+
+                <label class="field">
+                  <span>Estilo de imagem</span>
+                  <select name="imageStyle" id="generateImageStyle"></select>
+                  <small id="imageStyleHint" class="field-hint"></small>
+                </label>
+
+                <label class="field">
+                  <span>Estilo de roteiro</span>
+                  <select name="tone" id="generateTone"></select>
+                  <small id="toneHint" class="field-hint"></small>
+                </label>
+              </div>
+
+              <div class="grid two">
+                <label class="field">
+                  <span>Voz</span>
+                  <select name="voice" id="generateVoice" data-custom-target="generateCustomVoice"></select>
+                </label>
+
+                <label class="field hidden" id="generateCustomVoiceField">
+                  <span>Voz personalizada</span>
+                  <input type="text" name="customVoice" id="generateCustomVoice" placeholder="Ex.: Puck">
+                </label>
+              </div>
+
+              <div class="grid two">
+                <label class="field">
+                  <span>Detalhe extra da voz</span>
+                  <input
+                    type="text"
+                    name="customStylePrompt"
+                    placeholder="Ex.: mais calor humano, pausas discretas, final mais firme"
+                  >
+                </label>
+
+                <label class="field">
+                  <span>Canal de destino</span>
+                  <select name="channel" id="generateChannel"></select>
+                  <small id="channelHint" class="field-hint"></small>
+                </label>
+              </div>
+
+              <div class="toggle-row">
+                <label class="check">
+                  <input type="checkbox" name="force" checked>
+                  <span>Forçar regeneração</span>
+                </label>
+
+                <label class="check">
+                  <input type="checkbox" name="noMusic" checked>
+                  <span>Sem música de fundo</span>
+                </label>
+
+                <label class="check">
+                  <input type="checkbox" name="autoApprove" id="generateAutoApprove">
+                  <span>Gerar direto sem aprovação</span>
+                </label>
+              </div>
+
+              <div class="button-row">
+                <button id="generateSubmitButton" type="submit" class="button primary" data-preview-only="true">Montar preview para aprovar</button>
+              </div>
+              <p id="generateValidationHint" class="field-hint hidden"></p>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Status atual</h2>
+              <p>Logs em tempo real, links de saída e dados da run selecionada.</p>
+            </div>
+
+            <div id="jobEmpty" class="empty-state">
+              Nenhum job selecionado.
+            </div>
+
+            <div id="jobDetails" class="stack hidden">
+              <div class="job-summary">
+                <div>
+                  <p class="job-kicker" id="jobType">generate</p>
+                  <h3 id="jobTitle">Título</h3>
+                  <p class="job-meta" id="jobMeta"></p>
+                </div>
+                <span class="status-pill" id="jobStatus">queued</span>
+              </div>
+
+              <div class="link-row">
+                <a id="jobOutputLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir vídeo</a>
+                <a id="jobStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
+              </div>
+
+              <p id="jobFailureSummary" class="field-hint hidden"></p>
+
+              <div class="button-row hidden" id="jobActions">
+                <button id="resumeJobButton" type="button" class="button secondary">Retomar a partir do ponto salvo</button>
+              </div>
+
+              <div id="previewPanel" class="stack hidden">
+                <div class="button-row">
+                  <button id="approvePreviewButton" type="button" class="button primary hidden">Aprovar e gerar vídeo</button>
+                </div>
+
+                <div id="previewSummary" class="preview-summary hidden"></div>
+                <div id="previewScenes" class="preview-scenes"></div>
+              </div>
+
+              <pre id="jobLog" class="log-box"></pre>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Histórico</h2>
+              <p>Jobs recentes e arquivos MP4 encontrados no diretório de exportação.</p>
+            </div>
+
+            <div class="history-grid">
+              <div>
+                <h3 class="subhead">Jobs</h3>
+                <div id="jobsList" class="history-list"></div>
+              </div>
+
+              <div>
+                <h3 class="subhead">Arquivos</h3>
+                <div id="runsList" class="history-list"></div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </section>
+
+      <section class="tab-panel hidden" data-tab-panel="videos">
+        <div class="library-layout">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Vídeos criados</h2>
+              <p>Biblioteca dos MP4 exportados e dos jobs que falharam, com ações rápidas para revisar e refazer.</p>
+            </div>
+            <div class="stack">
+              <div>
+                <h3 class="subhead">Concluídos</h3>
+                <div id="videosList" class="history-list"></div>
+              </div>
+
+              <div>
+                <h3 class="subhead">Falhados</h3>
+                <div id="failedJobsList" class="history-list"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div id="videoEmpty" class="empty-state">
+              Selecione um vídeo concluído ou um job falhado.
+            </div>
+
+            <div id="videoDetails" class="stack hidden">
+              <div class="job-summary">
+                <div>
+                  <p class="job-kicker" id="videoChannel">Biblioteca</p>
+                  <h3 id="videoTitleHeading">Vídeo</h3>
+                  <p id="videoMeta" class="job-meta"></p>
+                </div>
+                <span class="status-pill" id="videoPublishStatus">local</span>
+              </div>
+
+              <video id="videoPlayer" class="video-player" controls playsinline preload="metadata"></video>
+
+              <div class="link-row">
+                <a id="videoOpenLink" class="text-link" href="#" target="_blank" rel="noreferrer">Abrir arquivo</a>
+                <a id="videoStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
+              </div>
+
+              <form id="videoMetaForm" class="stack">
+                <input type="hidden" name="slug">
+                <input type="hidden" name="path">
+                <input type="hidden" name="channel">
+
+                <div class="grid two">
+                  <label class="field">
+                    <span>Título</span>
+                    <input type="text" name="title" placeholder="Título do vídeo">
+                  </label>
+
+                  <label class="field">
+                    <span>Agendar publicação</span>
+                    <input type="datetime-local" name="scheduleAt">
+                  </label>
+                </div>
+
+                <label class="field">
+                  <span>Legenda / caption</span>
+                  <textarea name="caption" rows="6" placeholder="Legenda para salvar e publicar"></textarea>
+                </label>
+
+                <label class="field">
+                  <span>Hashtags</span>
+                  <input type="text" name="hashtags" placeholder="#tag1 #tag2 #tag3">
+                </label>
+
+                <div class="stack compact">
+                  <span class="field-label">Plataformas</span>
+                  <div class="toggle-row">
+                    <label class="check">
+                      <input type="checkbox" name="platforms" value="FB">
+                      <span>Facebook</span>
+                    </label>
+
+                    <label class="check">
+                      <input type="checkbox" name="platforms" value="IG">
+                      <span>Instagram</span>
+                    </label>
+
+                    <label class="check">
+                      <input type="checkbox" name="platforms" value="YT">
+                      <span>YouTube</span>
+                    </label>
+
+                    <label class="check">
+                      <input type="checkbox" name="isDraft" value="true">
+                      <span>Salvar como rascunho</span>
+                    </label>
+                  </div>
+                </div>
+
+                <p id="videoLibraryHint" class="field-hint">Se as credenciais do agendador não estiverem configuradas, a publicação vai falhar com erro explícito.</p>
+                <p id="videoActionHint" class="field-hint hidden"></p>
+
+                <div class="button-row">
+                  <button id="saveVideoMetaButton" type="submit" class="button secondary">Salvar edição</button>
+                  <button id="redoVideoButton" type="button" class="button secondary">Refazer</button>
+                  <button id="publishVideoButton" type="button" class="button primary">Publicar no agenda.online</button>
+                  <button id="deleteVideoButton" type="button" class="button danger">Deletar</button>
+                </div>
+              </form>
+            </div>
+
+            <div id="failedJobDetails" class="stack hidden">
+              <div class="job-summary">
+                <div>
+                  <p class="job-kicker" id="failedJobChannel">Falhado</p>
+                  <h3 id="failedJobTitle">Job falhado</h3>
+                  <p id="failedJobMeta" class="job-meta"></p>
+                </div>
+                <span class="status-pill" id="failedJobStatus" data-state="failed">failed</span>
+              </div>
+
+              <p id="failedJobError" class="field-hint error"></p>
+
+              <div class="link-row">
+                <a id="failedJobStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
+              </div>
+
+              <div class="button-row">
+                <button id="retryFailedJobButton" type="button" class="button primary">Refazer este job</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
