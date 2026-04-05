@@ -41,9 +41,15 @@ const elements = {
   generateValidationHint: document.querySelector("#generateValidationHint"),
   outputProfileHint: document.querySelector("#outputProfileHint"),
   durationHint: document.querySelector("#durationHint"),
-  assetModeHint: document.querySelector("#assetModeHint"),
   imageStyleHint: document.querySelector("#imageStyleHint"),
+  imageStylePreview: document.querySelector("#imageStylePreview"),
+  imageStylePreviewLabel: document.querySelector("#imageStylePreviewLabel"),
+  imageStylePreviewDescription: document.querySelector("#imageStylePreviewDescription"),
+  imageStylePreviewLink: document.querySelector("#imageStylePreviewLink"),
+  imageStylePreviewImageLink: document.querySelector("#imageStylePreviewImageLink"),
+  imageStylePreviewImage: document.querySelector("#imageStylePreviewImage"),
   toneHint: document.querySelector("#toneHint"),
+  voiceHint: document.querySelector("#voiceHint"),
   channelHint: document.querySelector("#channelHint"),
   queueCount: document.querySelector("#queueCount"),
   previewQueueCount: document.querySelector("#previewQueueCount"),
@@ -65,6 +71,16 @@ const elements = {
   previewScenes: document.querySelector("#previewScenes"),
   approvePreviewButton: document.querySelector("#approvePreviewButton"),
   jobsList: document.querySelector("#jobsList"),
+  logsJobsList: document.querySelector("#logsJobsList"),
+  logsEmpty: document.querySelector("#logsEmpty"),
+  logsDetails: document.querySelector("#logsDetails"),
+  logsTitle: document.querySelector("#logsTitle"),
+  logsMeta: document.querySelector("#logsMeta"),
+  logsStatus: document.querySelector("#logsStatus"),
+  logsOutputLink: document.querySelector("#logsOutputLink"),
+  logsStoryboardLink: document.querySelector("#logsStoryboardLink"),
+  logsFailureSummary: document.querySelector("#logsFailureSummary"),
+  logsJobLog: document.querySelector("#logsJobLog"),
   runsList: document.querySelector("#runsList"),
   videosList: document.querySelector("#videosList"),
   failedJobsList: document.querySelector("#failedJobsList"),
@@ -75,13 +91,23 @@ const elements = {
   videoTitleHeading: document.querySelector("#videoTitleHeading"),
   videoMeta: document.querySelector("#videoMeta"),
   videoPublishStatus: document.querySelector("#videoPublishStatus"),
+  videoArtwork: document.querySelector("#videoArtwork"),
+  videoArtworkImage: document.querySelector("#videoArtworkImage"),
+  videoArtworkTitle: document.querySelector("#videoArtworkTitle"),
+  videoArtworkMeta: document.querySelector("#videoArtworkMeta"),
   videoPlayer: document.querySelector("#videoPlayer"),
   videoOpenLink: document.querySelector("#videoOpenLink"),
   videoStoryboardLink: document.querySelector("#videoStoryboardLink"),
+  videoParamsCard: document.querySelector("#videoParamsCard"),
+  videoParamsGrid: document.querySelector("#videoParamsGrid"),
   videoMetaForm: document.querySelector("#videoMetaForm"),
+  videoTargetChannel: document.querySelector("#videoTargetChannel"),
+  videoTargetHint: document.querySelector("#videoTargetHint"),
+  videoScheduleField: document.querySelector("#videoScheduleField"),
   saveVideoMetaButton: document.querySelector("#saveVideoMetaButton"),
   redoVideoButton: document.querySelector("#redoVideoButton"),
   publishVideoButton: document.querySelector("#publishVideoButton"),
+  openTikTokHelperButton: document.querySelector("#openTikTokHelperButton"),
   deleteVideoButton: document.querySelector("#deleteVideoButton"),
   videoLibraryHint: document.querySelector("#videoLibraryHint"),
   videoActionHint: document.querySelector("#videoActionHint"),
@@ -113,6 +139,11 @@ const fetchJson = async (url, options) => {
   return payload;
 };
 
+const findOptionLabel = (options, value, fallback = "") => {
+  const match = Array.isArray(options) ? options.find((option) => String(option.value) === String(value)) : null;
+  return match?.label || fallback || String(value || "");
+};
+
 const fillSelect = (select, options, selectedValue) => {
   if (!select) {
     return;
@@ -124,6 +155,45 @@ const fillSelect = (select, options, selectedValue) => {
       return `<option value="${escapeHtml(option.value)}"${isSelected}>${escapeHtml(option.label)}</option>`;
     })
     .join("");
+};
+
+const renderVideoCreationParams = (video) => {
+  if (!elements.videoParamsCard || !elements.videoParamsGrid) {
+    return;
+  }
+
+  const params = video?.creationParams || null;
+  if (!params) {
+    elements.videoParamsCard.classList.add("hidden");
+    elements.videoParamsGrid.innerHTML = "";
+    return;
+  }
+
+  const items = [
+    {label: "Idioma", value: findOptionLabel(languageOptions, params.language, params.language)},
+    {label: "Formato", value: findOptionLabel(state.config?.outputProfiles, params.outputProfile, params.outputProfile)},
+    {label: "Duração", value: params.targetSeconds ? `${params.targetSeconds}s` : ""},
+    {label: "Estilo de imagem", value: findOptionLabel(state.config?.imageStyles, params.imageStyle, params.imageStyle)},
+    {label: "Estilo de roteiro", value: findOptionLabel(state.config?.tonePresets, params.tone, params.tone)},
+    {label: "Voz", value: findOptionLabel(state.config?.voices, params.voice, params.voice)},
+    {label: "Canal", value: params.channelHandle || findOptionLabel(state.config?.channels, params.channel, params.channel)},
+    {label: "Forçar regeneração", value: params.force ? "Sim" : "Não"},
+    {label: "Música de fundo", value: params.noMusic ? "Sem música" : "Com música"},
+    {label: "Fluxo", value: params.previewOnly ? "Preview" : "Direto / final"}
+  ].filter((item) => item.value);
+
+  elements.videoParamsGrid.innerHTML = items
+    .map(
+      (item) => `
+        <div class="meta-item">
+          <span class="meta-item-label">${escapeHtml(item.label)}</span>
+          <span class="meta-item-value">${escapeHtml(item.value)}</span>
+        </div>
+      `
+    )
+    .join("");
+
+  elements.videoParamsCard.classList.toggle("hidden", items.length === 0);
 };
 
 const formatDateTime = (value) => {
@@ -174,14 +244,14 @@ const toDateTimeLocalValue = (value) => {
 const getImageStyleMeta = (styleId) =>
   state.config?.imageStyles?.find((item) => item.value === styleId) || null;
 
-const getAssetModeMeta = (assetMode) =>
-  state.config?.assetModes?.find((item) => item.value === assetMode) || null;
-
 const getChannelMeta = (channelId) =>
   state.config?.channels?.find((item) => item.value === channelId) || null;
 
 const getToneMeta = (toneId) =>
   state.config?.tones?.find((item) => item.value === toneId) || null;
+
+const getVoiceMeta = (voiceId) =>
+  state.config?.voices?.find((item) => item.value === voiceId) || null;
 
 const getChannelPreset = (channelId) => state.config?.channelPresets?.[channelId] || null;
 
@@ -191,6 +261,128 @@ const getOutputProfileMeta = (profileId) =>
 const getJobById = (jobId) => state.jobs.find((job) => job.id === jobId) || null;
 const getVideoById = (videoId) => state.videos.find((video) => video.id === videoId) || null;
 const getFailedJobById = (jobId) => state.failedJobs.find((job) => job.id === jobId) || null;
+
+const getSelectedPublishMode = () => {
+  const selected = elements.videoMetaForm?.querySelector('input[name="publishMode"]:checked');
+  return selected?.value === "scheduled" ? "scheduled" : "now";
+};
+
+const getVoicesForLanguage = (languageCode) =>
+  (state.config?.voices || []).filter((voice) => {
+    const languages = Array.isArray(voice.languages) ? voice.languages : [];
+    return languages.length === 0 || languages.includes(languageCode);
+  });
+
+const getPreferredVoiceForLanguage = (languageCode, fallbackVoice = "") =>
+  state.config?.defaultVoicesByLanguage?.[languageCode] || fallbackVoice || state.config?.defaults?.voice || "Iapetus";
+
+const syncVoiceHint = (voiceId) => {
+  if (!elements.voiceHint) {
+    return;
+  }
+
+  const meta = getVoiceMeta(voiceId);
+  if (!meta) {
+    elements.voiceHint.textContent = "";
+    return;
+  }
+
+  const pieces = [meta.badge, meta.description].filter(Boolean);
+  elements.voiceHint.textContent = pieces.join(" • ");
+};
+
+const syncVoiceOptionsForLanguage = (languageCode, preferredVoice = "") => {
+  const voiceSelect = document.querySelector("#generateVoice");
+  if (!voiceSelect || !state.config) {
+    return;
+  }
+
+  const filteredVoices = getVoicesForLanguage(languageCode);
+  const fallbackVoice = getPreferredVoiceForLanguage(languageCode);
+  const currentValue = preferredVoice || voiceSelect.value;
+  const selectedVoice = filteredVoices.some((voice) => String(voice.value) === String(currentValue))
+    ? currentValue
+    : fallbackVoice;
+
+  fillSelect(voiceSelect, filteredVoices, selectedVoice);
+  syncVoiceHint(selectedVoice);
+};
+
+const getVideoArtworkUrl = (video) =>
+  String(
+    video?.thumbnailUrl ||
+    video?.coverUrl ||
+    video?.posterUrl ||
+    video?.artworkUrl ||
+    video?.previewImageUrl ||
+    video?.thumbUrl ||
+    ""
+  ).trim();
+
+const parseDateTimeLocalToIso = (value) => {
+  const raw = String(value || "").trim();
+
+  if (!raw) {
+    return "";
+  }
+
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+};
+
+const syncVideoTargetHint = (channelId) => {
+  if (!elements.videoTargetHint) {
+    return;
+  }
+
+  const selectedChannelMeta = getChannelMeta(channelId);
+  elements.videoTargetHint.textContent = selectedChannelMeta
+    ? `${selectedChannelMeta.description || ""} Vai salvar em Documents/postar/${selectedChannelMeta.folder}`.trim()
+    : "Escolha o perfil que será usado na edição e na publicação.";
+};
+
+const syncImageStylePreview = (styleId) => {
+  const selected = getImageStyleMeta(styleId);
+
+  if (!elements.imageStylePreview || !elements.imageStylePreviewLabel || !elements.imageStylePreviewDescription || !elements.imageStylePreviewLink) {
+    return;
+  }
+
+  if (!selected) {
+    elements.imageStylePreview.classList.add("hidden");
+    elements.imageStylePreviewLabel.textContent = "";
+    elements.imageStylePreviewDescription.textContent = "";
+    elements.imageStylePreviewLink.setAttribute("href", "#generateImageStyle");
+    if (elements.imageStylePreviewImageLink) {
+      elements.imageStylePreviewImageLink.classList.add("hidden");
+      elements.imageStylePreviewImageLink.setAttribute("href", "#generateImageStyle");
+    }
+    if (elements.imageStylePreviewImage) {
+      elements.imageStylePreviewImage.setAttribute("src", "");
+    }
+    return;
+  }
+
+  elements.imageStylePreview.classList.remove("hidden");
+  elements.imageStylePreviewLabel.textContent = selected.label || "Estilo selecionado";
+  elements.imageStylePreviewDescription.textContent = selected.description || "Sem descrição adicional.";
+  elements.imageStylePreviewLink.textContent = `Abrir referência de ${selected.label || "estilo"}`;
+  elements.imageStylePreviewLink.setAttribute("href", selected.previewLinkUrl || selected.previewUrl || selected.previewPath || "#generateImageStyle");
+
+  const previewHref = selected.previewImageUrl || selected.previewLinkUrl || selected.previewUrl || selected.previewPath || "";
+  if (elements.imageStylePreviewImageLink && elements.imageStylePreviewImage) {
+    if (previewHref) {
+      elements.imageStylePreviewImageLink.classList.remove("hidden");
+      elements.imageStylePreviewImageLink.setAttribute("href", previewHref);
+      elements.imageStylePreviewImage.setAttribute("src", previewHref);
+      elements.imageStylePreviewImage.setAttribute("alt", `Preview do estilo ${selected.label || styleId}`);
+    } else {
+      elements.imageStylePreviewImageLink.classList.add("hidden");
+      elements.imageStylePreviewImageLink.setAttribute("href", "#generateImageStyle");
+      elements.imageStylePreviewImage.setAttribute("src", "");
+    }
+  }
+};
 
 const getJobQueueLane = (job) => {
   if (!job) {
@@ -216,8 +408,27 @@ const getJobFailureLabel = (job) => {
   return `${stage}: ${summary}`;
 };
 
-const isLogPinnedToBottom = () => {
-  const log = elements.jobLog;
+const getJobMetaLine = (job) => {
+  if (!job) {
+    return "";
+  }
+
+  const outputProfile = getOutputProfileMeta(job.input?.outputProfile);
+  return [
+    job.slug,
+    getQueueLaneLabel(getJobQueueLane(job)),
+    job.input?.channelHandle || null,
+    job.input?.language || null,
+    outputProfile ? outputProfile.label : null,
+    job.input?.targetSeconds ? `${job.input.targetSeconds}s` : null,
+    job.queuePosition ? `${getQueueLaneLabel(getJobQueueLane(job))} ${job.queuePosition}` : null,
+    job.failureStage ? `falha: ${job.failureStage}` : null
+  ]
+    .filter(Boolean)
+    .join(" • ");
+};
+
+const isLogPinnedToBottom = (log = elements.jobLog) => {
 
   if (!log) {
     return true;
@@ -227,16 +438,18 @@ const isLogPinnedToBottom = () => {
 };
 
 const syncLogAutoFollow = () => {
-  state.logAutoFollow = isLogPinnedToBottom();
+  state.logAutoFollow =
+    isLogPinnedToBottom(elements.jobLog) ||
+    isLogPinnedToBottom(elements.logsJobLog);
 };
 
-const maybeFollowLog = (shouldFollow) => {
-  if (!shouldFollow || !elements.jobLog) {
+const maybeFollowLog = (log, shouldFollow) => {
+  if (!shouldFollow || !log) {
     return;
   }
 
   requestAnimationFrame(() => {
-    elements.jobLog.scrollTop = elements.jobLog.scrollHeight;
+    log.scrollTop = log.scrollHeight;
   });
 };
 
@@ -288,6 +501,14 @@ const connectStream = (jobId) => {
 const setActiveTab = (tabName) => {
   state.activeTab = tabName;
 
+  if ((tabName === "logs" || tabName === "workspace") && !getJobById(state.selectedJobId) && state.jobs[0]) {
+    state.selectedJobId = state.activeJobId || state.jobs[0].id;
+  }
+
+  if (tabName === "logs") {
+    state.logAutoFollow = true;
+  }
+
   elements.tabButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.tabTarget === tabName);
   });
@@ -305,6 +526,26 @@ const setVideoActionHint = (message, {error = false} = {}) => {
   elements.videoActionHint.textContent = message || "";
   elements.videoActionHint.classList.toggle("hidden", !message);
   elements.videoActionHint.classList.toggle("error", Boolean(message && error));
+};
+
+const syncPublishModeUI = () => {
+  const publishMode = getSelectedPublishMode();
+  const isScheduled = publishMode === "scheduled";
+
+  elements.videoScheduleField?.classList.toggle("hidden", !isScheduled);
+  if (elements.publishVideoButton) {
+    elements.publishVideoButton.textContent = isScheduled
+      ? "Agendar no agenda.online"
+      : "Publicar agora no agenda.online";
+  }
+};
+
+const syncVideoTargetSelect = (selectedValue) => {
+  if (!elements.videoTargetChannel || !state.config?.channels) {
+    return;
+  }
+
+  fillSelect(elements.videoTargetChannel, state.config.channels, selectedValue || elements.videoTargetChannel.value);
 };
 
 const renderPreviewData = (previewData) => {
@@ -390,27 +631,15 @@ const renderSelectedJob = () => {
   elements.jobEmpty.classList.add("hidden");
   elements.jobDetails.classList.remove("hidden");
 
-  const shouldFollowLog = state.logAutoFollow || isLogPinnedToBottom();
+  const shouldFollowLog = state.logAutoFollow || isLogPinnedToBottom(elements.jobLog);
 
   elements.jobType.textContent = job.type === "rerender" ? "rerender-voice" : job.input.previewOnly ? "preview" : "generate";
   elements.jobTitle.textContent = job.title;
   elements.jobStatus.textContent = job.status;
   elements.jobStatus.dataset.state = job.status;
-  const outputProfile = getOutputProfileMeta(job.input.outputProfile);
-  elements.jobMeta.textContent = [
-    job.slug,
-    getQueueLaneLabel(getJobQueueLane(job)),
-    job.input.channelHandle || null,
-    job.input.language || null,
-    outputProfile ? outputProfile.label : null,
-    job.input.targetSeconds ? `${job.input.targetSeconds}s` : null,
-    job.queuePosition ? `${getQueueLaneLabel(getJobQueueLane(job))} ${job.queuePosition}` : null,
-    job.failureStage ? `falha: ${job.failureStage}` : null
-  ]
-    .filter(Boolean)
-    .join(" • ");
+  elements.jobMeta.textContent = getJobMetaLine(job);
   elements.jobLog.textContent = (job.logTail || []).join("\n");
-  maybeFollowLog(shouldFollowLog);
+  maybeFollowLog(elements.jobLog, shouldFollowLog);
 
   if (job.outputUrl) {
     elements.jobOutputLink.href = job.outputUrl;
@@ -463,6 +692,91 @@ const renderSelectedJob = () => {
     elements.previewSummary.classList.add("hidden");
     elements.previewScenes.innerHTML = '<div class="history-item muted">Carregando preview aprovado...</div>';
     loadPreviewData(job).catch(() => {});
+  }
+};
+
+const renderLogsJobsList = () => {
+  if (!elements.logsJobsList) {
+    return;
+  }
+
+  if (state.jobs.length === 0) {
+    elements.logsJobsList.innerHTML = '<div class="history-item muted">Nenhum job recente.</div>';
+    return;
+  }
+
+  elements.logsJobsList.innerHTML = state.jobs
+    .map((job) => {
+      const activeClass = job.id === state.selectedJobId ? " active" : "";
+      return `
+        <button class="history-item video-item${activeClass}" data-logs-job-id="${escapeHtml(job.id)}">
+          <span class="history-title">${escapeHtml(job.title || job.slug || job.id)}</span>
+          <span class="history-meta">${escapeHtml(job.status || "")} • ${escapeHtml(getQueueLaneLabel(getJobQueueLane(job)))} • ${escapeHtml(formatDateTime(job.createdAt))}</span>
+        </button>
+      `;
+    })
+    .join("");
+
+  elements.logsJobsList.querySelectorAll("[data-logs-job-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedJobId = button.dataset.logsJobId;
+      state.logAutoFollow = true;
+      const job = getJobById(state.selectedJobId);
+
+      if (job && (job.status === "queued" || job.status === "running")) {
+        connectStream(job.id);
+      }
+
+      renderAll();
+    });
+  });
+};
+
+const renderLogsPanel = () => {
+  if (!elements.logsEmpty || !elements.logsDetails) {
+    return;
+  }
+
+  const job = getJobById(state.selectedJobId);
+
+  if (!job) {
+    elements.logsEmpty.classList.remove("hidden");
+    elements.logsDetails.classList.add("hidden");
+    return;
+  }
+
+  elements.logsEmpty.classList.add("hidden");
+  elements.logsDetails.classList.remove("hidden");
+  elements.logsTitle.textContent = job.title || job.slug || "Job";
+  elements.logsMeta.textContent = getJobMetaLine(job);
+  elements.logsStatus.textContent = job.status;
+  elements.logsStatus.dataset.state = job.status;
+  const shouldFollowLog = state.logAutoFollow || isLogPinnedToBottom(elements.logsJobLog);
+  elements.logsJobLog.textContent = (job.logTail || []).join("\n");
+  maybeFollowLog(elements.logsJobLog, shouldFollowLog);
+
+  const failureLabel = getJobFailureLabel(job);
+  if (failureLabel) {
+    elements.logsFailureSummary.textContent = failureLabel;
+    elements.logsFailureSummary.classList.remove("hidden");
+  } else {
+    elements.logsFailureSummary.textContent = "";
+    elements.logsFailureSummary.classList.add("hidden");
+  }
+
+  if (job.outputUrl) {
+    elements.logsOutputLink.href = job.outputUrl;
+    elements.logsOutputLink.classList.remove("hidden");
+    elements.logsOutputLink.textContent = job.outputPath?.endsWith(".json") ? "Abrir saída" : "Abrir vídeo";
+  } else {
+    elements.logsOutputLink.classList.add("hidden");
+  }
+
+  if (job.storyboardUrl) {
+    elements.logsStoryboardLink.href = job.storyboardUrl;
+    elements.logsStoryboardLink.classList.remove("hidden");
+  } else {
+    elements.logsStoryboardLink.classList.add("hidden");
   }
 };
 
@@ -598,16 +912,28 @@ const fillVideoForm = (video) => {
 
   elements.videoMetaForm.elements.slug.value = video.slug || "";
   elements.videoMetaForm.elements.path.value = video.path || "";
-  elements.videoMetaForm.elements.channel.value = video.channel || "";
+  if (elements.videoTargetChannel) {
+    syncVideoTargetSelect(video.channel || "");
+    elements.videoTargetChannel.value = video.channel || elements.videoTargetChannel.value || "";
+    syncVideoTargetHint(elements.videoTargetChannel.value);
+  } else {
+    elements.videoMetaForm.elements.channel.value = video.channel || "";
+  }
   elements.videoMetaForm.elements.title.value = video.title || "";
   elements.videoMetaForm.elements.caption.value = video.caption || "";
   elements.videoMetaForm.elements.hashtags.value = Array.isArray(video.hashtags) ? video.hashtags.join(" ") : "";
   elements.videoMetaForm.elements.scheduleAt.value = toDateTimeLocalValue(video.scheduleAt || "");
   elements.videoMetaForm.elements.isDraft.checked = video.isDraft === true;
+  const publishMode = video.scheduleAt || video.lastPublishStatus === "scheduled" ? "scheduled" : "now";
+  elements.videoMetaForm.querySelectorAll('input[name="publishMode"]').forEach((input) => {
+    input.checked = input.value === publishMode;
+  });
 
   elements.videoMetaForm.querySelectorAll('input[name="platforms"]').forEach((input) => {
     input.checked = Array.isArray(video.platforms) ? video.platforms.includes(input.value) : false;
   });
+
+  syncPublishModeUI();
 };
 
 const renderSelectedVideo = () => {
@@ -635,6 +961,23 @@ const renderSelectedVideo = () => {
   elements.videoPublishStatus.textContent = publishStatus;
   elements.videoPublishStatus.dataset.state = publishStatus === "scheduled" || publishStatus === "published" ? "completed" : "";
 
+  const artworkUrl = getVideoArtworkUrl(video);
+  if (elements.videoArtwork && elements.videoArtworkImage && elements.videoArtworkTitle && elements.videoArtworkMeta) {
+    if (artworkUrl) {
+      elements.videoArtwork.classList.remove("hidden");
+      elements.videoArtworkImage.src = artworkUrl;
+      elements.videoArtworkImage.alt = `${video.title || video.name || "Vídeo"} - thumbnail`;
+      elements.videoArtworkTitle.textContent = video.title || video.name || "Imagem de destaque";
+      elements.videoArtworkMeta.textContent = video.thumbnailLabel || video.coverLabel || video.posterLabel || "Thumbnail disponível para pré-visualização e publicação.";
+      elements.videoPlayer.poster = artworkUrl;
+    } else {
+      elements.videoArtwork.classList.add("hidden");
+      elements.videoPlayer.removeAttribute("poster");
+      elements.videoArtworkImage.removeAttribute("src");
+      elements.videoArtworkMeta.textContent = "";
+    }
+  }
+
   if (elements.videoPlayer.getAttribute("src") !== video.url) {
     elements.videoPlayer.setAttribute("src", video.url);
   }
@@ -648,7 +991,17 @@ const renderSelectedVideo = () => {
     elements.videoStoryboardLink.classList.add("hidden");
   }
 
+  renderVideoCreationParams(video);
+
   fillVideoForm(video);
+
+  if (elements.videoTargetChannel) {
+    syncVideoTargetSelect(video.channel || "");
+    elements.videoTargetChannel.value = video.channel || elements.videoTargetChannel.value || "";
+    syncVideoTargetHint(elements.videoTargetChannel.value);
+  }
+
+  syncPublishModeUI();
 
   const agendadorHint = state.agendador?.configured
     ? "Agendador pronto para publicar. Se faltar conta conectada, a API vai dizer qual rede está desconectada."
@@ -705,6 +1058,8 @@ const renderAll = () => {
   elements.heavyQueueCount.textContent = String(state.heavyQueueLength);
   renderSelectedJob();
   renderJobs();
+  renderLogsJobsList();
+  renderLogsPanel();
   renderRuns();
   renderVideos();
   renderFailedJobs();
@@ -816,6 +1171,7 @@ const applyChannelPresetToForm = (channelId) => {
   }
 
   const toneSelect = document.querySelector("#generateTone");
+  const languageSelect = document.querySelector("#generateLanguage");
   const voiceSelect = document.querySelector("#generateVoice");
   const imageStyleSelect = document.querySelector("#generateImageStyle");
   const profileSelect = document.querySelector("#generateOutputProfile");
@@ -825,17 +1181,21 @@ const applyChannelPresetToForm = (channelId) => {
     toneSelect.value = preset.tone;
   }
 
+  if (languageSelect && preset.language) {
+    languageSelect.value = preset.language;
+  }
+
   if (voiceSelect && preset.voice) {
-    voiceSelect.value = preset.voice;
+    const language = languageSelect?.value || state.config?.defaults?.language || "pt-BR";
+    const presetVoice =
+      preset.voiceByLanguage?.[language] ||
+      preset.voice ||
+      getPreferredVoiceForLanguage(language);
+    syncVoiceOptionsForLanguage(language, presetVoice);
   }
 
   if (imageStyleSelect && preset.imageStyle) {
     imageStyleSelect.value = preset.imageStyle;
-  }
-
-  const assetModeSelect = document.querySelector("#generateAssetMode");
-  if (assetModeSelect && preset.assetMode) {
-    assetModeSelect.value = preset.assetMode;
   }
 
   if (customStyleInput) {
@@ -885,11 +1245,11 @@ const loadConfig = async () => {
 
   fillSelect(document.querySelector("#generateLanguage"), languageOptions, payload.defaults.language);
   fillSelect(document.querySelector("#generateOutputProfile"), payload.outputProfiles, payload.defaults.outputProfile);
-  fillSelect(document.querySelector("#generateAssetMode"), payload.assetModes, payload.defaults.assetMode);
   fillSelect(document.querySelector("#generateImageStyle"), payload.imageStyles, payload.defaults.imageStyle);
   fillSelect(document.querySelector("#generateChannel"), payload.channels, payload.defaults.channel);
   fillSelect(document.querySelector("#generateTone"), payload.tones, payload.defaults.tone);
-  fillSelect(document.querySelector("#generateVoice"), payload.voices, payload.defaults.voice);
+  syncVoiceOptionsForLanguage(payload.defaults.language, payload.defaults.voice);
+  syncVideoTargetSelect(document.querySelector("#videoTargetChannel")?.value || payload.defaults.channel);
 
   elements.generateForm.force.checked = Boolean(payload.defaults.force);
   elements.generateForm.noMusic.checked = Boolean(payload.defaults.noMusic);
@@ -897,18 +1257,17 @@ const loadConfig = async () => {
   const voiceSelect = document.querySelector("#generateVoice");
   const customVoiceField = document.querySelector("#generateCustomVoiceField");
 
-  const syncVoiceField = () => toggleCustomVoiceField(voiceSelect, customVoiceField);
+  const syncVoiceField = () => {
+    toggleCustomVoiceField(voiceSelect, customVoiceField);
+    syncVoiceHint(voiceSelect?.value || "");
+  };
   voiceSelect?.addEventListener("change", syncVoiceField);
   syncVoiceField();
-
-  const syncAssetModeHint = () => {
-    const selected = getAssetModeMeta(document.querySelector("#generateAssetMode")?.value);
-    elements.assetModeHint.textContent = selected?.description || "";
-  };
 
   const syncImageStyleHint = () => {
     const selected = getImageStyleMeta(document.querySelector("#generateImageStyle")?.value);
     elements.imageStyleHint.textContent = selected?.description || "";
+    syncImageStylePreview(document.querySelector("#generateImageStyle")?.value);
   };
 
   const syncProfileHints = () => {
@@ -929,10 +1288,15 @@ const loadConfig = async () => {
     elements.toneHint.textContent = selected?.description || "";
   };
 
-  document.querySelector("#generateAssetMode")?.addEventListener("change", syncAssetModeHint);
   document.querySelector("#generateImageStyle")?.addEventListener("change", syncImageStyleHint);
   document.querySelector("#generateOutputProfile")?.addEventListener("change", syncProfileHints);
   document.querySelector("#generateTone")?.addEventListener("change", syncToneHint);
+  document.querySelector("#generateLanguage")?.addEventListener("change", () => {
+    const language = document.querySelector("#generateLanguage")?.value || payload.defaults.language;
+    const currentVoice = document.querySelector("#generateVoice")?.value || "";
+    syncVoiceOptionsForLanguage(language, currentVoice);
+    syncVoiceField();
+  });
   document.querySelector("#generateChannel")?.addEventListener("change", () => {
     const channelId = document.querySelector("#generateChannel")?.value;
     applyChannelPresetToForm(channelId);
@@ -940,18 +1304,26 @@ const loadConfig = async () => {
     syncToneHint();
     syncChannelHint();
   });
+  document.querySelector("#videoTargetChannel")?.addEventListener("change", () => {
+    const selectedChannel = document.querySelector("#videoTargetChannel")?.value;
+    syncVideoTargetHint(selectedChannel);
+  });
+  elements.videoMetaForm?.querySelectorAll('input[name="publishMode"]').forEach((input) => {
+    input.addEventListener("change", syncPublishModeUI);
+  });
 
   elements.autoApproveToggle?.addEventListener("change", syncGenerateMode);
   elements.generateForm?.querySelector('input[name="title"]')?.addEventListener("input", () => validateGenerateForm(elements.generateForm));
   elements.generateForm?.querySelector('textarea[name="sourceText"]')?.addEventListener("input", () => validateGenerateForm(elements.generateForm));
 
   applyChannelPresetToForm(payload.defaults.channel);
-  syncAssetModeHint();
   syncImageStyleHint();
   syncProfileHints();
   syncToneHint();
   syncChannelHint();
   syncGenerateMode();
+  syncPublishModeUI();
+  syncVideoTargetHint(payload.defaults.channel);
   validateGenerateForm(elements.generateForm);
 };
 
@@ -965,11 +1337,10 @@ const buildGeneratePayload = (form, submitter) => {
     language: String(data.get("language") || "pt-BR"),
     outputProfile: String(data.get("outputProfile") || "vertical-short"),
     targetSeconds: Number(data.get("targetSeconds") || 60),
-    assetMode: String(data.get("assetMode") || "google-cloud"),
     imageStyle: String(data.get("imageStyle") || "claude"),
     channel: String(data.get("channel") || "foiumaideia"),
     tone: String(data.get("tone") || "shortform_native"),
-    voice: String(data.get("voice") || "Iapetus"),
+    voice: String(data.get("voice") || getPreferredVoiceForLanguage(String(data.get("language") || "pt-BR"))),
     customVoice: String(data.get("customVoice") || "").trim(),
     customStylePrompt: String(data.get("customStylePrompt") || "").trim(),
     force: form.force.checked,
@@ -1027,9 +1398,24 @@ const getSelectedVideoPayload = () => {
     title: String(data.get("title") || "").trim(),
     caption: String(data.get("caption") || "").trim(),
     hashtags,
-    scheduleAt: scheduleAtRaw ? new Date(scheduleAtRaw).toISOString() : "",
+    scheduleAt: parseDateTimeLocalToIso(scheduleAtRaw),
     platforms: Array.from(elements.videoMetaForm.querySelectorAll('input[name="platforms"]:checked')).map((input) => input.value),
     isDraft: elements.videoMetaForm.elements.isDraft.checked
+  };
+};
+
+const getSelectedVideoPublishPayload = () => {
+  const payload = getSelectedVideoPayload();
+
+  if (!payload) {
+    return null;
+  }
+
+  const publishMode = getSelectedPublishMode();
+  return {
+    ...payload,
+    publishMode,
+    scheduleAt: publishMode === "scheduled" ? payload.scheduleAt : ""
   };
 };
 
@@ -1220,9 +1606,14 @@ elements.deleteVideoButton?.addEventListener("click", async () => {
 });
 
 elements.publishVideoButton?.addEventListener("click", async () => {
-  const payload = getSelectedVideoPayload();
+  const payload = getSelectedVideoPublishPayload();
 
   if (!payload) {
+    return;
+  }
+
+  if (payload.publishMode === "scheduled" && !payload.scheduleAt) {
+    setVideoActionHint("Selecione data e hora para agendar a publicação.", {error: true});
     return;
   }
 
@@ -1246,6 +1637,30 @@ elements.publishVideoButton?.addEventListener("click", async () => {
   }
 });
 
+elements.openTikTokHelperButton?.addEventListener("click", async () => {
+  const payload = getSelectedVideoPayload();
+
+  if (!payload) {
+    return;
+  }
+
+  try {
+    const response = await fetchJson("/api/videos/tiktok-helper", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+
+    if (response.helperUrl) {
+      window.open(response.helperUrl, "_blank", "noopener,noreferrer");
+    }
+
+    setVideoActionHint(response.message || "Helper do TikTok aberto.");
+  } catch (error) {
+    setVideoActionHint(error.message, {error: true});
+  }
+});
+
 elements.tabButtons.forEach((button) => {
   button.addEventListener("click", () => {
     setActiveTab(button.dataset.tabTarget);
@@ -1258,6 +1673,10 @@ setActiveTab(state.activeTab);
 
 if (elements.jobLog) {
   elements.jobLog.addEventListener("scroll", syncLogAutoFollow);
+}
+
+if (elements.logsJobLog) {
+  elements.logsJobLog.addEventListener("scroll", syncLogAutoFollow);
 }
 
 setInterval(() => {

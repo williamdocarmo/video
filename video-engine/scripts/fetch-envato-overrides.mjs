@@ -2,7 +2,7 @@
 /**
  * fetch-envato-overrides.mjs
  *
- * When --source-dir is provided (FLUX2 mode), creates a manifest
+ * When --source-dir is provided (generated image mode), creates a manifest
  * from existing local scene-XX.mp4 files. No downloads needed.
  *
  * When no --source-dir, this is a no-op stub (Envato download not implemented).
@@ -36,7 +36,7 @@ const main = async () => {
   const manifestPath = path.join(assetDir, "manifest.json");
 
   if (args.sourceDir && existsSync(args.sourceDir)) {
-    // FLUX2 mode: scan local scene-XX.mp4 files and create manifest
+    // Generated image mode: scan local scene-XX.mp4 files and create manifest
     const files = readdirSync(args.sourceDir)
       .filter((f) => /^scene-\d+\.mp4$/i.test(f))
       .sort();
@@ -48,13 +48,13 @@ const main = async () => {
         file,
         path: path.join(args.sourceDir, file),
         status: "copied-local",
-        source: "flux2"
+        source: "google-cloud"
       };
     });
 
     await mkdir(assetDir, {recursive: true});
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
-    process.stdout.write(`[fetch-envato] FLUX2 mode: ${manifest.length} local scenes registered.\n`);
+    process.stdout.write(`[fetch-envato] generated-image mode: ${manifest.length} local scenes registered.\n`);
     return;
   }
 

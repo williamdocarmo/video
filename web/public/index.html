@@ -40,7 +40,9 @@
 
       <div class="tabbar" role="tablist" aria-label="Seções do app">
         <button type="button" class="tab-button active" data-tab-target="workspace">Criar</button>
+        <button type="button" class="tab-button" data-tab-target="logs">Logs</button>
         <button type="button" class="tab-button" data-tab-target="videos">Vídeos</button>
+        <button type="button" class="tab-button" data-tab-target="layout">Layout</button>
       </div>
 
       <section class="tab-panel" data-tab-panel="workspace">
@@ -81,17 +83,11 @@
                 </label>
               </div>
 
-              <div class="grid two">
+              <div class="grid three">
                 <label class="field">
                   <span>Duração</span>
                   <select name="targetSeconds" id="generateDuration"></select>
                   <small id="durationHint" class="field-hint"></small>
-                </label>
-
-                <label class="field">
-                  <span>Motor de imagem</span>
-                  <select name="assetMode" id="generateAssetMode"></select>
-                  <small id="assetModeHint" class="field-hint"></small>
                 </label>
 
                 <label class="field">
@@ -111,30 +107,20 @@
                 <label class="field">
                   <span>Voz</span>
                   <select name="voice" id="generateVoice" data-custom-target="generateCustomVoice"></select>
+                  <small id="voiceHint" class="field-hint"></small>
                 </label>
 
                 <label class="field hidden" id="generateCustomVoiceField">
                   <span>Voz personalizada</span>
-                  <input type="text" name="customVoice" id="generateCustomVoice" placeholder="Ex.: Puck">
+                  <input type="text" name="customVoice" id="generateCustomVoice" placeholder="Ex.: Charon ou Kore">
                 </label>
               </div>
 
-              <div class="grid two">
-                <label class="field">
-                  <span>Detalhe extra da voz</span>
-                  <input
-                    type="text"
-                    name="customStylePrompt"
-                    placeholder="Ex.: mais calor humano, pausas discretas, final mais firme"
-                  >
-                </label>
-
-                <label class="field">
-                  <span>Canal de destino</span>
-                  <select name="channel" id="generateChannel"></select>
-                  <small id="channelHint" class="field-hint"></small>
-                </label>
-              </div>
+              <label class="field">
+                <span>Canal de destino</span>
+                <select name="channel" id="generateChannel"></select>
+                <small id="channelHint" class="field-hint"></small>
+              </label>
 
               <div class="toggle-row">
                 <label class="check">
@@ -225,6 +211,48 @@
         </main>
       </section>
 
+      <section class="tab-panel hidden" data-tab-panel="logs">
+        <div class="library-layout">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Jobs e output</h2>
+              <p>Acompanhe os logs dos jobs em tempo real sem sair do site.</p>
+            </div>
+
+            <div>
+              <h3 class="subhead">Jobs recentes</h3>
+              <div id="logsJobsList" class="history-list"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div id="logsEmpty" class="empty-state">
+              Selecione um job para acompanhar o output.
+            </div>
+
+            <div id="logsDetails" class="stack hidden">
+              <div class="job-summary">
+                <div>
+                  <p class="job-kicker">Output ao vivo</p>
+                  <h3 id="logsTitle">Job</h3>
+                  <p id="logsMeta" class="job-meta"></p>
+                </div>
+                <span class="status-pill" id="logsStatus">queued</span>
+              </div>
+
+              <div class="link-row">
+                <a id="logsOutputLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir saída</a>
+                <a id="logsStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
+              </div>
+
+              <p id="logsFailureSummary" class="field-hint hidden"></p>
+
+              <pre id="logsJobLog" class="log-box log-box-wide"></pre>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <section class="tab-panel hidden" data-tab-panel="videos">
         <div class="library-layout">
           <section class="panel">
@@ -247,17 +275,26 @@
 
           <section class="panel">
             <div id="videoEmpty" class="empty-state">
-              Selecione um vídeo concluído ou um job falhado.
+              Selecione um vídeo concluído ou um job falhado para editar, publicar agora ou agendar.
             </div>
 
             <div id="videoDetails" class="stack hidden">
               <div class="job-summary">
                 <div>
-                  <p class="job-kicker" id="videoChannel">Biblioteca</p>
+                  <p class="job-kicker" id="videoChannel">Perfil alvo</p>
                   <h3 id="videoTitleHeading">Vídeo</h3>
                   <p id="videoMeta" class="job-meta"></p>
                 </div>
                 <span class="status-pill" id="videoPublishStatus">local</span>
+              </div>
+
+              <div id="videoArtwork" class="video-artwork hidden">
+                <img id="videoArtworkImage" alt="Thumbnail do vídeo">
+                <div class="video-artwork-copy">
+                  <p class="video-artwork-kicker">Capa / thumbnail</p>
+                  <strong id="videoArtworkTitle">Imagem de destaque</strong>
+                  <p id="videoArtworkMeta" class="video-artwork-meta"></p>
+                </div>
               </div>
 
               <video id="videoPlayer" class="video-player" controls playsinline preload="metadata"></video>
@@ -267,20 +304,48 @@
                 <a id="videoStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
               </div>
 
+              <div id="videoParamsCard" class="meta-card hidden">
+                <p class="meta-card-kicker">Parâmetros usados</p>
+                <div id="videoParamsGrid" class="meta-grid"></div>
+              </div>
+
               <form id="videoMetaForm" class="stack">
                 <input type="hidden" name="slug">
                 <input type="hidden" name="path">
-                <input type="hidden" name="channel">
 
                 <div class="grid two">
+                  <label class="field">
+                    <span>Perfil alvo</span>
+                    <select name="channel" id="videoTargetChannel"></select>
+                    <small id="videoTargetHint" class="field-hint">Escolha o perfil que será usado na edição e na publicação.</small>
+                  </label>
+
                   <label class="field">
                     <span>Título</span>
                     <input type="text" name="title" placeholder="Título do vídeo">
                   </label>
+                </div>
 
+                <div class="grid two">
                   <label class="field">
+                    <span>Modo de publicação</span>
+                    <div class="publish-mode-toggle" role="radiogroup" aria-label="Modo de publicação">
+                      <label class="publish-mode-card">
+                        <input type="radio" name="publishMode" value="now" checked>
+                        <span>Publicar agora</span>
+                      </label>
+                      <label class="publish-mode-card">
+                        <input type="radio" name="publishMode" value="scheduled">
+                        <span>Agendar</span>
+                      </label>
+                    </div>
+                    <small class="field-hint">Use agora para postar imediatamente. Use agendar para definir data e hora.</small>
+                  </label>
+
+                  <label class="field hidden" id="videoScheduleField">
                     <span>Agendar publicação</span>
                     <input type="datetime-local" name="scheduleAt">
+                    <small class="field-hint">Se o modo for agendado, este horário será enviado ao agenda.online.</small>
                   </label>
                 </div>
 
@@ -325,7 +390,8 @@
                 <div class="button-row">
                   <button id="saveVideoMetaButton" type="submit" class="button secondary">Salvar edição</button>
                   <button id="redoVideoButton" type="button" class="button secondary">Refazer</button>
-                  <button id="publishVideoButton" type="button" class="button primary">Publicar no agenda.online</button>
+                  <button id="publishVideoButton" type="button" class="button primary">Publicar agora no agenda.online</button>
+                  <button id="openTikTokHelperButton" type="button" class="button secondary">TikTok Web</button>
                   <button id="deleteVideoButton" type="button" class="button danger">Deletar</button>
                 </div>
               </form>
@@ -353,6 +419,28 @@
             </div>
           </section>
         </div>
+      </section>
+
+      <section class="tab-panel hidden" data-tab-panel="layout">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Galeria de estilos</h2>
+            <p>Referências reais geradas pelo próprio app para comparar os estilos visuais antes de criar o vídeo.</p>
+          </div>
+
+          <div class="stack">
+            <div class="link-row">
+              <a class="text-link" href="/style-gallery/index.html" target="_blank" rel="noreferrer">Abrir galeria em página própria</a>
+            </div>
+
+            <iframe
+              class="gallery-frame"
+              src="/style-gallery/index.html"
+              title="Galeria de estilos visuais"
+              loading="lazy"
+            ></iframe>
+          </div>
+        </section>
       </section>
     </div>
 

@@ -8,6 +8,32 @@ import {loadSecretsIntoEnv} from "./lib/secrets.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
+const DEFAULT_AGENDADOR_SITE_URL = "https://agendador.online";
+
+const normalizeAgendadorSiteUrl = (value) => {
+  const raw = String(value || "").trim().replace(/\/+$/, "");
+  if (!raw) {
+    return DEFAULT_AGENDADOR_SITE_URL;
+  }
+
+  return raw.endsWith("/api") ? raw.slice(0, -4) : raw;
+};
+
+const apiBase = `${normalizeAgendadorSiteUrl(
+  process.env.AGENDADOR_ONLINE_URL || process.env.AGENDADOR_URL || DEFAULT_AGENDADOR_SITE_URL
+)}/api`;
+
+const resolveAgendadorIdentity = () =>
+  String(
+    process.env.AGENDADOR_ONLINE_FOIUMAIDEIA_EMAIL ||
+      process.env.AGENDADOR_ONLINE_FOIUMAIDEIA_USERNAME ||
+      process.env.AGENDADOR_EMAIL ||
+      process.env.AGENDADOR_USERNAME ||
+      ""
+  ).trim();
+
+const resolveAgendadorPassword = () =>
+  String(process.env.AGENDADOR_ONLINE_PASSWORD || process.env.AGENDADOR_PASSWORD || "").trim();
 
 const parseArgs = (argv) => {
   const parsed = {
@@ -39,7 +65,7 @@ const parseArgs = (argv) => {
 };
 
 const apiFetch = async (endpoint, {method = "GET", token, body} = {}) => {
-  const response = await fetch(`https://agendador.online/api${endpoint}`, {
+  const response = await fetch(`${apiBase}${endpoint}`, {
     method,
     headers: {
       "Content-Type": "application/json",
@@ -72,17 +98,29 @@ const normalizePosts = (payload) => {
 
 const main = async () => {
   const args = parseArgs(process.argv.slice(2));
-  loadSecretsIntoEnv(["AGENDADOR_EMAIL", "AGENDADOR_PASSWORD"]);
+  loadSecretsIntoEnv([
+    "AGENDADOR_ONLINE_URL",
+    "AGENDADOR_ONLINE_PASSWORD",
+    "AGENDADOR_PASSWORD",
+    "AGENDADOR_EMAIL",
+    "AGENDADOR_USERNAME",
+    "AGENDADOR_ONLINE_FOIUMAIDEIA_EMAIL",
+    "AGENDADOR_ONLINE_FOIUMAIDEIA_USERNAME"
+  ]);
 
-  if (!process.env.AGENDADOR_EMAIL || !process.env.AGENDADOR_PASSWORD) {
-    throw new Error("Faltam AGENDADOR_EMAIL e AGENDADOR_PASSWORD no ambiente ou no Keychain.");
+  const identity = resolveAgendadorIdentity();
+  const password = resolveAgendadorPassword();
+
+  if (!identity || !password) {
+    throw new Error("Faltam AGENDADOR_ONLINE_FOIUMAIDEIA_EMAIL/USERNAME e AGENDADOR_ONLINE_PASSWORD no ambiente ou no Keychain.");
   }
 
   const auth = await apiFetch("/auth/login", {
     method: "POST",
     body: {
-      email: process.env.AGENDADOR_EMAIL,
-      password: process.env.AGENDADOR_PASSWORD
+      identifier: identity,
+      email: identity,
+      password
     }
   });
   const token = auth?.token;

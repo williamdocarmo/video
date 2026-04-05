@@ -9,6 +9,10 @@ import {getGcpAccessToken, resolveGcpConfig} from "./gcp-config.mjs";
 
 const MIN_SCENES = Math.max(10, Number.parseInt(process.env.MIN_SCENE_COUNT || "10", 10) || 10);
 const MAX_SCENES = Math.max(MIN_SCENES, Number.parseInt(process.env.MAX_SCENE_COUNT || "16", 10) || 16);
+const STORYBOARD_REPAIR_MAX_ATTEMPTS = Math.max(
+  0,
+  Number.parseInt(process.env.STORYBOARD_REPAIR_MAX_ATTEMPTS || "3", 10) || 3
+);
 const OUTPUT_PROFILE = resolveOutputProfileConfig(process.env.OUTPUT_PROFILE || "vertical-short");
 const OUTPUT_FORMAT_DESCRIPTION =
   OUTPUT_PROFILE.layout === "horizontal"
@@ -419,6 +423,52 @@ const hasOffTopicCaptionLeak = (storyboard, title) => {
   return PRODUCTIVITY_LEAK_RE.test(combined) && fillerTokens.length > 0 && !sharesTitleAnchor;
 };
 
+const VIRAL_SHORTFORM_GUIDANCE_RE = /\b(short-form creator|internet-native|all caps|viral|sarcastic|nao cai nessa|isso da ruim|bad tech idea|fail energy)\b/i;
+const HARD_HOOK_RE = /\b(nao use|não use|pare|pessima ideia|péssima ideia|ruim|perigo|alerta|grave|mito|destruindo|arruinando|erro|nao faca isso|não faça isso)\b/i;
+const COLLOQUIAL_REACTION_RE = /\b(nao cai nessa|não caia nessa|isso da ruim|isso dá ruim|pessima ideia|péssima ideia|mito perigoso|dor de cabeca|dor de cabeça|fortuna a toa|fortuna à toa|essa ideia nao foi uma boa ideia|essa ideia não foi uma boa ideia|nao faca isso|não faça isso|erro grave|cilada)\b/i;
+const SOFT_ADVICE_START_RE = /^(para|sempre|mantenha|proteja|evite|prefira|use|procure|opte|cuide|lembre|considere)\b/i;
+const ENDING_STING_RE = /\b(caro|custa|custar|fortuna|prejuizo|prejuízo|erro grave|perigo|ruim|estragar|danificar|piorar|irreversivel|irreversível|dor de cabeca|dor de cabeça|cilada|nao faca isso|não faça isso|nao caia nessa|não caia nessa)\b/i;
+const UPPERCASE_EMPHASIS_RE = /(^|[^A-Za-zÀ-ÖØ-öø-ÿ])([A-ZÀ-ÖØ-Þ]{2,})(?=[^A-Za-zÀ-ÖØ-öø-ÿ]|$)/g;
+
+const isViralShortformGuidance = (scriptGuidance = "") => VIRAL_SHORTFORM_GUIDANCE_RE.test(normalizeText(scriptGuidance));
+
+const collectUppercaseEmphasisTokens = (storyboard) => {
+  const combined = [
+    storyboard?.hook || "",
+    ...(storyboard?.scenes ?? []).map((scene) => `${scene?.narration || ""} ${scene?.overlay || ""}`)
+  ].join(" ");
+  const tokens = [];
+
+  for (const match of combined.matchAll(UPPERCASE_EMPHASIS_RE)) {
+    const token = String(match?.[2] || "").trim();
+
+    if (token.length >= 3) {
+      tokens.push(token);
+    }
+  }
+
+  return uniqueStrings(tokens);
+};
+
+const countColloquialReactionLines = (storyboard) => {
+  const lines = [storyboard?.hook || "", ...(storyboard?.scenes ?? []).map((scene) => scene?.narration || "")];
+  return lines.filter((line) => COLLOQUIAL_REACTION_RE.test(normalizeText(line))).length;
+};
+
+const countSoftAdviceLines = (storyboard) => {
+  return (storyboard?.scenes ?? []).filter((scene) => SOFT_ADVICE_START_RE.test(normalizeText(scene?.narration || ""))).length;
+};
+
+const hasHardHookStatement = (storyboard) => {
+  const opening = normalizeText(`${storyboard?.hook || ""} ${storyboard?.scenes?.[0]?.narration || ""}`);
+  return !hookStartsAsQuestion(storyboard) && HARD_HOOK_RE.test(opening);
+};
+
+const hasViralEndingSting = (storyboard) => {
+  const closing = normalizeText(storyboard?.scenes?.at(-1)?.narration || "");
+  return !hasSoftGenericEnding(storyboard) && ENDING_STING_RE.test(closing);
+};
+
 const getStoryboardIssueList = ({storyboard, title}) => {
   const issues = [];
   const deskLaptopScenes = countDeskLaptopScenes(storyboard);
@@ -480,6 +530,87 @@ const getStoryboardIssueList = ({storyboard, title}) => {
   }
 
   return issues;
+};
+
+export const evaluateStoryboardQa = ({
+  storyboard,
+  title,
+  language = "pt-BR",
+  desiredDurationSeconds = 100,
+  scriptGuidance = ""
+}) => {
+  const issues = getStoryboardIssueList({storyboard, title});
+  const warnings = [];
+  const {minWords, maxWords} = getTargetWordRange(desiredDurationSeconds, language);
+  const wordCount = getStoryboardWordCount(storyboard);
+  const uppercaseEmphasisTokens = collectUppercaseEmphasisTokens(storyboard);
+  const colloquialReactionLineCount = countColloquialReactionLines(storyboard);
+  const softAdviceLineCount = countSoftAdviceLines(storyboard);
+  const profile = isViralShortformGuidance(scriptGuidance) ? "viral_shortform" : "default";
+  let viralScore = null;
+
+  if (profile === "viral_shortform") {
+    viralScore = 100;
+
+    if (!hasHardHookStatement(storyboard)) {
+      viralScore -= 25;
+      issues.push("The hook still lacks a hard accusatory short-form opening. Rewrite the opening so it hits like a warning, mistake, or immediate danger instead of a soft explainer.");
+    }
+
+    if (uppercaseEmphasisTokens.length === 0) {
+      viralScore -= 18;
+      warnings.push("Add 2 to 5 impact words in ALL CAPS across the hook and narration so the script carries the channel's emphasis style.");
+    } else if (uppercaseEmphasisTokens.length === 1) {
+      viralScore -= 8;
+      warnings.push("The script uses too little ALL CAPS emphasis for this channel style. Add one or two more impact words.");
+    }
+
+    if (colloquialReactionLineCount === 0) {
+      viralScore -= 15;
+      warnings.push("Add at least one human colloquial reaction line so the script sounds like a smart friend calling out a bad idea.");
+    }
+
+    if (softAdviceLineCount >= 3) {
+      viralScore -= 20;
+      issues.push("Too many scenes drift into generic advice or educational explainer tone. Rewrite several lines to sound sharper, more internet-native, and more emotionally charged.");
+    } else if (softAdviceLineCount === 2) {
+      viralScore -= 8;
+      warnings.push("Some scenes are drifting into generic advice tone. Keep the pacing punchier and less educational.");
+    }
+
+    if (!hasViralEndingSting(storyboard)) {
+      viralScore -= 18;
+      issues.push("The ending still lacks a strong consequence, cost, embarrassment, or cautionary sting. Rewrite the last scene so it lands harder.");
+    }
+
+    if (viralScore < 60) {
+      issues.push("Overall the storyboard still reads too educational for this channel. Rewrite it with more accusation, sharper contrast, stronger spoken rhythm, and clearer fail energy.");
+    }
+
+    const endingIssueIndex = issues.indexOf("The ending still lacks a strong consequence, cost, embarrassment, or cautionary sting. Rewrite the last scene so it lands harder.");
+
+    if (viralScore >= 80 && endingIssueIndex !== -1 && issues.length === 1) {
+      warnings.push("The ending could still hit harder, but the storyboard is strong enough to proceed without blocking image generation.");
+      issues.splice(endingIssueIndex, 1);
+    }
+  }
+
+  return {
+    passed: issues.length === 0,
+    profile,
+    issues: uniqueStrings(issues),
+    warnings: uniqueStrings(warnings),
+    metrics: {
+      wordCount,
+      minWords,
+      maxWords,
+      uppercaseEmphasisCount: uppercaseEmphasisTokens.length,
+      uppercaseEmphasisTokens,
+      colloquialReactionLineCount,
+      softAdviceLineCount,
+      viralScore
+    }
+  };
 };
 
 const sanitizeNarrationLine = (value, fallbackValue = "") => {
@@ -1384,7 +1515,7 @@ const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourc
   {
     role: "system",
     content:
-      `Return valid JSON only. Do not include markdown. If the language is pt-BR, write only in Brazilian Portuguese and avoid European Portuguese wording. ${buildFormatGuidance()} Writing style rules: write as if you are a friend explaining something fascinating to the viewer. Use short punchy sentences, one idea per sentence. Each sentence must describe something visually concrete that an illustration can show. Use surprising facts and numbers to hook attention. Ask rhetorical questions to keep engagement. Avoid abstract or philosophical sentences that have no clear visual representation. Every narration line must paint a picture the viewer can see. Prefer present tense and direct address using voce. Never depend on sci-fi, CGI, Mars rovers, impossible quantum-computer shots, abstract holograms, or lab concepts that are hard to illustrate.`
+      `Return valid JSON only. Do not include markdown. If the language is pt-BR, write only in Brazilian Portuguese and avoid European Portuguese wording. ${buildFormatGuidance()} Writing style rules: write as if you are a friend explaining something fascinating to the viewer. Use short punchy sentences, one idea per sentence. Each sentence must describe something visually concrete that an illustration can show. Use surprising facts and numbers to hook attention. If you use rhetorical questions, use them sparingly and never as the opening hook. Avoid abstract or philosophical sentences that have no clear visual representation. Every narration line must paint a picture the viewer can see. Prefer present tense and direct address using voce. Never depend on sci-fi, CGI, Mars rovers, impossible quantum-computer shots, abstract holograms, or lab concepts that are hard to illustrate.`
   },
   {
     role: "user",
@@ -1572,7 +1703,8 @@ const buildRepairMessages = ({
   storyboard,
   sourceText,
   scriptGuidance,
-  issues
+  issues,
+  warnings = []
 }) => [
   {
     role: "system",
@@ -1589,6 +1721,7 @@ const buildRepairMessages = ({
       `Keep ${MIN_SCENES} to ${MAX_SCENES} scenes.`,
       "Repair every issue listed below.",
       ...issues.map((issue, index) => `${index + 1}. ${issue}`),
+      ...(warnings.length > 0 ? ["Keep these style nudges in mind:", ...warnings.map((warning, index) => `W${index + 1}. ${warning}`)] : []),
       "Hard rules:",
       "- The hook and first scene must not open as a question.",
       "- Start with a hard statement, warning, accusation, or shocking reveal.",
@@ -1611,6 +1744,50 @@ const buildRepairMessages = ({
     ].join("\n")
   }
 ];
+
+export const repairStoryboard = async ({
+  title,
+  language,
+  model,
+  apiKey,
+  desiredDurationSeconds,
+  provider,
+  cwd,
+  storyboard,
+  sourceText = "",
+  scriptGuidance = "",
+  issues = [],
+  warnings = []
+}) => {
+  const selectedProvider = resolveLlmProvider(provider);
+
+  if (selectedProvider === "openrouter" && !apiKey) {
+    return normalizeStoryboard(storyboard, title, language);
+  }
+
+  return normalizeStoryboard(
+    await callJsonProvider({
+      provider: selectedProvider,
+      apiKey,
+      model,
+      messages: buildRepairMessages({
+        title,
+        language,
+        desiredDurationSeconds,
+        storyboard,
+        sourceText,
+        scriptGuidance,
+        issues,
+        warnings
+      }),
+      schema: storyboardOutputSchema,
+      cwd,
+      usageContext: "storyboard-repair"
+    }),
+    title,
+    language
+  );
+};
 
 export const generateStoryboard = async ({
   title,
@@ -1712,34 +1889,34 @@ export const generateStoryboard = async ({
     );
   }
 
-  for (let repairAttempt = 0; repairAttempt < 2; repairAttempt += 1) {
-    const storyboardIssues = getStoryboardIssueList({storyboard: sanitized, title});
+  for (let repairAttempt = 0; repairAttempt < STORYBOARD_REPAIR_MAX_ATTEMPTS; repairAttempt += 1) {
+    const storyboardQa = evaluateStoryboardQa({
+      storyboard: sanitized,
+      title,
+      language,
+      desiredDurationSeconds,
+      scriptGuidance
+    });
+    const storyboardIssues = storyboardQa.issues;
 
     if (storyboardIssues.length === 0) {
       break;
     }
 
-    sanitized = normalizeStoryboard(
-      await callJsonProvider({
-        provider: selectedProvider,
-        apiKey,
-        model,
-        messages: buildRepairMessages({
-          title,
-          language,
-          desiredDurationSeconds,
-          storyboard: sanitized,
-          sourceText,
-          scriptGuidance,
-          issues: storyboardIssues
-        }),
-        schema: storyboardOutputSchema,
-        cwd,
-        usageContext: "storyboard-repair"
-      }),
+    sanitized = await repairStoryboard({
       title,
-      language
-    );
+      language,
+      model,
+      apiKey,
+      desiredDurationSeconds,
+      provider: selectedProvider,
+      cwd,
+      storyboard: sanitized,
+      sourceText,
+      scriptGuidance,
+      issues: storyboardIssues,
+      warnings: storyboardQa.warnings
+    });
   }
 
   const parsed = storyboardSchema.safeParse(sanitized);

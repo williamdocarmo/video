@@ -11,9 +11,11 @@ import {analyzeSceneSpeechPacing, buildTimeline} from "./lib/timings.mjs";
 import {sanitizeTimedWordsForAudio} from "./lib/alignment-utils.mjs";
 import {
   callJsonProvider,
+  evaluateStoryboardQa,
   generateStoryboard,
   getGeminiUsageSummary,
   pickSceneOverlay,
+  repairStoryboard,
   resetGeminiUsageSummary,
   resolveLlmProvider
 } from "./lib/llm-provider.mjs";
@@ -53,6 +55,10 @@ const REQUIRE_PREMIUM_TTS =
 const LLM_STAGE_MAX_ATTEMPTS = Math.max(
   1,
   Number.parseInt(process.env.LLM_STAGE_MAX_ATTEMPTS || "3", 10) || 3
+);
+const STORYBOARD_PREVIEW_QA_REPAIR_MAX_ATTEMPTS = Math.max(
+  0,
+  Number.parseInt(process.env.STORYBOARD_PREVIEW_QA_REPAIR_MAX_ATTEMPTS || "3", 10) || 3
 );
 
 const buildProfileContext = (profileValue) => {
@@ -754,6 +760,105 @@ const runLoggedCommand = async (command, args, options = {}) => {
   }
 };
 
+const isRemotionNetworkFetchError = (error) => {
+  const message = String(error instanceof Error ? error.message : error || "");
+  return (
+    message.includes("ERR_NETWORK_CHANGED") ||
+    (message.includes("Failed to fetch http://localhost:3000/proxy") && message.includes("/public/runs/")) ||
+    (message.includes("Browser failed to load http://localhost:3000/proxy") && message.includes("/public/runs/"))
+  );
+};
+
+const buildRemotionRenderArgs = ({compositionId, outPath, renderProps, concurrency, scale, videoBitrate, audioBitrate, x264Preset}) => [
+  "remotion",
+  "render",
+  "src/index.ts",
+  compositionId,
+  outPath,
+  `--props=${JSON.stringify(renderProps)}`,
+  `--timeout=${REMOTION_TIMEOUT_MS}`,
+  `--concurrency=${concurrency}`,
+  `--scale=${scale}`,
+  `--video-bitrate=${videoBitrate}`,
+  `--audio-bitrate=${audioBitrate}`,
+  `--x264-preset=${x264Preset}`
+];
+
+const renderWithRemotion = async ({compositionId, outPath, renderProps}) => {
+  const attempts = [
+    {
+      label: "padrao",
+      concurrency: REMOTION_CONCURRENCY,
+      scale: REMOTION_SCALE,
+      videoBitrate: REMOTION_VIDEO_BITRATE,
+      audioBitrate: REMOTION_AUDIO_BITRATE,
+      x264Preset: REMOTION_X264_PRESET
+    }
+  ];
+
+  if (REMOTION_CONCURRENCY > 1) {
+    attempts.push({
+      label: "fallback",
+      concurrency: 1,
+      scale: REMOTION_SCALE,
+      videoBitrate: REMOTION_VIDEO_BITRATE,
+      audioBitrate: REMOTION_AUDIO_BITRATE,
+      x264Preset: REMOTION_X264_PRESET
+    });
+  }
+
+  let lastError = null;
+
+  for (let index = 0; index < attempts.length; index += 1) {
+    const attempt = attempts[index];
+
+    if (index > 0) {
+      process.stdout.write(
+        `[editor] Remotion retry ${index + 1}/${attempts.length} com concurrency=${attempt.concurrency} apos falha de fetch local.\n`
+      );
+    }
+
+    try {
+      await runLoggedCommand(
+        "npx",
+        buildRemotionRenderArgs({
+          compositionId,
+          outPath,
+          renderProps,
+          concurrency: attempt.concurrency,
+          scale: attempt.scale,
+          videoBitrate: attempt.videoBitrate,
+          audioBitrate: attempt.audioBitrate,
+          x264Preset: attempt.x264Preset
+        }),
+        {
+          compactProgress: true,
+          env: {
+            CI: "1",
+            NO_COLOR: "1",
+            FORCE_COLOR: "0"
+          }
+        }
+      );
+      return;
+    } catch (error) {
+      lastError = error;
+
+      if (!isRemotionNetworkFetchError(error) || index === attempts.length - 1) {
+        throw error;
+      }
+
+      process.stdout.write(
+        "[editor] Remotion perdeu um asset local durante o fetch. Vou reduzir a concorrencia e tentar de novo.\n"
+      );
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+};
+
 const fileExists = async (targetPath) => {
   try {
     await access(targetPath);
@@ -1074,6 +1179,190 @@ const extractQaFrames = async ({slug, outPath, seconds}) => {
   return framePaths;
 };
 
+const THUMBNAIL_WIDTH = 1080;
+const THUMBNAIL_HEIGHT = 1920;
+const THUMBNAIL_FONT_CANDIDATES = [
+  "DejaVu Sans:style=Bold",
+  "DejaVu Sans",
+  "Liberation Sans:style=Bold",
+  "Arial:style=Bold"
+];
+const DEFAULT_THUMBNAIL_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+
+const escapeFfmpegFilterPath = (value) =>
+  String(value ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/:/g, "\\:")
+    .replace(/'/g, "\\'");
+
+const resolveThumbnailFontFile = () => {
+  for (const candidate of THUMBNAIL_FONT_CANDIDATES) {
+    const result = spawnSync("fc-match", ["-f", "%{file}\n", candidate], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      stdio: "pipe"
+    });
+
+    if (result.status !== 0) {
+      continue;
+    }
+
+    const fontFile = String(result.stdout || "")
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
+
+    if (fontFile) {
+      return fontFile;
+    }
+  }
+
+  return DEFAULT_THUMBNAIL_FONT;
+};
+
+const wrapThumbnailText = (value, {maxCharsPerLine = 20, maxLines = 4} = {}) => {
+  const words = normalizeText(value)
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (words.length === 0) {
+    return "";
+  }
+
+  const lines = [];
+  let currentLine = "";
+
+  const pushCurrentLine = () => {
+    if (currentLine) {
+      lines.push(currentLine);
+      currentLine = "";
+    }
+  };
+
+  for (const word of words) {
+    const candidate = currentLine ? `${currentLine} ${word}` : word;
+
+    if (candidate.length <= maxCharsPerLine || !currentLine) {
+      currentLine = candidate;
+      continue;
+    }
+
+    pushCurrentLine();
+
+    if (lines.length >= maxLines) {
+      break;
+    }
+
+    currentLine = word;
+
+    if (currentLine.length > maxCharsPerLine) {
+      const chunks = currentLine.match(new RegExp(`.{1,${Math.max(8, maxCharsPerLine)}}`, "g")) || [currentLine];
+      currentLine = chunks.shift() || "";
+      lines.push(...chunks);
+      currentLine = currentLine.slice(0, maxCharsPerLine).trim();
+    }
+  }
+
+  pushCurrentLine();
+
+  if (lines.length > maxLines) {
+    lines.length = maxLines;
+  }
+
+  if (lines.length === maxLines && words.join(" ").length > lines.join(" ").length) {
+    lines[maxLines - 1] = `${lines[maxLines - 1].replace(/…?$/, "").slice(0, Math.max(1, maxCharsPerLine - 1)).trimEnd()}…`;
+  }
+
+  return lines.join("\n").trim();
+};
+
+const createThumbnailPoster = async ({
+  slug,
+  runDir,
+  publicRunDir,
+  sourceFramePath,
+  title,
+  hook,
+  channelHandle = "@foiumaideia"
+}) => {
+  const thumbnailDir = path.join(runDir, ".thumbnail-work");
+  const runThumbnailPath = path.join(runDir, "thumbnail.png");
+  const publicThumbnailPath = path.join(publicRunDir, "thumbnail.png");
+  const metadataPath = path.join(runDir, "thumbnail.json");
+  const publicMetadataPath = path.join(publicRunDir, "thumbnail.json");
+  const headlineFile = path.join(thumbnailDir, "headline.txt");
+  const sublineFile = path.join(thumbnailDir, "subline.txt");
+  const badgeFile = path.join(thumbnailDir, "badge.txt");
+  const fontFile = resolveThumbnailFontFile();
+  const headline = wrapThumbnailText(hook || title, {maxCharsPerLine: 18, maxLines: 4}).toUpperCase();
+  const subline = wrapThumbnailText(title || "", {maxCharsPerLine: 22, maxLines: 2});
+  const badge = wrapThumbnailText(channelHandle || "@foiumaideia", {maxCharsPerLine: 16, maxLines: 1}).toUpperCase();
+
+  await mkdir(thumbnailDir, {recursive: true});
+  await mkdir(publicRunDir, {recursive: true});
+  await writeFile(headlineFile, headline || "");
+  await writeFile(sublineFile, subline || "");
+  await writeFile(badgeFile, badge || "");
+
+  if (!sourceFramePath || !existsSync(sourceFramePath)) {
+    throw new Error(`Nao consegui localizar o frame-base da thumbnail para ${slug}.`);
+  }
+
+  const filter = [
+    `scale=${THUMBNAIL_WIDTH}:${THUMBNAIL_HEIGHT}:force_original_aspect_ratio=increase`,
+    `crop=${THUMBNAIL_WIDTH}:${THUMBNAIL_HEIGHT}`,
+    "format=yuv420p",
+    "drawbox=x=0:y=0:w=iw:h=220:color=black@0.42:t=fill",
+    "drawbox=x=0:y=ih-540:w=iw:h=540:color=black@0.52:t=fill",
+    "drawbox=x=0:y=0:w=24:h=ih:color=0x22c55e@0.95:t=fill",
+    `drawtext=fontfile='${escapeFfmpegFilterPath(fontFile)}':textfile='${escapeFfmpegFilterPath(badgeFile)}':expansion=none:fontcolor=0x22c55e:fontsize=34:line_spacing=0:x=56:y=56:shadowcolor=black@0.85:shadowx=3:shadowy=3:fix_bounds=1`,
+    `drawtext=fontfile='${escapeFfmpegFilterPath(fontFile)}':textfile='${escapeFfmpegFilterPath(headlineFile)}':expansion=none:fontcolor=white:fontsize=78:line_spacing=10:x=56:y=128:shadowcolor=black@0.92:shadowx=4:shadowy=4:fix_bounds=1`,
+    `drawtext=fontfile='${escapeFfmpegFilterPath(fontFile)}':textfile='${escapeFfmpegFilterPath(sublineFile)}':expansion=none:fontcolor=white:fontsize=44:line_spacing=8:x=56:y=h-430:shadowcolor=black@0.92:shadowx=3:shadowy=3:fix_bounds=1`
+  ].join(",");
+
+  try {
+    runCommand("ffmpeg", [
+      "-y",
+      "-i",
+      sourceFramePath,
+      "-vf",
+      filter,
+      "-frames:v",
+      "1",
+      runThumbnailPath
+    ]);
+  } catch (error) {
+    await copyFile(sourceFramePath, runThumbnailPath);
+    process.stderr.write(
+      `Aviso: thumbnail com overlay falhou (${error.message}); usando frame simples como fallback.\n`
+    );
+  }
+
+  await copyFile(runThumbnailPath, publicThumbnailPath);
+  const metadata = {
+    slug,
+    createdAt: new Date().toISOString(),
+    sourceFramePath: path.relative(projectRoot, sourceFramePath),
+    thumbnailPath: path.relative(projectRoot, runThumbnailPath),
+    publicThumbnailPath: path.relative(projectRoot, publicThumbnailPath),
+    title,
+    hook,
+    badge
+  };
+
+  await writeFile(metadataPath, JSON.stringify(metadata, null, 2));
+  await writeFile(publicMetadataPath, JSON.stringify(metadata, null, 2));
+  await rm(thumbnailDir, {recursive: true, force: true});
+
+  return {
+    ...metadata,
+    thumbnailPath: runThumbnailPath,
+    publicThumbnailPath
+  };
+};
+
 const makeAgentReport = () => ({
   startedAt: new Date().toISOString(),
   status: "running",
@@ -1082,6 +1371,7 @@ const makeAgentReport = () => ({
   durationSec: 0,
   audioDurationSec: 0,
   qa: null,
+  thumbnail: null,
   llmUsage: null,
   agents: {
     sysadmin: {status: "pending", notes: []},
@@ -1307,18 +1597,90 @@ const main = async () => {
     }
   }
 
-  const linkedStoryboard = {
+  let linkedStoryboard = {
     ...storyboard,
     scenes: storyboard.scenes
   };
+  logAgent("roteirista", "a validar storyboard final antes das imagens");
+  let storyboardQa = evaluateStoryboardQa({
+    storyboard: linkedStoryboard,
+    title,
+    language: videoLanguage,
+    desiredDurationSeconds: targetSeconds,
+    scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || ""
+  });
 
-  report.agents.roteirista.status = "completed";
+  for (
+    let repairAttempt = 0;
+    !storyboardQa.passed && repairAttempt < STORYBOARD_PREVIEW_QA_REPAIR_MAX_ATTEMPTS;
+    repairAttempt += 1
+  ) {
+    const attemptLabel = `${repairAttempt + 1}/${STORYBOARD_PREVIEW_QA_REPAIR_MAX_ATTEMPTS}`;
+    process.stderr.write(
+      `[roteirista] QA pre-visual falhou; a reescrever storyboard com base no feedback (${attemptLabel})\n`
+    );
+    appendAgentNote(
+      report,
+      "roteirista",
+      `QA pre-visual falhou; repair automatico ${attemptLabel}: ${storyboardQa.issues.join(" | ")}`
+    );
+
+    linkedStoryboard = await runLlmStageWithRetries({
+      stageLabel: "roteirista",
+      task: async () =>
+        repairStoryboard({
+          title,
+          language: videoLanguage,
+          model: llmModel,
+          apiKey: process.env.OPENROUTER_API_KEY || "",
+          desiredDurationSeconds: targetSeconds,
+          provider: llmProvider,
+          cwd: projectRoot,
+          storyboard: linkedStoryboard,
+          sourceText,
+          scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || "",
+          issues: storyboardQa.issues,
+          warnings: storyboardQa.warnings
+        })
+    });
+
+    storyboardQa = evaluateStoryboardQa({
+      storyboard: linkedStoryboard,
+      title,
+      language: videoLanguage,
+      desiredDurationSeconds: targetSeconds,
+      scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || ""
+    });
+  }
+
+  await writeFile(path.join(runsDir, "storyboard-qa.json"), JSON.stringify(storyboardQa, null, 2));
+
   report.agents.roteirista.sceneCount = linkedStoryboard.scenes.length;
   report.agents.roteirista.wordCount = linkedStoryboard.scenes
     .map((scene) => scene.narration)
     .join(" ")
     .split(/\s+/)
     .filter(Boolean).length;
+  report.agents.roteirista.storyboardQa = storyboardQa;
+  appendAgentNote(
+    report,
+    "roteirista",
+    `QA pre-visual: perfil=${storyboardQa.profile} score=${storyboardQa.metrics?.viralScore ?? "n/a"} palavras=${storyboardQa.metrics?.wordCount ?? 0}/${storyboardQa.metrics?.minWords ?? 0}-${storyboardQa.metrics?.maxWords ?? 0}.`
+  );
+
+  if (Array.isArray(storyboardQa.warnings) && storyboardQa.warnings.length > 0) {
+    appendAgentNote(report, "roteirista", `QA pre-visual avisos: ${storyboardQa.warnings.join(" | ")}`);
+  }
+
+  if (!storyboardQa.passed) {
+    report.agents.roteirista.status = "failed";
+    appendAgentNote(report, "roteirista", `QA pre-visual reprovou o storyboard: ${storyboardQa.issues.join(" | ")}`);
+    report.completedAt = new Date().toISOString();
+    await writeFile(path.join(runsDir, "agent-report.json"), JSON.stringify(report, null, 2));
+    throw new Error(`Storyboard reprovado pela QA pre-visual: ${storyboardQa.issues.join(" | ")}`);
+  }
+
+  report.agents.roteirista.status = "completed";
   appendAgentNote(report, "roteirista", "Storyboard validado e cenas conectadas para voz unica.");
 
   logAgent("grafico", "a criar o plano visual com queries alternativas para stock");
@@ -1817,31 +2179,11 @@ const main = async () => {
   if (!args.noRender && !shouldReuseRenderedVideo) {
     logAgent("editor", "a renderizar no Remotion");
     await mkdir(path.dirname(outPath), {recursive: true});
-    await runLoggedCommand(
-      "npx",
-      [
-        "remotion",
-        "render",
-        "src/index.ts",
-        profileContext.compositionId,
-        outPath,
-        `--props=${JSON.stringify(renderProps)}`,
-        `--timeout=${REMOTION_TIMEOUT_MS}`,
-        `--concurrency=${REMOTION_CONCURRENCY}`,
-        `--scale=${REMOTION_SCALE}`,
-        `--video-bitrate=${REMOTION_VIDEO_BITRATE}`,
-        `--audio-bitrate=${REMOTION_AUDIO_BITRATE}`,
-        `--x264-preset=${REMOTION_X264_PRESET}`
-      ],
-      {
-        compactProgress: true,
-        env: {
-          CI: "1",
-          NO_COLOR: "1",
-          FORCE_COLOR: "0"
-        }
-      }
-    );
+    await renderWithRemotion({
+      compositionId: profileContext.compositionId,
+      outPath,
+      renderProps
+    });
   }
 
   if (shouldReuseRenderedVideo) {
@@ -1877,6 +2219,31 @@ const main = async () => {
       Math.max(1.5, validation.metrics.videoSeconds * 0.82).toFixed(2)
     ]
   });
+  let thumbnailAsset = null;
+
+  try {
+    thumbnailAsset = await createThumbnailPoster({
+      slug,
+      runDir: runsDir,
+      publicRunDir,
+      sourceFramePath: qaFramePaths[0],
+      title: enrichedStoryboard.videoTitle || title,
+      hook: enrichedStoryboard.hook || title,
+      channelHandle: process.env.CHANNEL_HANDLE || "@foiumaideia"
+    });
+    report.thumbnail = {
+      ...thumbnailAsset,
+      sourceFramePath: thumbnailAsset.sourceFramePath,
+      thumbnailPath: path.relative(projectRoot, thumbnailAsset.thumbnailPath),
+      publicThumbnailPath: path.relative(projectRoot, thumbnailAsset.publicThumbnailPath)
+    };
+    report.agents.qa.thumbnail = report.thumbnail;
+    appendAgentNote(report, "qa", `Thumbnail criada em ${thumbnailAsset.publicThumbnailPath}.`);
+  } catch (error) {
+    appendAgentNote(report, "qa", `Thumbnail nao criada: ${error.message}`);
+    process.stderr.write(`Aviso: thumbnail nao foi criada (${error.message}).\n`);
+  }
+
   const clipCoverage = stockScenes.filter((scene) => Boolean(scene.clipPath)).length / Math.max(1, stockScenes.length);
   const qaPass =
     validation.checks.outputExists &&

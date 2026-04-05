@@ -44,12 +44,6 @@ const parseArgs = (argv) => {
       continue;
     }
 
-    if (item === "--asset-mode") {
-      parsed.assetMode = argv[index + 1];
-      index += 1;
-      continue;
-    }
-
     if (item === "--envato-max-scenes") {
       parsed.envatoMaxScenes = Number(argv[index + 1]);
       index += 1;
@@ -135,10 +129,6 @@ const main = async () => {
 
     if (args.openLast && index === assignedTitles.length - 1) {
       commandArgs.push("--open");
-    }
-
-    if (args.assetMode) {
-      commandArgs.push("--asset-mode", args.assetMode);
     }
 
     if (Number.isFinite(args.envatoMaxScenes) && args.envatoMaxScenes > 0) {

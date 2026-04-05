@@ -23,7 +23,7 @@ cd video-engine
 npm run make -- --title "Os idosos estao usando IA sem saber" --asset-mode no-browser
 ```
 
-Com assets FLUX2 locais:
+Com assets gerados localmente pelo pipeline:
 
 ```bash
 npm run make -- --title "..." --asset-mode no-browser --local-assets-dir ../assets/envato/SLUG
@@ -43,7 +43,7 @@ npm run studio
 
 - `scripts/make-video.mjs`: wrapper com agentes `sysadmin`, `dev`, `editor` e `qa`
 - `scripts/make-plan1-video.mjs`: gera storyboard, voz, timeline e render
-- `scripts/fetch-envato-overrides.mjs`: resolve assets locais (FLUX2) para o manifesto
+- `scripts/fetch-envato-overrides.mjs`: resolve assets locais gerados para o manifesto
 - `scripts/lib/llm-provider.mjs`: integracao LLM (Gemini, OpenRouter)
 - `scripts/lib/gemini-usage.mjs`: consolidacao local de tokens/custo estimado do Gemini
 - `scripts/lib/tts.mjs`: TTS (Gemini) + STT (timestamps) + sync karaoke
@@ -61,7 +61,7 @@ npm run studio
 ## Gemini Usage E Cost
 
 - `runs/<slug>/gemini-usage.json`: uso do Gemini no storyboard, revisao e plano grafico
-- `assets/envato/<slug>/gemini-usage.json`: uso do Gemini no planner FLUX2 e na auditoria Gemini Vision
+- `assets/envato/<slug>/gemini-usage.json`: uso do Gemini no planner visual e na auditoria Gemini Vision
 - `runs/<slug>/agent-report.json`: resumo combinado em `llmUsage`
 
 O valor e estimado localmente a partir de `usageMetadata` devolvido pela Gemini API e do pricing oficial.

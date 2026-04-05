@@ -132,12 +132,6 @@ const parseArgs = (argv) => {
       continue;
     }
 
-    if (item === "--asset-mode") {
-      parsed.assetMode = argv[index + 1];
-      index += 1;
-      continue;
-    }
-
     if (item === "--envato-max-scenes") {
       parsed.envatoMaxScenes = Number(argv[index + 1]);
       index += 1;
@@ -212,12 +206,6 @@ const parseArgs = (argv) => {
       continue;
     }
 
-    if (item === "--flux2-style") {
-      parsed.flux2Style = argv[index + 1];
-      index += 1;
-      continue;
-    }
-
     if (item === "--help") {
       parsed.help = true;
       continue;
@@ -235,8 +223,7 @@ const removeArgPair = (args, flag) => {
   }
 };
 
-const usesGeneratedImagePipeline = (assetMode) =>
-  ["flux2", "google-cloud", "imagen", "google"].includes(String(assetMode || "").trim().toLowerCase());
+const usesVertexImagePipeline = () => true;
 
 const getSceneRangeForProfile = (profile, targetSeconds) => {
   const numericTargetSeconds = Number(targetSeconds);
@@ -336,8 +323,6 @@ const printHelp = () => {
       "  --no-open",
       "  --dry-run",
       "  --force",
-      "  --asset-mode <auto|no-browser|flux2|google-cloud>",
-      "  --flux2-style <style-suffix>",
       "  --envato-max-scenes <numero>",
       "  --reuse-preview",
       "  --preview-only",
@@ -424,13 +409,10 @@ const run = async () => {
     Number.isFinite(requestedTargetSeconds) && requestedTargetSeconds > 0
       ? requestedTargetSeconds
       : outputProfile.defaultTargetSeconds;
-  const assetMode = args.assetMode || process.env.DEFAULT_ASSET_MODE || fileConfig.DEFAULT_ASSET_MODE || "auto";
+  const assetMode = "google-cloud";
   const openVideo = args.noOpen
     ? false
     : args.open || String(process.env.DEFAULT_OPEN || fileConfig.DEFAULT_OPEN || "").trim().toLowerCase() === "true";
-  // Legacy DEFAULT_FLUX2_STYLE caused preset leakage across image styles.
-  // Only pass a raw --style override when it is explicitly requested.
-  const flux2Style = args.flux2Style || "";
   const slug = args.slug || `${new Date().toISOString().slice(0, 10)}-${slugify(title)}`;
   const sourceOutput = path.join(projectRoot, "out", `${slug}.mp4`);
   let exportOutput = path.join(exportDir, `${slug}.mp4`);
@@ -450,6 +432,7 @@ const run = async () => {
   }
 
   if (args.imageStyle) {
+    runtimeEnv.IMAGE_STYLE_PRESET = args.imageStyle;
     runtimeEnv.FLUX2_STYLE_PRESET = args.imageStyle;
   }
 
@@ -501,11 +484,9 @@ const run = async () => {
     commandArgs.push("--storyboard-file", storyboardFileArg);
   }
 
-  if (assetMode && assetMode !== "auto") {
-    commandArgs.push("--asset-mode", usesGeneratedImagePipeline(assetMode) ? "no-browser" : assetMode);
-  }
+  commandArgs.push("--asset-mode", "no-browser");
 
-  if (usesGeneratedImagePipeline(assetMode)) {
+  if (usesVertexImagePipeline()) {
     const localAssetsDir = path.join(projectRoot, "assets", "envato", slug);
     commandArgs.push("--local-assets-dir", localAssetsDir);
   }
@@ -514,7 +495,7 @@ const run = async () => {
     commandArgs.push("--envato-max-scenes", String(args.envatoMaxScenes));
   }
 
-  if ((args.reusePreview || usesGeneratedImagePipeline(assetMode)) && !args.force) {
+  if ((args.reusePreview || usesVertexImagePipeline()) && !args.force) {
     commandArgs.push("--reuse-preview");
   }
 
@@ -530,7 +511,7 @@ const run = async () => {
     const dryRunCommandArgs = [...commandArgs];
     const dryRunStoryboard = storyboardFileArg
       ? storyboardFileArg
-      : usesGeneratedImagePipeline(assetMode) && existsSync(previewStoryboard)
+      : usesVertexImagePipeline() && existsSync(previewStoryboard)
         ? `runs/${previewSlug}/storyboard.json`
         : "";
 
@@ -578,7 +559,7 @@ const run = async () => {
           runtimeEnv: {
             VIDEO_LANGUAGE: runtimeEnv.VIDEO_LANGUAGE || null,
             GOOGLE_TTS_VOICE: runtimeEnv.GOOGLE_TTS_VOICE || null,
-            FLUX2_STYLE_PRESET: runtimeEnv.FLUX2_STYLE_PRESET || null,
+            IMAGE_STYLE_PRESET: runtimeEnv.IMAGE_STYLE_PRESET || runtimeEnv.FLUX2_STYLE_PRESET || null,
             GOOGLE_TTS_STYLE_PROMPT: runtimeEnv.GOOGLE_TTS_STYLE_PROMPT || null,
             VIDEO_SCRIPT_GUIDANCE: runtimeEnv.VIDEO_SCRIPT_GUIDANCE || null,
             CHANNEL_HANDLE: runtimeEnv.CHANNEL_HANDLE || null,
@@ -653,11 +634,11 @@ const run = async () => {
 
   await mkdir(exportDir, {recursive: true});
 
-  // --- FLUX2 asset generation step ---
-  if (usesGeneratedImagePipeline(assetMode)) {
+  // --- Vertex image generation step ---
+  if (usesVertexImagePipeline()) {
     // Step 1: generate storyboard preview if it doesn't exist
     if (!storyboardFileArg && (!existsSync(previewStoryboard) || args.force)) {
-      process.stdout.write("[flux2] generating storyboard preview...\n");
+      process.stdout.write("[vertex-assets] generating storyboard preview...\n");
       const previewArgs = [
         path.join(projectRoot, "scripts", "make-plan1-video.mjs"),
         "--title", title,
@@ -704,33 +685,30 @@ const run = async () => {
     }
 
     if (storyboardFile) {
-      process.stdout.write(`[flux2] generating FLUX2 assets from ${storyboardFile}...\n`);
-      const flux2Args = [
+      process.stdout.write(`[vertex-assets] generating scene assets from ${storyboardFile}...\n`);
+      const assetArgs = [
         path.join(wrapperRoot, "scripts", "generate-flux2-assets.mjs"),
         "--storyboard-file", storyboardFile,
         "--slug", slug
       ];
-      if (assetMode !== "flux2") {
-        flux2Args.push("--provider", assetMode);
-      }
-      if (flux2Style) flux2Args.push("--style", flux2Style);
+      assetArgs.push("--provider", "google-cloud");
 
-      const flux2Result = spawnSync("node", flux2Args, {
+      const assetResult = spawnSync("node", assetArgs, {
         cwd: wrapperRoot,
         stdio: "inherit",
         env: {...runtimeEnv, VIDEOS_ENVATO_ROOT: projectRoot}
       });
 
-      if (flux2Result.status !== 0) {
-        process.stderr.write("[flux2] asset generation failed\n");
-        process.exit(flux2Result.status ?? 1);
+      if (assetResult.status !== 0) {
+        process.stderr.write("[vertex-assets] asset generation failed\n");
+        process.exit(assetResult.status ?? 1);
       }
     } else {
-      process.stderr.write("[flux2] could not find storyboard to generate assets\n");
+      process.stderr.write("[vertex-assets] could not find storyboard to generate assets\n");
       process.exit(1);
     }
   }
-  // --- end FLUX2 step ---
+  // --- end Vertex asset step ---
   const existingExport = await findExistingExportForTitle({
     exportDir,
     title

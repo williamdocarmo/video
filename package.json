@@ -1,11 +1,11 @@
 {
-  "name": "videos-flux2",
+  "name": "videos-vertex",
   "private": true,
   "type": "module",
   "scripts": {
     "web": "node web/server.mjs",
-    "make": "node scripts/foiumaideia.mjs --asset-mode flux2",
-    "make:batch": "node scripts/make-batch.mjs --asset-mode flux2",
+    "make": "node scripts/foiumaideia.mjs",
+    "make:batch": "node scripts/make-batch.mjs",
     "make:original": "node scripts/foiumaideia.mjs",
     "generate-assets": "node scripts/generate-flux2-assets.mjs"
   }

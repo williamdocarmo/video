@@ -1808,19 +1808,76 @@ const GOOGLE_TTS_CHUNK_MAX_CHARACTERS = Number.parseInt(
   10
 );
 const GOOGLE_TTS_MAX_ATTEMPTS = Number.parseInt(process.env.GOOGLE_TTS_MAX_ATTEMPTS || "12", 10);
-const GOOGLE_TTS_MIN_RETRY_MS = Number.parseInt(process.env.GOOGLE_TTS_MIN_RETRY_MS || "20000", 10);
+const GOOGLE_TTS_MIN_RETRY_MS = Number.parseInt(process.env.GOOGLE_TTS_MIN_RETRY_MS || "12000", 10);
 const GOOGLE_TTS_MAX_RETRY_MS = Number.parseInt(process.env.GOOGLE_TTS_MAX_RETRY_MS || "180000", 10);
 const GOOGLE_TTS_INTER_REQUEST_MS = Number.parseInt(process.env.GOOGLE_TTS_INTER_REQUEST_MS || "6000", 10);
+const CLOUD_GEMINI_TTS_MAX_ATTEMPTS = Math.max(
+  1,
+  Number.parseInt(process.env.CLOUD_GEMINI_TTS_MAX_ATTEMPTS || process.env.GOOGLE_TTS_MAX_ATTEMPTS || "6", 10) || 6
+);
+const CLOUD_GEMINI_TTS_MIN_RETRY_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.CLOUD_GEMINI_TTS_MIN_RETRY_MS || process.env.GOOGLE_TTS_MIN_RETRY_MS || "15000", 10) || 15000
+);
+const CLOUD_GEMINI_TTS_MAX_RETRY_MS = Math.max(
+  CLOUD_GEMINI_TTS_MIN_RETRY_MS,
+  Number.parseInt(process.env.CLOUD_GEMINI_TTS_MAX_RETRY_MS || process.env.GOOGLE_TTS_MAX_RETRY_MS || "180000", 10) || 180000
+);
+const CLOUD_GEMINI_TTS_INTER_REQUEST_MS = Math.max(
+  0,
+  Number.parseInt(
+    process.env.CLOUD_GEMINI_TTS_INTER_REQUEST_MS || process.env.GOOGLE_TTS_INTER_REQUEST_MS || "12000",
+    10
+  ) || 12000
+);
+const CLOUD_GEMINI_TTS_FALLBACK_ENABLED =
+  String(process.env.CLOUD_GEMINI_TTS_FALLBACK_ENABLED || "true").trim().toLowerCase() !== "false";
+const CLOUD_GEMINI_TTS_FALLBACK_VOICE = String(
+  process.env.CLOUD_GEMINI_TTS_FALLBACK_VOICE ||
+  process.env.TTS_FALLBACK_VOICE ||
+  "pt-BR-Chirp3-HD-Achernar"
+).trim();
 
 const computeGoogleRetryDelayMs = (response, attempt) => {
-  const retryAfterHeader = Number.parseInt(response.headers.get("retry-after") || "0", 10);
+  const retryAfterHeader = Number.parseInt(response?.headers?.get("retry-after") || "0", 10);
 
   if (retryAfterHeader > 0) {
-    return retryAfterHeader * 1000;
+    return Math.min(GOOGLE_TTS_MAX_RETRY_MS, retryAfterHeader * 1000);
   }
 
   const exponentialDelay = GOOGLE_TTS_MIN_RETRY_MS * 2 ** Math.max(0, attempt);
   return Math.min(GOOGLE_TTS_MAX_RETRY_MS, exponentialDelay);
+};
+
+const computeCloudGeminiRetryDelayMs = (response, attempt) => {
+  const retryAfterHeader = Number.parseInt(response?.headers?.get("retry-after") || "0", 10);
+
+  if (retryAfterHeader > 0) {
+    return Math.min(CLOUD_GEMINI_TTS_MAX_RETRY_MS, retryAfterHeader * 1000);
+  }
+
+  const exponentialDelay = CLOUD_GEMINI_TTS_MIN_RETRY_MS * 2 ** Math.max(0, attempt);
+  const jitterMs = Math.floor(Math.random() * 2500);
+  return Math.min(CLOUD_GEMINI_TTS_MAX_RETRY_MS, exponentialDelay + jitterMs);
+};
+
+const isRetryableGoogleTtsStatus = (status) => [429, 500, 502, 503, 504].includes(Number(status));
+
+const isRetryableCloudGeminiTtsError = (error) => {
+  const message = String(error?.message || error || "").toLowerCase();
+  return [
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+    "timeout",
+    "timed out",
+    "temporarily unavailable",
+    "fetch failed",
+    "network",
+    "connection"
+  ].some((term) => message.includes(term));
 };
 
 const synthesizeWithGoogleGeminiTts = async ({
@@ -1880,29 +1937,42 @@ const synthesizeWithGoogleGeminiTts = async ({
     let lastStatus = null;
 
     for (let attempt = 0; attempt < GOOGLE_TTS_MAX_ATTEMPTS; attempt += 1) {
-      response = await fetch(requestUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(requestBody)
-      });
+      try {
+        response = await fetch(requestUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(requestBody)
+        });
+        lastStatus = response.status;
 
-      lastStatus = response.status;
+        if (response.ok) {
+          break;
+        }
 
-      if (response.ok) {
-        break;
+        if (!isRetryableGoogleTtsStatus(response.status) || attempt >= GOOGLE_TTS_MAX_ATTEMPTS - 1) {
+          break;
+        }
+
+        const backoffMs = computeGoogleRetryDelayMs(response, attempt);
+        process.stderr.write(
+          `Aviso: Google Gemini TTS devolveu ${response.status} no chunk ${index + 1}/${chunks.length}; nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
+        );
+        await sleep(backoffMs);
+      } catch (error) {
+        lastStatus = null;
+
+        if (attempt >= GOOGLE_TTS_MAX_ATTEMPTS - 1 || !isRetryableCloudGeminiTtsError(error)) {
+          throw error;
+        }
+
+        const backoffMs = computeGoogleRetryDelayMs(null, attempt);
+        process.stderr.write(
+          `Aviso: Google Gemini TTS falhou no chunk ${index + 1}/${chunks.length} (${String(error?.message || error)}); nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
+        );
+        await sleep(backoffMs);
       }
-
-      if (response.status !== 429) {
-        break;
-      }
-
-      const backoffMs = computeGoogleRetryDelayMs(response, attempt);
-      process.stderr.write(
-        `Aviso: Google Gemini TTS devolveu 429 no chunk ${index + 1}/${chunks.length}; nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
-      );
-      await sleep(backoffMs);
     }
 
     if (!response?.ok) {
@@ -2041,6 +2111,10 @@ const synthesizeWithCloudTtsChirp3 = async ({
     const partPath = path.join(tempDir, `part-${String(index).padStart(2, "0")}.mp3`);
     partPaths.push(partPath);
     await writeFile(partPath, Buffer.from(payload.audioContent, "base64"));
+
+    if (index < chunks.length - 1 && CLOUD_GEMINI_TTS_INTER_REQUEST_MS > 0) {
+      await sleep(CLOUD_GEMINI_TTS_INTER_REQUEST_MS);
+    }
   }
 
   if (partPaths.length === 1) {
@@ -2097,37 +2171,74 @@ const synthesizeWithCloudTtsGemini = async ({
   await mkdir(tempDir, {recursive: true});
 
   for (let index = 0; index < chunks.length; index += 1) {
-    const response = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-        "x-goog-user-project": gcpConfig.projectId
-      },
-      body: JSON.stringify({
-        input: {
-          prompt:
-            stylePrompt ||
-            (languageCode === "pt-BR"
-              ? "Fale em português do Brasil com voz masculina firme, natural, segura e envolvente."
-              : "Speak with a natural, confident and engaging delivery."),
-          text: chunks[index]
-        },
-        voice: {
-          languageCode,
-          name: voiceName,
-          model_name: model
-        },
-        audioConfig: {
-          audioEncoding: "MP3",
-          sampleRateHertz: 44100
-        }
-      })
-    });
+    let response = null;
+    let lastError = null;
 
-    if (!response.ok) {
-      const errorSnippet = await extractResponseErrorSnippet(response);
-      throw new Error(`Cloud Gemini TTS respondeu ${response.status}${errorSnippet ? ` (${errorSnippet})` : ""}`);
+    for (let attempt = 0; attempt < CLOUD_GEMINI_TTS_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        response = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+            "x-goog-user-project": gcpConfig.projectId
+          },
+          body: JSON.stringify({
+            input: {
+              prompt:
+                stylePrompt ||
+                (languageCode === "pt-BR"
+                  ? "Fale em português do Brasil com voz masculina firme, natural, segura e envolvente."
+                  : "Speak with a natural, confident and engaging delivery."),
+              text: chunks[index]
+            },
+            voice: {
+              languageCode,
+              name: voiceName,
+              model_name: model
+            },
+            audioConfig: {
+              audioEncoding: "MP3",
+              sampleRateHertz: 44100
+            }
+          })
+        });
+
+        if (response.ok) {
+          break;
+        }
+
+        const retryable = isRetryableGoogleTtsStatus(response.status);
+        lastError = new Error(`Cloud Gemini TTS respondeu ${response.status}`);
+        if (!retryable || attempt >= CLOUD_GEMINI_TTS_MAX_ATTEMPTS - 1) {
+          break;
+        }
+
+        const backoffMs = computeCloudGeminiRetryDelayMs(response, attempt);
+        process.stderr.write(
+          `Aviso: Cloud Gemini TTS respondeu ${response.status} no chunk ${index + 1}/${chunks.length}; nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
+        );
+        await sleep(backoffMs);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt >= CLOUD_GEMINI_TTS_MAX_ATTEMPTS - 1 || !isRetryableCloudGeminiTtsError(lastError)) {
+          throw lastError;
+        }
+
+        const backoffMs = computeCloudGeminiRetryDelayMs(null, attempt);
+        process.stderr.write(
+          `Aviso: Cloud Gemini TTS falhou no chunk ${index + 1}/${chunks.length} (${lastError.message}); nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
+        );
+        await sleep(backoffMs);
+      }
+    }
+
+    if (!response?.ok) {
+      const errorSnippet = response ? await extractResponseErrorSnippet(response) : "";
+      throw new Error(
+        lastError?.message ||
+          `Cloud Gemini TTS respondeu ${response?.status ?? "erro desconhecido"}${errorSnippet ? ` (${errorSnippet})` : ""}`
+      );
     }
 
     const payload = await response.json();
@@ -2193,15 +2304,33 @@ export const synthesizeVoiceover = async ({
   }
 
   if (["google-gemini-tts", "gemini-tts", "gemini"].includes(normalizedProvider)) {
-    return await synthesizeWithCloudTtsGemini({
-      text,
-      mp3Path,
-      model: google?.model || process.env.GOOGLE_TTS_MODEL || "gemini-2.5-flash-tts",
-      voiceName: google?.voiceName || process.env.GOOGLE_TTS_VOICE || "Iapetus",
-      languageCode: google?.languageCode || process.env.VIDEO_LANGUAGE || "pt-BR",
-      stylePrompt: google?.stylePrompt || process.env.GOOGLE_TTS_STYLE_PROMPT || "",
-      sceneSpans
-    });
+    try {
+      return await synthesizeWithCloudTtsGemini({
+        text,
+        mp3Path,
+        model: google?.model || process.env.GOOGLE_TTS_MODEL || "gemini-2.5-flash-tts",
+        voiceName: google?.voiceName || process.env.GOOGLE_TTS_VOICE || "Iapetus",
+        languageCode: google?.languageCode || process.env.VIDEO_LANGUAGE || "pt-BR",
+        stylePrompt: google?.stylePrompt || process.env.GOOGLE_TTS_STYLE_PROMPT || "",
+        sceneSpans
+      });
+    } catch (error) {
+      if (!CLOUD_GEMINI_TTS_FALLBACK_ENABLED || !isRetryableCloudGeminiTtsError(error)) {
+        throw error;
+      }
+
+      process.stderr.write(
+        `Aviso: Cloud Gemini TTS falhou com erro transiente (${String(error?.message || error)}); alternando para Chirp3.\n`
+      );
+
+      return await synthesizeWithCloudTtsChirp3({
+        text,
+        mp3Path,
+        voiceName: CLOUD_GEMINI_TTS_FALLBACK_VOICE,
+        languageCode: google?.languageCode || process.env.VIDEO_LANGUAGE || "pt-BR",
+        sceneSpans
+      });
+    }
   }
 
   return await synthesizeWithCloudTtsChirp3({

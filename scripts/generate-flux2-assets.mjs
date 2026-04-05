@@ -2,9 +2,11 @@
 /**
  * generate-flux2-assets.mjs
  *
+ * Legacy filename kept for compatibility.
+ *
  * For each scene in a storyboard:
  *   1. Call Gemini to build a structured visual plan with 1..N shots
- *   2. Generate one FLUX2 image per planned shot (Apple Silicon MLX)
+ *   2. Generate one Google Vertex image per planned shot
  *   3. Create a static video clip per image (no zoom/pan)
  *   4. Concatenate clips into scene-XX.mp4
  *
@@ -227,10 +229,9 @@ const parseArgs = (argv) => {
 };
 
 const cliArgs = parseArgs(process.argv.slice(2));
-const IMAGE_PROVIDER = String(cliArgs.provider || process.env.IMAGE_PROVIDER || "flux2").trim().toLowerCase();
-const ENABLE_PLANNER_FALLBACK = FLUX2_ALLOW_FALLBACK || IMAGE_PROVIDER === "google-cloud";
-const USE_DIRECT_SCENE_PLANNER =
-  IMAGE_PROVIDER === "google-cloud" || IMAGE_PROVIDER === "imagen" || IMAGE_PROVIDER === "google";
+const IMAGE_PROVIDER = "google-cloud";
+const ENABLE_PLANNER_FALLBACK = true;
+const USE_DIRECT_SCENE_PLANNER = true;
 const GOOGLE_CLOUD_PROJECT = String(process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0114845839").trim();
 const GOOGLE_CLOUD_LOCATION = String(process.env.GOOGLE_CLOUD_LOCATION || "us-central1").trim();
 const GOOGLE_IMAGE_MODEL = String(process.env.GOOGLE_IMAGE_MODEL || "gemini-2.5-flash-image").trim();
@@ -246,15 +247,20 @@ const GOOGLE_IMAGE_RETRY_DELAYS_MS = String(process.env.GOOGLE_IMAGE_RETRY_DELAY
   .split(",")
   .map((value) => Number(value.trim()))
   .filter((value) => Number.isFinite(value) && value >= 0);
-const ACTIVE_STYLE_PRESET = resolveVisualStylePreset(cliArgs.stylePreset || process.env.FLUX2_STYLE_PRESET || "claude");
-const CHARACTER = process.env.FLUX2_CHARACTER_PROMPT || ACTIVE_STYLE_PRESET.characterPrompt;
+const ACTIVE_STYLE_PRESET = resolveVisualStylePreset(
+  cliArgs.stylePreset || process.env.IMAGE_STYLE_PRESET || process.env.FLUX2_STYLE_PRESET || "claude"
+);
+const CHARACTER = process.env.IMAGE_CHARACTER_PROMPT || process.env.FLUX2_CHARACTER_PROMPT || ACTIVE_STYLE_PRESET.characterPrompt;
 // Legacy DEFAULT_FLUX2_STYLE leaked the old Claude-style prompt into unrelated presets.
 // Style presets are now the source of truth unless a per-run --style override is passed.
 const DEFAULT_STYLE = ACTIVE_STYLE_PRESET.stylePrompt;
-const DEFAULT_STYLE_LOCK_PROMPT = process.env.FLUX2_STYLE_LOCK_PROMPT || ACTIVE_STYLE_PRESET.styleLockPrompt;
-const DEFAULT_COMPOSITION_RULES = process.env.FLUX2_COMPOSITION_RULES || ACTIVE_STYLE_PRESET.compositionRules;
+const DEFAULT_STYLE_LOCK_PROMPT =
+  process.env.IMAGE_STYLE_LOCK_PROMPT || process.env.FLUX2_STYLE_LOCK_PROMPT || ACTIVE_STYLE_PRESET.styleLockPrompt;
+const DEFAULT_COMPOSITION_RULES =
+  process.env.IMAGE_COMPOSITION_RULES || process.env.FLUX2_COMPOSITION_RULES || ACTIVE_STYLE_PRESET.compositionRules;
 const DEFAULT_BACKGROUND_DIRECTIVES = ACTIVE_STYLE_PRESET.backgroundDirectives;
-const DEFAULT_LIGHTING = process.env.FLUX2_DEFAULT_LIGHTING || ACTIVE_STYLE_PRESET.defaultLighting || "clean contextual lighting";
+const DEFAULT_LIGHTING =
+  process.env.IMAGE_DEFAULT_LIGHTING || process.env.FLUX2_DEFAULT_LIGHTING || ACTIVE_STYLE_PRESET.defaultLighting || "clean contextual lighting";
 const STYLE_PLANNER_GUIDANCE =
   ACTIVE_STYLE_PRESET.plannerGuidance || "All shots must stay compatible with the selected visual style and remain easy to read on mobile.";
 const STYLE_HUMAN_GUIDANCE =
@@ -548,7 +554,7 @@ const resolveGeneratedImagePath = async ({expectedPath}) => {
   const latest = variants[0]?.path;
 
   if (!latest) {
-    throw new Error(`FLUX2 nao produziu a imagem esperada para ${path.basename(expectedPath)}`);
+    throw new Error(`Google Vertex nao produziu a imagem esperada para ${path.basename(expectedPath)}`);
   }
 
   return latest;
@@ -1227,7 +1233,22 @@ const buildSemanticFallbackShot = (scene, segmentText) => {
   }
 
   if (mustShow.length === 0) {
-    addMustShow(normalizeText(scene.searchQuery));
+    const visualGoalAnchor = normalizeText(scene.visualGoal);
+    const searchQueryAnchor = normalizeText(scene.searchQuery);
+    const candidateAnchor = normalizeText(Array.isArray(scene.candidateQueries) ? scene.candidateQueries[0] : "");
+    const combinedGoal = normalizeForMatch(`${visualGoalAnchor} ${scene.narration || ""}`);
+    const combinedSearch = normalizeForMatch(searchQueryAnchor);
+    const searchTokens = new Set(combinedSearch.split(/\s+/).filter((token) => token.length >= 4));
+    const overlappingTokenCount = Array.from(searchTokens).filter((token) => combinedGoal.includes(token)).length;
+    const searchLooksAbstract =
+      /\bstarry\b|\bgalaxy\b|\bcosmic\b|\bdeep space\b|\breflection in the water\b|\bethereal\b|\babstract\b|\bsurreal\b/.test(combinedSearch) &&
+      !/\bstarry\b|\bgalaxy\b|\bcosmic\b|\bdeep space\b/.test(combinedGoal);
+
+    if (visualGoalAnchor && (searchLooksAbstract || overlappingTokenCount < 2)) {
+      addMustShow(visualGoalAnchor);
+    } else {
+      addMustShow(searchQueryAnchor || candidateAnchor || visualGoalAnchor);
+    }
   }
 
   if (supportingDetails.length === 0) {
@@ -1979,34 +2000,10 @@ const auditWithGeminiVision = async ({imagePath, visualGoal, narration}) => {
   return {skipped: true, passed: true, reason: "tentativas esgotadas"};
 };
 
-// --- FLUX2 image generation ---
-const generateImage = async ({binary, prompt, negativePrompt, outputPath, seed}) => {
-  if (IMAGE_PROVIDER === "google-cloud" || IMAGE_PROVIDER === "imagen" || IMAGE_PROVIDER === "google") {
-    process.stdout.write(`[vertex-image] generating: ${path.basename(outputPath)}\n`);
-    await generateGoogleCloudImage({prompt, outputPath});
-    return;
-  }
-
-  process.stdout.write(`[flux2] generating: ${path.basename(outputPath)} (seed=${seed})\n`);
-  const commandArgs = [
-    "--model", FLUX2_MODEL,
-    "--base-model", FLUX2_BASE_MODEL,
-    "--prompt", prompt,
-    "--width", String(FLUX2_WIDTH),
-    "--height", String(FLUX2_HEIGHT),
-    "--steps", String(FLUX2_STEPS),
-    "--guidance", String(FLUX2_GUIDANCE),
-    "--seed", String(seed),
-    "--mlx-cache-limit-gb", String(FLUX2_CACHE_LIMIT_GB),
-    "--output", outputPath,
-    "--low-ram"
-  ];
-
-  if (FLUX2_SUPPORTS_NEGATIVE_PROMPT) {
-    commandArgs.splice(8, 0, "--negative-prompt", negativePrompt);
-  }
-
-  execFileSync(binary, commandArgs, {stdio: "inherit"});
+// --- Vertex image generation ---
+const generateImage = async ({prompt, outputPath}) => {
+  process.stdout.write(`[vertex-image] generating: ${path.basename(outputPath)}\n`);
+  await generateGoogleCloudImage({prompt, outputPath});
 };
 
 // --- SDXL refine + upscale (FLUX → SDXL → Upscale pipeline) ---
@@ -2113,7 +2110,7 @@ const main = async () => {
   const storyboard = JSON.parse(await readFile(storyboardPath, "utf8"));
   const scenes = storyboard.scenes || [];
   process.stdout.write(
-    `[flux2] layout=${OUTPUT_LAYOUT} output=${CLIP_W}x${CLIP_H} canvas=${FLUX2_WIDTH}x${FLUX2_HEIGHT} source=${FLUX2_CANVAS.source}\n`
+    `[vertex-assets] layout=${OUTPUT_LAYOUT} output=${CLIP_W}x${CLIP_H} canvas=${FLUX2_WIDTH}x${FLUX2_HEIGHT} source=${FLUX2_CANVAS.source}\n`
   );
   const maxImages = Number.isFinite(args.maxImages) && args.maxImages > 0
     ? Math.max(1, Math.floor(args.maxImages))
@@ -2131,7 +2128,6 @@ const main = async () => {
   }
   await mkdir(imagesDir, {recursive: true});
 
-  const binary = IMAGE_PROVIDER === "flux2" ? requireBinary("mflux-generate-flux2") : null;
   const seedBase = args.seedBase ?? 200;
   const allowFallback = args.allowFallback || ENABLE_PLANNER_FALLBACK;
   const manifest = [];
@@ -2156,7 +2152,7 @@ const main = async () => {
       suggestedShots: plan.suggestedShots ?? null
     });
 
-    process.stdout.write(`[flux2] scene ${sceneNum}: ${plan.shots.length} planned image(s) via ${plan.planner}\n`);
+    process.stdout.write(`[vertex-assets] scene ${sceneNum}: ${plan.shots.length} planned image(s) via ${plan.planner}\n`);
   }
 
   const plannerFailures = scenePlans.filter((scenePlan) => scenePlan.planner === "failed");
@@ -2181,7 +2177,7 @@ const main = async () => {
 
   if (!forceRegenerate && existingReuseMetadata && !canReuseExistingAssets) {
     process.stdout.write(
-      "[flux2] storyboard/style/layout changed; regenerating assets from scratch\n"
+      "[vertex-assets] storyboard/style/layout changed; regenerating assets from scratch\n"
     );
     await rm(assetDir, {recursive: true, force: true});
     await mkdir(imagesDir, {recursive: true});
@@ -2191,7 +2187,7 @@ const main = async () => {
     scenePlans.reduce((sum, scenePlan) => sum + scenePlan.shotCount, 0),
     maxImages
   );
-  process.stdout.write(`[flux2] ${scenes.length} scenes → ${totalSegmentCount} images to generate\n`);
+  process.stdout.write(`[vertex-assets] ${scenes.length} scenes → ${totalSegmentCount} images to generate\n`);
 
   const pendingSdxlJobs = [];
 
@@ -2246,15 +2242,15 @@ const main = async () => {
       }
 
       totalImages++;
-      process.stdout.write(`[flux2] [${totalImages}/${totalSegmentCount}] scene ${sceneNum} seg ${segNum} (${segDuration}s)\n`);
-      process.stdout.write(`[flux2]   coverage: ${truncateText(shot.coverageText, 120)}\n`);
-      process.stdout.write(`[flux2]   must show: ${shot.mustShow.join(", ")}\n`);
+      process.stdout.write(`[vertex-assets] [${totalImages}/${totalSegmentCount}] scene ${sceneNum} seg ${segNum} (${segDuration}s)\n`);
+      process.stdout.write(`[vertex-assets]   coverage: ${truncateText(shot.coverageText, 120)}\n`);
+      process.stdout.write(`[vertex-assets]   must show: ${shot.mustShow.join(", ")}\n`);
 
       // Skip if image + clip already exist from a previous run
       const segVideoExists = !args.imagesOnly && existsSync(segVideoPath);
       const segImageExists = existsSync(segImagePath);
       if (canReuseExistingAssets && segImageExists && (args.imagesOnly || segVideoExists)) {
-        process.stdout.write(`[flux2]   SKIP: reusing existing ${path.basename(segImagePath)}` +
+        process.stdout.write(`[vertex-assets]   SKIP: reusing existing ${path.basename(segImagePath)}` +
           (segVideoExists ? ` + ${path.basename(segVideoPath)}` : "") + "\n");
         if (segVideoExists) segmentClips.push(segVideoPath);
         manifest.push({
@@ -2282,21 +2278,10 @@ const main = async () => {
 
         if (recovered) {
           process.stdout.write(
-            `[flux2]   RECOVER: using existing ${path.basename(recovered.recoveredFrom)}\n`
+            `[vertex-assets]   RECOVER: using existing ${path.basename(recovered.recoveredFrom)}\n`
           );
 
-          if (IMAGE_PROVIDER === "flux2" && (SDXL_ENABLED || UPSCALE_ENABLED) && !args.imagesOnly) {
-            pendingSdxlJobs.push({
-              input: recovered.imagePath,
-              output: recovered.imagePath.replace(/\.png$/i, "-refined.png"),
-              prompt: buildSdxlRefinePrompt({scene, shot}),
-              seed: globalSeed + j,
-              segVideoPath,
-              segDuration,
-            });
-          }
-
-          if (!args.imagesOnly && !(IMAGE_PROVIDER === "flux2" && (SDXL_ENABLED || UPSCALE_ENABLED))) {
+          if (!args.imagesOnly) {
             imageToStaticClip({imagePath: recovered.imagePath, videoPath: segVideoPath, duration: segDuration});
             segmentClips.push(segVideoPath);
           }
@@ -2397,7 +2382,7 @@ const main = async () => {
 
           if (attempt > 0) {
             process.stdout.write(
-              `[flux2]   retry ${attempt + 1}/${FLUX2_RENDER_RETRY_COUNT} with stronger ${buildRetryDirectiveLabel({
+              `[vertex-assets]   retry ${attempt + 1}/${FLUX2_RENDER_RETRY_COUNT} with stronger ${buildRetryDirectiveLabel({
                 shot,
                 failureSummary: lastError?.message || ""
               })} directives\n`
@@ -2406,7 +2391,7 @@ const main = async () => {
 
           try {
             await removeGeneratedImageVariants(attemptOutputPath);
-            await generateImage({binary, prompt: attemptPrompt, negativePrompt, outputPath: attemptOutputPath, seed});
+            await generateImage({prompt: attemptPrompt, outputPath: attemptOutputPath});
             const producedImagePath = await resolveGeneratedImagePath({expectedPath: attemptOutputPath});
             const localAudit = await auditLocalFlux2Output({
               imagePath: producedImagePath,
@@ -2417,7 +2402,7 @@ const main = async () => {
 
             if (localAudit.skipped !== true) {
               process.stdout.write(
-                `[flux2]   local audit: format=${localAudit.imageFormat || "unknown"} bytes=${localAudit.fileSizeBytes || 0} passed=${localAudit.passed}\n`
+                `[vertex-assets]   local audit: format=${localAudit.imageFormat || "unknown"} bytes=${localAudit.fileSizeBytes || 0} passed=${localAudit.passed}\n`
               );
             }
 
@@ -2454,7 +2439,7 @@ const main = async () => {
             if (attempt === FLUX2_RENDER_RETRY_COUNT - 1) {
               throw lastError;
             }
-            process.stderr.write(`[flux2]   attempt ${attempt + 1} failed: ${lastError.message}\n`);
+            process.stderr.write(`[vertex-assets]   attempt ${attempt + 1} failed: ${lastError.message}\n`);
           }
         }
 
@@ -2468,19 +2453,7 @@ const main = async () => {
           finalImagePath = segImagePath;
         }
 
-        // Collect for batch SDXL refinement (runs after all images generated)
-        if (IMAGE_PROVIDER === "flux2" && (SDXL_ENABLED || UPSCALE_ENABLED) && !args.imagesOnly) {
-          pendingSdxlJobs.push({
-            input: finalImagePath,
-            output: finalImagePath.replace(/\.png$/i, "-refined.png"),
-            prompt: buildSdxlRefinePrompt({scene, shot}),
-            seed: finalSeed,
-            segVideoPath,
-            segDuration,
-          });
-        }
-
-        if (!args.imagesOnly && !(IMAGE_PROVIDER === "flux2" && (SDXL_ENABLED || UPSCALE_ENABLED))) {
+        if (!args.imagesOnly) {
           imageToStaticClip({imagePath: finalImagePath, videoPath: segVideoPath, duration: segDuration});
           segmentClips.push(segVideoPath);
         }
@@ -2509,7 +2482,7 @@ const main = async () => {
         });
       } catch (err) {
         sceneFailed = true;
-        process.stderr.write(`[flux2] scene ${sceneNum} seg ${segNum} failed: ${err.message}\n`);
+        process.stderr.write(`[vertex-assets] scene ${sceneNum} seg ${segNum} failed: ${err.message}\n`);
         manifest.push({
           scene: sceneNum,
           segment: j + 1,
@@ -2541,25 +2514,25 @@ const main = async () => {
 
     globalSeed += plannedShots.length;
 
-    const sdxlDeferred = IMAGE_PROVIDER === "flux2" && (SDXL_ENABLED || UPSCALE_ENABLED) && !args.imagesOnly;
+    const sdxlDeferred = false;
     const expectedClips = sdxlDeferred ? 0 : plannedShots.length;
 
     if (!args.dryRun && !args.imagesOnly && sceneFailed) {
       if (segmentClips.length === 0) {
         incompleteScenes.push(sceneNum);
-        process.stderr.write(`[flux2] scene ${sceneNum}: incomplete visual coverage, skipping final scene clip\n`);
+        process.stderr.write(`[vertex-assets] scene ${sceneNum}: incomplete visual coverage, skipping final scene clip\n`);
         continue;
       }
-      process.stderr.write(`[flux2] scene ${sceneNum}: partial coverage (${segmentClips.length}/${plannedShots.length} shots ok), using available clips\n`);
+      process.stderr.write(`[vertex-assets] scene ${sceneNum}: partial coverage (${segmentClips.length}/${plannedShots.length} shots ok), using available clips\n`);
     }
 
     // When SDXL is enabled, clip creation is deferred to after batch refinement
     if (!sdxlDeferred && !args.dryRun && !args.imagesOnly && segmentClips.length > 0) {
       if (canReuseExistingAssets && existsSync(videoPath)) {
-        process.stdout.write(`[flux2] scene ${sceneNum}: SKIP concat (reusing existing scene clip)\n`);
+        process.stdout.write(`[vertex-assets] scene ${sceneNum}: SKIP concat (reusing existing scene clip)\n`);
       } else {
         await concatClips({clips: segmentClips, outputPath: videoPath, tempDir: imagesDir});
-        process.stdout.write(`[flux2] scene ${sceneNum}: done (${segmentClips.length} clips)\n`);
+        process.stdout.write(`[vertex-assets] scene ${sceneNum}: done (${segmentClips.length} clips)\n`);
       }
     }
   }
@@ -2587,7 +2560,7 @@ const main = async () => {
 
       if (incompleteScenes.includes(sceneNum)) continue;
       if (canReuseExistingAssets && existsSync(videoPath)) {
-        process.stdout.write(`[flux2] scene ${sceneNum}: SKIP concat (reusing existing scene clip)\n`);
+        process.stdout.write(`[vertex-assets] scene ${sceneNum}: SKIP concat (reusing existing scene clip)\n`);
         continue;
       }
 
@@ -2603,7 +2576,7 @@ const main = async () => {
 
       if (clips.length > 0) {
         await concatClips({clips, outputPath: videoPath, tempDir: imagesDir});
-        process.stdout.write(`[flux2] scene ${sceneNum}: done (${clips.length} clips)\n`);
+        process.stdout.write(`[vertex-assets] scene ${sceneNum}: done (${clips.length} clips)\n`);
       }
     }
   }
@@ -2615,10 +2588,10 @@ const main = async () => {
     reuseMetadata: currentReuseMetadata,
     geminiUsage: geminiUsageSummary
   });
-  process.stdout.write(`[flux2] done: ${totalImages} images generated\n`);
+  process.stdout.write(`[vertex-assets] done: ${totalImages} images generated\n`);
 
   if (!args.dryRun && !args.imagesOnly && incompleteScenes.length > 0) {
-    throw new Error(`FLUX2 ficou incompleto nas cenas: ${incompleteScenes.join(", ")}`);
+    throw new Error(`Geracao de imagens ficou incompleta nas cenas: ${incompleteScenes.join(", ")}`);
   }
 };
 

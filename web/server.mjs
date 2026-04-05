@@ -19,6 +19,7 @@ const publicDir = path.join(projectRoot, "web", "public");
 const dataDir = path.join(projectRoot, ".web-ui");
 const inputsDir = path.join(dataDir, "inputs");
 const videoLibraryDir = path.join(dataDir, "videos");
+const tiktokDraftsDir = path.join(dataDir, "tiktok-drafts");
 const jobsFile = path.join(dataDir, "jobs.json");
 const videosFile = path.join(dataDir, "videos.json");
 const rootEnvPath = path.join(projectRoot, ".env");
@@ -29,19 +30,41 @@ const DEFAULT_HOST = process.env.WEB_HOST || "127.0.0.1";
 const RESUME_RENDER_FPS = 30;
 const MAX_LOG_LINES = 500;
 const MAX_BODY_BYTES = 1_500_000;
-const AGENDADOR_API_BASE = "https://agendador.online/api";
+const DEFAULT_AGENDADOR_SITE_URL = "https://agendador.online";
+let AGENDADOR_API_BASE = `${DEFAULT_AGENDADOR_SITE_URL}/api`;
 const AGENDADOR_DEFAULT_PLATFORMS = ["FB", "IG", "YT"];
 const AGENDADOR_MAX_UPLOAD_MB = 24;
 const HAS_SECURITY_CLI = spawnSync("sh", ["-lc", "command -v security >/dev/null 2>&1"], {stdio: "ignore"}).status === 0;
+const stylePreviewDir = path.join(publicDir, "style-previews");
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".mp4": "video/mp4",
+  ".png": "image/png",
   ".txt": "text/plain; charset=utf-8"
 };
+
+const normalizeAgendadorSiteUrl = (value) => {
+  const raw = String(value || "").trim().replace(/\/+$/, "");
+  if (!raw) {
+    return DEFAULT_AGENDADOR_SITE_URL;
+  }
+
+  return raw.endsWith("/api") ? raw.slice(0, -4) : raw;
+};
+
+const normalizeAgendadorApiBase = (value) => {
+  const siteUrl = normalizeAgendadorSiteUrl(value);
+  return siteUrl.endsWith("/api") ? siteUrl : `${siteUrl}/api`;
+};
+
+const FOIUMAIDEIA_VIRAL_SCRIPT_GUIDANCE =
+  "Write like a sharp Brazilian short-form creator reacting to a bad tech idea that gives people false confidence. The tone should feel human, sarcastic, slightly exaggerated, and very internet-native, like a smart friend warning you before you do something dumb. Use casual spoken Brazilian Portuguese when the video is in pt-BR. Prefer lines that sound like real reactions, such as 'isso da ruim', 'nao cai nessa', 'eu ja vi gente fazer isso', or 'essa ideia nao foi uma boa ideia', whenever they fit naturally. Start with a hard statement, warning, accusation, or shocking reveal. Build momentum through consequence, embarrassment, cost, and fail energy. Keep the script punchy, specific, and visually concrete. Keep each scene focused on one clear beat, but let the full script carry real progression instead of feeling like generic educational filler. Use ALL CAPS selectively for 2 to 5 of the hardest-hitting words across the hook and narration. Let the ending land as a memorable sting that makes the bad idea feel obviously stupid in hindsight. Do not add audio directions, editing directions, or narration outside the script itself.";
 
 const tonePresets = {
   natural_clean: {
@@ -57,41 +80,10 @@ const tonePresets = {
   shortform_native: {
     label: "Short-form nativo",
     description: "Hook rapido, payoff cedo e ritmo nativo de TikTok/Reels/Shorts.",
-    scriptGuidance:
-      "Write like a sharp Brazilian short-form creator reacting to a bad tech idea that gives people false confidence. The tone should feel human, sarcastic, slightly exaggerated, and very internet-native, like a smart friend warning you before you do something dumb. Use casual spoken Brazilian Portuguese when the video is in pt-BR. Prefer lines that sound like real reactions, such as 'isso da ruim', 'nao cai nessa', 'eu ja vi gente fazer isso', or 'essa ideia nao foi uma boa ideia', whenever they fit naturally. Start with a hard statement, warning, accusation, or shocking reveal. Build momentum through consequence, embarrassment, cost, and fail energy. Keep the script punchy, specific, and visually concrete. Keep each scene focused on one clear beat, but let the full script carry real progression instead of feeling like generic educational filler. Use ALL CAPS selectively for the words that need the strongest hit. Let the ending land as a memorable sting that makes the bad idea feel obviously stupid in hindsight. Do not add audio directions, editing directions, or narration outside the script itself.",
+    scriptGuidance: FOIUMAIDEIA_VIRAL_SCRIPT_GUIDANCE,
     voiceStyles: {
       "pt-BR": "com ritmo curto, visual e nativo de redes sociais",
       "en-US": "with a native short-form social rhythm"
-    }
-  },
-  forte_impactante: {
-    label: "FORTE-IMPACTANTE",
-    description: "Curto, afiado e com mais tensao, contraste e impacto imediato.",
-    scriptGuidance:
-      "Write like a high-retention short-form creator with sharp contrast and immediate stakes. Open with a strong curiosity hook in the first sentence. Each scene must introduce a new concrete visual, a surprising fact, or a clear escalation. Use short spoken lines, strong nouns and verbs, and direct internet-native language. Avoid essay tone, soft summaries, filler transitions, connector crutches, and sleepy explanations. Keep it punchy, visual, slightly provocative, but still clear and credible. End cleanly without CTA.",
-    voiceStyles: {
-      "pt-BR": "com voz firme, envolvente, energica e impactante, sem soar teatral",
-      "en-US": "with a firm, energetic and high-retention delivery without sounding theatrical"
-    }
-  },
-  platform_hybrid: {
-    label: "PLATAFORMA-HIBRIDA",
-    description: "Hook de TikTok, curiosidade de Reddit, beleza de Instagram, nostalgia de Facebook e progressao de YouTube.",
-    scriptGuidance:
-      "Write like an internet-native hybrid short. Start with a sharp, weird, curiosity-driven hook in the first sentence. Make each scene deliver one obvious visual beat, one concrete object, and one fast payoff. Blend TikTok punch, Reddit curiosity, Instagram readability, Facebook nostalgia, and YouTube progression. Prefer bold contrast, specific nouns, modern spoken phrasing, and short lines that sound good aloud. Avoid essay tone, filler transitions, generic summaries, soft setup, and repetitive structure. Keep the story moving forward like a ranking or reveal sequence. End cleanly without CTA.",
-    voiceStyles: {
-      "pt-BR": "com voz firme, curiosa, rapida e muito nativa de internet, sem soar artificial",
-      "en-US": "with a firm, curious, fast and internet-native delivery without sounding artificial"
-    }
-  },
-  storyteller: {
-    label: "Contador de história",
-    description: "Narrativa mais envolvente, com progressao emocional e viradas limpas.",
-    scriptGuidance:
-      "Write like a visual storyteller with curiosity, emotional buildup, memorable turns, and clean scene progression. Keep it spoken, vivid, and human. Avoid connector crutches and do not include CTA.",
-    voiceStyles: {
-      "pt-BR": "como um contador de historia envolvente, fluido e expressivo",
-      "en-US": "like an engaging storyteller, fluid and expressive"
     }
   },
   wellness_comfort: {
@@ -102,36 +94,6 @@ const tonePresets = {
     voiceStyles: {
       "pt-BR": "com voz calma, acolhedora, serena e reconfortante",
       "en-US": "with a calm, gentle and comforting voice"
-    }
-  },
-  wellness_spiritual_light: {
-    label: "Wellness • Espiritual leve",
-    description: "Tom contemplativo e suave, com presenca e sentido, sem exagero mistico.",
-    scriptGuidance:
-      "Write a light spiritual wellness script with presence, softness and inner stillness. Keep it grounded, simple and intimate. Avoid dogma, grand promises, mystical excess, CTA, and filler transitions. End with peace, silence or breath, not motivation hype.",
-    voiceStyles: {
-      "pt-BR": "com voz suave, contemplativa e tranquila",
-      "en-US": "with a soft, contemplative and peaceful voice"
-    }
-  },
-  wellness_selfworth: {
-    label: "Wellness • Autoestima silenciosa",
-    description: "Fortalece valor proprio com delicadeza, sem frases prontas de autoajuda.",
-    scriptGuidance:
-      "Write a wellness script about self-worth in a quiet, grounded and intimate way. Focus on dignity, self-respect, boundaries and emotional steadiness. Avoid cliches, empty empowerment slogans, CTA, and dramatic motivational phrasing. Keep it simple, spoken and believable.",
-    voiceStyles: {
-      "pt-BR": "com voz humana, firme e delicada",
-      "en-US": "with a warm, steady and intimate voice"
-    }
-  },
-  wellness_breath_reset: {
-    label: "Wellness • Respirar e desacelerar",
-    description: "Pausa mental, respiracao e desaceleracao para videos de reset curto.",
-    scriptGuidance:
-      "Write a short wellness reset centered on breathing, slowing down and mental decompression. The script should feel like a brief pause in the day. Use very clear, slow and visual language. No CTA, no coaching slogans, no overexplaining. End with spaciousness and calm.",
-    voiceStyles: {
-      "pt-BR": "com voz leve, pausada e respirada",
-      "en-US": "with a light, spacious and slow voice"
     }
   },
   wellness_end_of_day: {
@@ -147,49 +109,72 @@ const tonePresets = {
 };
 
 const DEFAULT_VOICE = "Iapetus";
+const DEFAULT_ENGLISH_VOICE = "Charon";
 
 const voiceOptions = [
-  {label: "Iapetus • Gemini TTS usada no último vídeo", value: "Iapetus"},
-  {label: "Antonio • masculino natural", value: "pt-BR-AntonioNeural"},
-  {label: "Brenda • feminina clara", value: "pt-BR-BrendaNeural"},
-  {label: "Donato • masculino firme", value: "pt-BR-DonatoNeural"},
-  {label: "Elza • feminina suave", value: "pt-BR-ElzaNeural"},
-  {label: "Fabio • masculino equilibrado", value: "pt-BR-FabioNeural"},
-  {label: "Francisca • feminina acolhedora", value: "pt-BR-FranciscaNeural"},
-  {label: "Giovanna • feminina leve", value: "pt-BR-GiovannaNeural"},
-  {label: "Humberto • masculino grave", value: "pt-BR-HumbertoNeural"},
-  {label: "Julio • masculino objetivo", value: "pt-BR-JulioNeural"},
-  {label: "Leila • feminina didática", value: "pt-BR-LeilaNeural"},
-  {label: "Leticia • infantil", value: "pt-BR-LeticiaNeural"},
-  {label: "Manuela • feminina natural", value: "pt-BR-ManuelaNeural"},
-  {label: "Macerio • multilíngue", value: "pt-BR-MacerioMultilingualNeural"},
-  {label: "Macerio • DragonHD premium", value: "pt-BR-Macerio:DragonHDLatestNeural"},
-  {label: "Nicolau • masculino confiante", value: "pt-BR-NicolauNeural"},
-  {label: "Thalita • feminina expressiva", value: "pt-BR-ThalitaNeural"},
-  {label: "Thalita • multilíngue", value: "pt-BR-ThalitaMultilingualNeural"},
-  {label: "Thalita • DragonHD premium", value: "pt-BR-Thalita:DragonHDLatestNeural"},
-  {label: "Valerio • masculino sereno", value: "pt-BR-ValerioNeural"},
-  {label: "Yara • feminina quente", value: "pt-BR-YaraNeural"},
-  {label: "Personalizada", value: "__custom"}
-];
-
-const imageStyleOptions = Object.values(VISUAL_STYLE_PRESETS).map((preset) => ({
-  label: preset.label,
-  value: preset.id,
-  description: preset.description
-}));
-const assetModeOptions = [
   {
-    label: "Flex2 + SDXL (Local)",
-    value: "flux2",
-    description: "Gera imagens com o pipeline local Flex2 + SDXL."
+    label: "Iapetus • Clear / claro",
+    value: "Iapetus",
+    badge: "Melhor para pt-BR geral",
+    description: "Voz Gemini-TTS do Google com timbre claro e limpo, boa para narracao geral.",
+    languages: ["pt-BR", "en-US"]
   },
   {
-    label: "Google Vertex",
-    value: "google-cloud",
-    description: "Gera imagens direto no Google Vertex, sem usar o pipeline local de imagem."
+    label: "Charon • Informative / informativo",
+    value: "Charon",
+    badge: "Melhor para en-US",
+    description: "Voz Gemini-TTS do Google com tom mais informativo e seguro, boa para explicacao e ingles.",
+    languages: ["en-US", "pt-BR"]
+  },
+  {
+    label: "Kore • Firm / firme",
+    value: "Kore",
+    badge: "Melhor para tom firme",
+    description: "Voz Gemini-TTS do Google com entrega firme e assertiva, boa para hooks e tom deciso.",
+    languages: ["en-US", "pt-BR"]
+  },
+  {
+    label: "Puck • Upbeat / energetico",
+    value: "Puck",
+    badge: "Melhor para shorts",
+    description: "Voz Gemini-TTS do Google com energia mais alta e ritmo mais animado para shorts.",
+    languages: ["en-US", "pt-BR"]
+  },
+  {
+    label: "Sulafat • Warm / caloroso",
+    value: "Sulafat",
+    badge: "Melhor para tom acolhedor",
+    description: "Voz Gemini-TTS do Google com timbre mais quente e acolhedor.",
+    languages: ["pt-BR", "en-US"]
   }
 ];
+
+const imageStylePreviewFiles = {
+  claude: "video-estilo-claude.jpeg",
+  kiro: "video-estilo-kiro.jpeg",
+  editorial_clean: "editorial-clean.jpeg",
+  realistic_film: "realistic-film.jpeg",
+  cartoon_3d: "cartoon-3d.jpeg",
+  urban_sketching: "urban-sketching.jpeg",
+  ink: "ink.jpeg",
+  editorial_line_green: "editorial-line-green.jpeg",
+  time_split_bold: "time-split-bold.jpeg",
+  punk: "punk-poster.jpeg"
+};
+
+const imageStyleOptions = Object.values(VISUAL_STYLE_PRESETS).map((preset) => {
+  const previewFile = imageStylePreviewFiles[preset.id] || `${preset.id}.jpeg`;
+  const previewLinkPath = `/${previewFile}`;
+
+  return {
+    label: preset.label,
+    value: preset.id,
+    description: preset.description,
+    previewFile,
+    previewImagePath: path.join(stylePreviewDir, previewFile),
+    previewLinkPath
+  };
+});
 const channelOptions = [
   {
     label: "@foiumaideia",
@@ -214,35 +199,88 @@ const channelOptions = [
   }
 ];
 
+const channelPublishProfiles = {
+  foiumaideia: {
+    identifierKeys: [
+      "AGENDADOR_ONLINE_FOIUMAIDEIA_EMAIL",
+      "AGENDADOR_ONLINE_FOIUMAIDEIA_USERNAME",
+      "FOIUMAIDEIA_USER",
+      "AGENDADOR_EMAIL",
+      "AGENDADOR_USERNAME"
+    ],
+    passwordKeys: ["AGENDADOR_ONLINE_PASSWORD", "AGENDADOR_PASSWORD"],
+    publicUrlKeys: ["FOIUMAIDEIA_URL"]
+  },
+  quiet2min: {
+    identifierKeys: [
+      "AGENDADOR_ONLINE_QUIET2MIN_EMAIL",
+      "AGENDADOR_ONLINE_QUIET2MIN_USERNAME",
+      "AGENDADOR_EMAIL",
+      "AGENDADOR_USERNAME"
+    ],
+    passwordKeys: ["AGENDADOR_ONLINE_PASSWORD", "AGENDADOR_PASSWORD"]
+  },
+  ate2min: {
+    identifierKeys: [
+      "AGENDADOR_ONLINE_ATE2MIN_EMAIL",
+      "AGENDADOR_ONLINE_ATE2MIN_USERNAME",
+      "AGENDADOR_EMAIL",
+      "AGENDADOR_USERNAME"
+    ],
+    passwordKeys: ["AGENDADOR_ONLINE_PASSWORD", "AGENDADOR_PASSWORD"]
+  }
+};
+
 const channelPresets = {
   foiumaideia: {
     tone: "shortform_native",
     voice: DEFAULT_VOICE,
+    voiceByLanguage: {
+      "pt-BR": DEFAULT_VOICE,
+      "en-US": DEFAULT_ENGLISH_VOICE
+    },
     imageStyle: "editorial_line_green",
     outputProfile: "vertical-short",
     targetSeconds: 60,
-    assetMode: "google-cloud",
-    customStylePrompt: "com ritmo curto, visual e nativo de redes sociais, com voz firme, curiosa, ritmada e muito nativa de internet, sem soar teatral",
-    scriptGuidance:
-      "Write practical, curiosity-driven videos about technology, history, health, innovation, AI, automation and productivity. Open with a sharp internet-native hook, make the payoff arrive early, keep every scene visual and concrete, and close with a memorable final reveal or takeaway without CTA."
+    customStylePromptByLanguage: {
+      "pt-BR": "com ritmo curto, visual e nativo de redes sociais, com voz firme, curiosa, ritmada e muito nativa de internet, sem soar teatral",
+      "en-US": "with a native short-form social rhythm, a firm, curious, internet-native voice, and punchy delivery without sounding theatrical"
+    },
+    scriptGuidance: FOIUMAIDEIA_VIRAL_SCRIPT_GUIDANCE
   },
   quiet2min: {
+    language: "en-US",
     tone: "wellness_comfort",
-    voice: DEFAULT_VOICE,
+    voice: DEFAULT_ENGLISH_VOICE,
+    voiceByLanguage: {
+      "pt-BR": DEFAULT_VOICE,
+      "en-US": DEFAULT_ENGLISH_VOICE
+    },
     imageStyle: "punk",
     outputProfile: "vertical-short",
     targetSeconds: 100,
-    customStylePrompt: "com voz calma, acolhedora, serena e ritmo suave",
+    customStylePromptByLanguage: {
+      "pt-BR": "com voz calma, acolhedora, serena e ritmo suave",
+      "en-US": "with a calm, soothing, warm voice and a gentle, reassuring pace"
+    },
     scriptGuidance:
       "Write calm, reflective and soothing short scripts focused on personal growth, emotional clarity, inner peace and gentle self-help. The tone should feel peaceful, grounded, reassuring and visually concrete, like a quiet reset for the day."
   },
   ate2min: {
+    language: "pt-BR",
     tone: "wellness_end_of_day",
     voice: DEFAULT_VOICE,
+    voiceByLanguage: {
+      "pt-BR": DEFAULT_VOICE,
+      "en-US": DEFAULT_ENGLISH_VOICE
+    },
     imageStyle: "punk",
     outputProfile: "vertical-short",
     targetSeconds: 100,
-    customStylePrompt: "com voz calorosa, tranquila, humana e inspiradora",
+    customStylePromptByLanguage: {
+      "pt-BR": "com voz calorosa, tranquila, humana e inspiradora",
+      "en-US": "with a warm, calm, human and inspiring voice"
+    },
     scriptGuidance:
       "Write brief reflective stories with a calm, human and inspiring tone. Prioritize emotional clarity, practical wisdom, soft transitions and a memorable ending that fits within two minutes."
   }
@@ -250,8 +288,6 @@ const channelPresets = {
 
 const PREVIEW_QUEUE_LANE = "preview";
 const HEAVY_QUEUE_LANE = "heavy";
-const DEFAULT_ASSET_MODE = "flux2";
-
 const jobs = new Map();
 const streams = new Map();
 const previewQueue = [];
@@ -351,6 +387,11 @@ const fileExists = async (targetPath) => {
   } catch {
     return false;
   }
+};
+
+const createFileUrl = (targetPath) => {
+  const absolutePath = path.resolve(String(targetPath || ""));
+  return `/api/file?path=${encodeURIComponent(absolutePath)}`;
 };
 
 const readTextFile = async (targetPath) => {
@@ -764,6 +805,12 @@ const baseChildEnv = {
   ...videoEnvConfig,
   ...process.env
 };
+AGENDADOR_API_BASE = normalizeAgendadorApiBase(
+  baseChildEnv.AGENDADOR_ONLINE_URL ||
+    baseChildEnv.AGENDADOR_URL ||
+    process.env.AGENDADOR_ONLINE_URL ||
+    DEFAULT_AGENDADOR_SITE_URL
+);
 let videoMetadata = (await readJsonFile(videosFile)) || {};
 
 const getChannelConfig = (value) =>
@@ -771,12 +818,124 @@ const getChannelConfig = (value) =>
 
 const getChannelPreset = (value) => channelPresets[value] || channelPresets.foiumaideia;
 
+const getDefaultVoiceForLanguage = (language) =>
+  String(language || "").startsWith("en") ? DEFAULT_ENGLISH_VOICE : DEFAULT_VOICE;
+
+const resolveRequestedVoice = ({selectedVoice, customVoice, language, channelPreset = null}) => {
+  const requestedVoice = String(selectedVoice || "").trim();
+  const trimmedCustomVoice = String(customVoice || "").trim();
+  const channelVoice =
+    channelPreset?.voiceByLanguage?.[language] ||
+    channelPreset?.voice ||
+    getDefaultVoiceForLanguage(language);
+
+  if (requestedVoice === "__custom") {
+    return trimmedCustomVoice;
+  }
+
+  if (VALID_VOICES.includes(requestedVoice)) {
+    return requestedVoice;
+  }
+
+  return channelVoice;
+};
+const resolveEffectiveScriptGuidance = ({
+  explicitScriptGuidance = "",
+  explicitTone = "",
+  channelPreset,
+  tonePreset
+}) => {
+  const manualGuidance = String(explicitScriptGuidance || "").trim();
+  if (manualGuidance) {
+    return manualGuidance;
+  }
+
+  const requestedTone = String(explicitTone || "").trim();
+  const channelTone = String(channelPreset?.tone || "").trim();
+  const toneGuidance = String(tonePreset?.scriptGuidance || "").trim();
+  const channelGuidance = String(channelPreset?.scriptGuidance || "").trim();
+
+  if (requestedTone && channelTone && requestedTone !== channelTone) {
+    return toneGuidance || channelGuidance;
+  }
+
+  return channelGuidance || toneGuidance;
+};
+
 const getChannelExportDir = (channelValue) => path.join(postarRoot, getChannelConfig(channelValue).folder);
+const resolveFirstUsableEnvValue = (...keys) => {
+  for (const key of keys.flat()) {
+    const value = String(baseChildEnv[key] || process.env[key] || "").trim();
+    if (value) {
+      return {key, value};
+    }
+  }
+
+  return null;
+};
+
+const resolveAgendadorChannelProfile = (channelValue) => {
+  const channel = getChannelConfig(channelValue);
+  const channelKey = channel.value.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+  const specificProfile = channelPublishProfiles[channel.value] || channelPublishProfiles.foiumaideia;
+  const identifier = resolveFirstUsableEnvValue(
+    specificProfile.identifierKeys,
+    `AGENDADOR_ONLINE_${channelKey}_EMAIL`,
+    `AGENDADOR_ONLINE_${channelKey}_USERNAME`,
+    `AGENDADOR_${channelKey}_EMAIL`,
+    `AGENDADOR_${channelKey}_USERNAME`
+  );
+  const password = resolveFirstUsableEnvValue(
+    specificProfile.passwordKeys,
+    `AGENDADOR_ONLINE_${channelKey}_PASSWORD`,
+    "AGENDADOR_ONLINE_PASSWORD",
+    "AGENDADOR_PASSWORD"
+  );
+  const publicUrl = resolveFirstUsableEnvValue(
+    specificProfile.publicUrlKeys || [],
+    `AGENDADOR_ONLINE_${channelKey}_URL`,
+    `${channelKey}_URL`
+  );
+
+  return {
+    channel: channel.value,
+    label: channel.label,
+    handle: channel.handle,
+    identifier: identifier?.value || "",
+    identifierSource: identifier?.key || "",
+    password: password?.value || "",
+    passwordSource: password?.key || "",
+    publicUrl: publicUrl?.value || "",
+    profileUrlSource: publicUrl?.key || "",
+    apiBase: AGENDADOR_API_BASE,
+    siteUrl: normalizeAgendadorSiteUrl(baseChildEnv.AGENDADOR_ONLINE_URL || baseChildEnv.AGENDADOR_URL || DEFAULT_AGENDADOR_SITE_URL)
+  };
+};
+
+const hasAgendadorCredentialsForChannel = (channelValue) => {
+  const profile = resolveAgendadorChannelProfile(channelValue);
+  return Boolean(profile.identifier && profile.password);
+};
+
 const getDurationOptions = (profileValue) => getDurationOptionsForProfile(profileValue);
 const outputProfileOptions = listOutputProfileOptions();
 const defaultDurationOptions = getDurationOptionsForProfile(DEFAULT_OUTPUT_PROFILE);
 
-const createFileUrl = (filePath) => `/api/file?path=${encodeURIComponent(filePath)}`;
+const serializeImageStyleOption = (option) => ({
+  label: option.label,
+  value: option.value,
+  description: option.description || "",
+  previewImageUrl: option.previewLinkPath || "",
+  previewLinkUrl: option.previewLinkPath || ""
+});
+
+const serializeVoiceOption = (option) => ({
+  label: option.label,
+  value: option.value,
+  badge: option.badge || "",
+  description: option.description || "",
+  languages: Array.isArray(option.languages) ? option.languages : ["pt-BR", "en-US"]
+});
 
 const sanitizeJob = (job) => ({
   id: job.id,
@@ -890,7 +1049,26 @@ const createVideoRecord = async ({channel, fileName, filePath}) => {
   const runPaths = getRunPaths(slug);
   const storyboard = await readJsonFile(runPaths.storyboardPath);
   const latestJob = findLatestJobForSlug({slug, channel: channel.value});
-  const metadata = getVideoMetadataEntry({channel: channel.value, slug});
+  const persistedMetadata = await readVideoMeta(slug).catch(() => null);
+  const metadata = {
+    ...getVideoMetadataEntry({channel: channel.value, slug}),
+    ...(persistedMetadata || {})
+  };
+  const creationParams = latestJob?.input
+    ? {
+        language: latestJob.input.language || null,
+        outputProfile: latestJob.input.outputProfile || null,
+        targetSeconds: Number(latestJob.input.targetSeconds || 0) || null,
+        imageStyle: latestJob.input.imageStyle || null,
+        tone: latestJob.input.tone || null,
+        voice: latestJob.input.voice || null,
+        channel: latestJob.input.channel || channel.value,
+        channelHandle: latestJob.input.channelHandle || channel.handle,
+        noMusic: latestJob.input.noMusic === true,
+        force: latestJob.input.force === true,
+        previewOnly: latestJob.input.previewOnly === true
+      }
+    : null;
   const title =
     String(metadata.title || "").trim() ||
     String(storyboard?.videoTitle || "").trim() ||
@@ -925,11 +1103,16 @@ const createVideoRecord = async ({channel, fileName, filePath}) => {
     publishAt,
     isDraft: metadata.isDraft === true,
     notes: String(metadata.notes || "").trim(),
+    thumbnailPath: String(metadata.thumbnailPath || "").trim() || null,
+    thumbnailUrl: String(metadata.thumbnailUrl || "").trim() || null,
+    coverUrl: String(metadata.coverUrl || "").trim() || null,
     lastPostId: metadata.lastPostId ?? null,
     lastPublishedAt: metadata.lastPublishedAt || null,
     publishStatus: metadata.publishStatus || "",
     publishError: metadata.publishError || "",
+    publishedProfile: metadata.publishedProfile || "",
     jobId: latestJob?.id || null,
+    creationParams,
     canRedo: Boolean(latestJob || existsSync(runPaths.storyboardPath)),
     canDelete: true,
     canPublish: true
@@ -984,7 +1167,21 @@ const readVideoMeta = async (slug) => readJsonFile(getVideoMetaPath(slug));
 
 const writeVideoMeta = async (slug, payload) => {
   await mkdir(videoLibraryDir, {recursive: true});
-  await writeFile(getVideoMetaPath(slug), JSON.stringify(payload, null, 2));
+  const normalizedSlug = slugify(slug);
+  const channel = String(payload?.channel || "foiumaideia").trim() || "foiumaideia";
+  const key = getVideoMetadataKey({channel, slug: normalizedSlug});
+  const nextPayload = {
+    ...(videoMetadata[key] || {}),
+    ...payload,
+    channel,
+    slug: normalizedSlug,
+    updatedAt: String(payload?.updatedAt || new Date().toISOString())
+  };
+  videoMetadata = {
+    ...videoMetadata,
+    [key]: nextPayload
+  };
+  await writeFile(getVideoMetaPath(normalizedSlug), JSON.stringify(nextPayload, null, 2));
 };
 
 const findJobForVideoPath = (targetPath) =>
@@ -1028,17 +1225,225 @@ const parsePostText = (rawText) => {
   return {caption, hashtags};
 };
 
+const getTikTokDraftPath = (draftId) => path.join(tiktokDraftsDir, `${slugify(draftId) || "draft"}.json`);
+
+const readTikTokDraft = async (draftId) => readJsonFile(getTikTokDraftPath(draftId));
+
+const writeTikTokDraft = async (draftId, payload) => {
+  await mkdir(tiktokDraftsDir, {recursive: true});
+  await writeFile(getTikTokDraftPath(draftId), JSON.stringify(payload, null, 2));
+};
+
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
+const buildTikTokHelperHtml = (draft) => {
+  const helperTitle = draft.title || draft.slug || "TikTok helper";
+  const captionJson = JSON.stringify(String(draft.caption || ""));
+  const downloadName = escapeHtml(draft.downloadName || `${draft.slug || "video"}.mp4`);
+  const thumbDownloadName = escapeHtml(draft.thumbnailDownloadName || `${draft.slug || "thumbnail"}.png`);
+  const videoLink = escapeHtml(draft.videoUrl || "#");
+  const thumbLink = escapeHtml(draft.thumbnailUrl || "");
+  const uploadUrl = "https://www.tiktok.com/upload";
+
+  return `<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${escapeHtml(helperTitle)} • TikTok helper</title>
+    <style>
+      :root {
+        --bg: #f4efe6;
+        --ink: #14221e;
+        --muted: #5e6d67;
+        --card: rgba(255,252,246,.92);
+        --line: rgba(20,34,30,.14);
+        --primary: #0f7b6c;
+        --shadow: 0 24px 60px rgba(20,34,30,.12);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at top left, rgba(215,239,233,.9), transparent 38%),
+          radial-gradient(circle at bottom right, rgba(241,198,160,.34), transparent 24%),
+          var(--bg);
+        color: var(--ink);
+        font-family: "Avenir Next", "Segoe UI Variable", sans-serif;
+      }
+      main { max-width: 1180px; margin: 0 auto; padding: 28px; display: grid; gap: 18px; }
+      .hero, .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        box-shadow: var(--shadow);
+      }
+      .hero { padding: 24px; display: grid; gap: 10px; }
+      .eyebrow { margin: 0; color: var(--primary); font-size: .78rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+      h1 { margin: 0; font-size: clamp(2rem, 4vw, 3.2rem); line-height: .95; }
+      .lede { margin: 0; color: var(--muted); line-height: 1.6; max-width: 820px; }
+      .layout { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 18px; }
+      .card { padding: 18px; display: grid; gap: 14px; align-content: start; }
+      .preview-video, .preview-thumb { width: 100%; border-radius: 18px; border: 1px solid var(--line); background: #0f1412; }
+      .preview-video { aspect-ratio: 9/16; object-fit: contain; }
+      .preview-thumb { aspect-ratio: 9/16; object-fit: cover; }
+      .meta { color: var(--muted); line-height: 1.55; }
+      .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+      .button {
+        border: 0;
+        border-radius: 999px;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 800;
+        padding: 13px 18px;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .button.primary { background: var(--primary); color: white; }
+      .button.secondary { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+      .caption-box {
+        margin: 0;
+        min-height: 280px;
+        border-radius: 20px;
+        background: #151a18;
+        color: #f7f2e8;
+        font: .92rem/1.6 ui-monospace, Menlo, monospace;
+        padding: 18px;
+        white-space: pre-wrap;
+      }
+      .hint { color: var(--muted); font-size: .92rem; line-height: 1.5; }
+      @media (max-width: 980px) {
+        .layout { grid-template-columns: 1fr; }
+        main { padding: 18px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <p class="eyebrow">TikTok Helper</p>
+        <h1>${escapeHtml(helperTitle)}</h1>
+        <p class="lede">No browser do usuário, não dá para pré-carregar automaticamente o MP4 dentro do TikTok por segurança do navegador. Este helper deixa tudo pronto: abrir o TikTok, copiar a legenda e baixar o vídeo e a thumbnail com um clique.</p>
+      </section>
+
+      <section class="layout">
+        <article class="card">
+          <video class="preview-video" controls playsinline preload="metadata" src="${videoLink}"></video>
+          <p class="meta">${escapeHtml(draft.channelHandle || draft.channel || "")} • ${escapeHtml(downloadName)}</p>
+          <div class="actions">
+            <a class="button primary" href="${uploadUrl}" target="_blank" rel="noreferrer">Abrir upload do TikTok</a>
+            <a class="button secondary" href="${videoLink}" download="${downloadName}">Baixar MP4</a>
+            ${thumbLink ? `<a class="button secondary" href="${thumbLink}" download="${thumbDownloadName}">Baixar thumbnail</a>` : ""}
+          </div>
+          <p class="hint">Fluxo sugerido: 1. abrir upload do TikTok, 2. baixar/soltar o MP4, 3. copiar a legenda, 4. usar a thumbnail como referência visual da capa.</p>
+        </article>
+
+        <article class="card">
+          ${thumbLink ? `<img class="preview-thumb" src="${thumbLink}" alt="Thumbnail do vídeo">` : ""}
+          <div class="actions">
+            <button class="button primary" id="copyCaptionButton" type="button">Copiar descrição</button>
+            ${draft.storyboardUrl ? `<a class="button secondary" href="${escapeHtml(draft.storyboardUrl)}" target="_blank" rel="noreferrer">Abrir storyboard</a>` : ""}
+          </div>
+          <pre class="caption-box" id="captionBox">${escapeHtml(draft.caption || "")}</pre>
+        </article>
+      </section>
+    </main>
+
+    <script>
+      const captionText = ${captionJson};
+      const copyButton = document.getElementById("copyCaptionButton");
+      copyButton?.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(captionText);
+          copyButton.textContent = "Descrição copiada";
+          setTimeout(() => { copyButton.textContent = "Copiar descrição"; }, 1800);
+        } catch (error) {
+          window.alert("Falha ao copiar a descrição.");
+        }
+      });
+    </script>
+  </body>
+</html>`;
+};
+
+const resolveChannelValue = (value, fallback = "foiumaideia") => {
+  const normalized = String(value || "").trim();
+  return channelOptions.some((channel) => channel.value === normalized) ? normalized : fallback;
+};
+
+const resolveStoredThumbnailArtifacts = async ({slug, meta = {}}) => {
+  const paths = getRunPaths(slug);
+  const thumbnailMetadataCandidates = [
+    path.join(paths.publicRunDir, "thumbnail.json"),
+    path.join(paths.runDir, "thumbnail.json")
+  ];
+  let thumbnailMetadata = null;
+
+  for (const candidate of thumbnailMetadataCandidates) {
+    if (!existsSync(candidate)) {
+      continue;
+    }
+
+    thumbnailMetadata = await readJsonFile(candidate);
+    if (thumbnailMetadata) {
+      break;
+    }
+  }
+
+  const localThumbnailCandidates = [
+    String(meta?.thumbnailPath || "").trim(),
+    thumbnailMetadata?.publicThumbnailPath ? path.resolve(projectRoot, thumbnailMetadata.publicThumbnailPath) : "",
+    thumbnailMetadata?.thumbnailPath ? path.resolve(projectRoot, thumbnailMetadata.thumbnailPath) : "",
+    path.join(paths.publicRunDir, "thumbnail.png"),
+    path.join(paths.runDir, "thumbnail.png"),
+    path.join(paths.assetDir, "_flux2_images", "scene-01-seg-01.png")
+  ].filter(Boolean);
+
+  const thumbnailPath = localThumbnailCandidates.find((candidate) => existsSync(candidate)) || "";
+  const localThumbnailUrl = thumbnailPath ? createFileUrl(thumbnailPath) : "";
+  const remoteThumbnailUrl = String(meta?.thumbnailUrl || "").trim();
+  const remoteCoverUrl = String(meta?.coverUrl || "").trim();
+  const thumbnailUrl = localThumbnailUrl || remoteThumbnailUrl;
+  const coverUrl = localThumbnailUrl || remoteCoverUrl || remoteThumbnailUrl;
+  const thumbnailLabel =
+    String(thumbnailMetadata?.hook || "").trim() ||
+    String(thumbnailMetadata?.title || "").trim() ||
+    "";
+
+  return {
+    thumbnailPath: thumbnailPath || null,
+    thumbnailUrl: thumbnailUrl || null,
+    coverUrl: coverUrl || null,
+    thumbnailLabel: thumbnailLabel || null
+  };
+};
+
 const buildVideoRecord = async ({targetPath, channelValue}) => {
   const details = await stat(targetPath);
   const matchedJob = findJobForVideoPath(targetPath);
   const slug = inferVideoSlug(targetPath);
-  const channel = getChannelConfig(channelValue || matchedJob?.input?.channel || inferChannelValueFromPath(targetPath));
   const paths = getRunPaths(slug);
   const storyboardPath = matchedJob?.storyboardPath || (existsSync(paths.storyboardPath) ? paths.storyboardPath : "");
   const storyboard = storyboardPath ? await readJsonFile(storyboardPath) : null;
   const postText = existsSync(paths.postPath) ? await readTextFile(paths.postPath) : "";
   const postMeta = parsePostText(postText);
-  const meta = await readVideoMeta(slug);
+  const persistedMeta = await readVideoMeta(slug).catch(() => null);
+  const channel = getChannelConfig(
+    resolveChannelValue(persistedMeta?.channel || channelValue || matchedJob?.input?.channel || inferChannelValueFromPath(targetPath))
+  );
+  const meta = {
+    ...getVideoMetadataEntry({channel: channel.value, slug}),
+    ...(persistedMeta || {})
+  };
+  const thumbnail = await resolveStoredThumbnailArtifacts({slug, meta});
   const title =
     String(meta?.title || "").trim() ||
     String(storyboard?.videoTitle || "").trim() ||
@@ -1054,6 +1459,21 @@ const buildVideoRecord = async ({targetPath, channelValue}) => {
   const platforms = Array.isArray(meta?.platforms) && meta.platforms.length > 0
     ? meta.platforms
     : ["FB", "IG", "YT"];
+  const creationParams = matchedJob?.input
+    ? {
+        language: matchedJob.input.language || null,
+        outputProfile: matchedJob.input.outputProfile || null,
+        targetSeconds: Number(matchedJob.input.targetSeconds || 0) || null,
+        imageStyle: matchedJob.input.imageStyle || null,
+        tone: matchedJob.input.tone || null,
+        voice: matchedJob.input.voice || null,
+        channel: matchedJob.input.channel || channel.value,
+        channelHandle: matchedJob.input.channelHandle || channel.handle,
+        noMusic: matchedJob.input.noMusic === true,
+        force: matchedJob.input.force === true,
+        previewOnly: matchedJob.input.previewOnly === true
+      }
+    : null;
 
   return {
     id: `${slug}:${path.basename(targetPath)}`,
@@ -1077,10 +1497,16 @@ const buildVideoRecord = async ({targetPath, channelValue}) => {
     scheduleAt: String(meta?.scheduleAt || "").trim(),
     platforms,
     isDraft: meta?.isDraft === true,
+    thumbnailPath: thumbnail.thumbnailPath,
+    thumbnailUrl: thumbnail.thumbnailUrl,
+    coverUrl: thumbnail.coverUrl,
+    thumbnailLabel: thumbnail.thumbnailLabel,
     publishedAt: meta?.publishedAt || null,
     publishedPostId: meta?.publishedPostId || null,
     lastPublishPlatforms: Array.isArray(meta?.lastPublishPlatforms) ? meta.lastPublishPlatforms : [],
-    lastPublishStatus: meta?.lastPublishStatus || null
+    lastPublishStatus: meta?.lastPublishStatus || null,
+    publishedProfile: meta?.publishedProfile || null,
+    creationParams
   };
 };
 
@@ -1186,16 +1612,23 @@ const resolveVideoTarget = async ({slug, filePath}) => {
 };
 
 const ensureAgendadorSecrets = async () => {
-  process.env.AGENDADOR_EMAIL = process.env.AGENDADOR_EMAIL || baseChildEnv.AGENDADOR_EMAIL || "";
-  process.env.AGENDADOR_PASSWORD = process.env.AGENDADOR_PASSWORD || baseChildEnv.AGENDADOR_PASSWORD || "";
-
-  if (process.env.AGENDADOR_EMAIL && process.env.AGENDADOR_PASSWORD) {
-    return;
-  }
-
   const secretsModulePath = path.join(configuredVideoEngineRoot, "scripts", "lib", "secrets.mjs");
   const {loadSecretsIntoEnv} = await import(secretsModulePath);
-  loadSecretsIntoEnv(["AGENDADOR_EMAIL", "AGENDADOR_PASSWORD"]);
+  loadSecretsIntoEnv([
+    "AGENDADOR_ONLINE_URL",
+    "AGENDADOR_ONLINE_PASSWORD",
+    "AGENDADOR_PASSWORD",
+    "AGENDADOR_EMAIL",
+    "AGENDADOR_USERNAME",
+    "AGENDADOR_ONLINE_FOIUMAIDEIA_EMAIL",
+    "AGENDADOR_ONLINE_FOIUMAIDEIA_USERNAME",
+    "AGENDADOR_ONLINE_QUIET2MIN_EMAIL",
+    "AGENDADOR_ONLINE_QUIET2MIN_USERNAME",
+    "AGENDADOR_ONLINE_ATE2MIN_EMAIL",
+    "AGENDADOR_ONLINE_ATE2MIN_USERNAME",
+    "FOIUMAIDEIA_URL",
+    "FOIUMAIDEIA_USER"
+  ]);
 };
 
 const agendadorFetch = async (endpoint, {method = "GET", token = "", body, form} = {}) => {
@@ -1212,7 +1645,10 @@ const agendadorFetch = async (endpoint, {method = "GET", token = "", body, form}
   const payload = text ? JSON.parse(text) : null;
 
   if (!response.ok) {
-    throw new Error(payload?.error || `${method} ${endpoint} falhou com ${response.status}.`);
+    const error = new Error(payload?.error || `${method} ${endpoint} falhou com ${response.status}.`);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
   }
 
   return payload;
@@ -1301,18 +1737,20 @@ const ensureUploadableForAgendador = async (inputPath) => {
   throw new Error(`Nao consegui comprimir o video abaixo de ${AGENDADOR_MAX_UPLOAD_MB} MB para publicar.`);
 };
 
-const getAgendadorToken = async () => {
+const getAgendadorToken = async (channelValue) => {
   await ensureAgendadorSecrets();
+  const profile = resolveAgendadorChannelProfile(channelValue);
 
-  if (!process.env.AGENDADOR_EMAIL || !process.env.AGENDADOR_PASSWORD) {
-    throw new Error("Faltam AGENDADOR_EMAIL e AGENDADOR_PASSWORD no .env ou no Keychain.");
+  if (!profile.identifier || !profile.password) {
+    throw new Error(`Faltam credenciais do agendador para ${profile.label}.`);
   }
 
   const auth = await agendadorFetch("/auth/login", {
     method: "POST",
     body: {
-      email: process.env.AGENDADOR_EMAIL,
-      password: process.env.AGENDADOR_PASSWORD
+      identifier: profile.identifier,
+      email: profile.identifier,
+      password: profile.password
     }
   });
   const token = auth?.token;
@@ -1324,17 +1762,124 @@ const getAgendadorToken = async () => {
   return token;
 };
 
-const uploadVideoToAgendador = async (token, filePath) => {
+const uploadMediaToAgendador = async (token, filePath, mimeType) => {
   const prepared = await ensureUploadableForAgendador(filePath);
   const buffer = await readFile(prepared.filePath);
   const form = new FormData();
-  form.set("file", new Blob([buffer], {type: "video/mp4"}), path.basename(prepared.filePath));
+  form.set("file", new Blob([buffer], {type: mimeType}), path.basename(prepared.filePath));
   const payload = await agendadorFetch("/upload", {
     method: "POST",
     token,
     form
   });
   return payload?.url || "";
+};
+
+const uploadVideoToAgendador = async (token, filePath) => uploadMediaToAgendador(token, filePath, "video/mp4");
+
+const getThumbnailMimeType = (filePath) => {
+  const extension = path.extname(String(filePath || "")).toLowerCase();
+  if (extension === ".png") {
+    return "image/png";
+  }
+  if (extension === ".webp") {
+    return "image/webp";
+  }
+  return "image/jpeg";
+};
+
+const resolvePreferredThumbnailSource = async (targetPath, slug) => {
+  const meta = await readVideoMeta(slug).catch(() => null);
+  const stored = await resolveStoredThumbnailArtifacts({slug, meta: meta || {}});
+
+  if (stored.thumbnailPath && existsSync(stored.thumbnailPath)) {
+    return stored.thumbnailPath;
+  }
+
+  return "";
+};
+
+const ensurePublishThumbnail = async (targetPath, slug) => {
+  const preferredThumbnailPath = await resolvePreferredThumbnailSource(targetPath, slug);
+
+  if (preferredThumbnailPath) {
+    return preferredThumbnailPath;
+  }
+
+  await mkdir(videoLibraryDir, {recursive: true});
+  const thumbnailDir = path.join(videoLibraryDir, "thumbnails");
+  await mkdir(thumbnailDir, {recursive: true});
+  const thumbnailPath = path.join(thumbnailDir, `${slugify(slug)}.jpg`);
+  const sourceStat = await stat(targetPath);
+  const thumbnailStat = existsSync(thumbnailPath) ? await stat(thumbnailPath).catch(() => null) : null;
+
+  if (thumbnailStat && thumbnailStat.mtimeMs >= sourceStat.mtimeMs) {
+    return thumbnailPath;
+  }
+
+  const durationSeconds = getVideoDurationSeconds(targetPath);
+  const seekSeconds = Number.isFinite(durationSeconds) && durationSeconds > 0
+    ? Math.max(1.5, Math.min(8, durationSeconds * 0.12))
+    : 2;
+
+  await unlink(thumbnailPath).catch(() => {});
+  await runFfmpeg([
+    "-ss",
+    seekSeconds.toFixed(2),
+    "-i",
+    targetPath,
+    "-frames:v",
+    "1",
+    "-vf",
+    "scale='min(1080,iw)':-2:force_original_aspect_ratio=decrease",
+    "-q:v",
+    "2",
+    thumbnailPath
+  ]);
+
+  return thumbnailPath;
+};
+
+const uploadThumbnailToAgendador = async (token, filePath) => {
+  if (!existsSync(filePath)) {
+    return "";
+  }
+
+  return uploadMediaToAgendador(token, filePath, getThumbnailMimeType(filePath));
+};
+
+const isAccountPublishReady = (account) => {
+  if (!account?.connected) {
+    return false;
+  }
+
+  if (account?.publish_ready === false) {
+    return false;
+  }
+
+  const status = String(account?.status || "").trim().toUpperCase();
+  return !["NEEDS_RECONNECT", "RECONNECT", "DISCONNECTED", "FAILED"].includes(status);
+};
+
+const describeAccountPublishIssue = (account, provider) => {
+  if (!account) {
+    return `${provider} sem vinculo no agendador`;
+  }
+
+  if (!account.connected) {
+    return `${provider} nao esta conectada`;
+  }
+
+  if (account.publish_ready === false) {
+    return account.last_refresh_error || `${provider} nao esta pronta para publicar`;
+  }
+
+  const status = String(account.status || "").trim();
+  if (status && !["CONNECTED", "READY", "PUBLISH_READY"].includes(status.toUpperCase())) {
+    return account.last_refresh_error || `${provider} com status ${status}`;
+  }
+
+  return `${provider} nao esta pronta para publicar`;
 };
 
 const schedulePersist = () => {
@@ -1459,6 +2004,16 @@ const combineStylePrompt = ({language, tone, customStylePrompt}) => {
   return `${basePrompt}, ${customPrompt}`;
 };
 
+const resolveChannelCustomStylePrompt = ({channelPreset, language}) => {
+  const fallbackLanguage = String(language || "pt-BR").startsWith("en") ? "en-US" : "pt-BR";
+
+  if (channelPreset?.customStylePromptByLanguage?.[fallbackLanguage]) {
+    return String(channelPreset.customStylePromptByLanguage[fallbackLanguage] || "").trim();
+  }
+
+  return String(channelPreset?.customStylePrompt || "").trim();
+};
+
 const buildProfileRuntimeEnv = (profileValue, targetSeconds) => {
   const profile = resolveOutputProfileConfig(profileValue);
   const numericTargetSeconds = Number(targetSeconds);
@@ -1505,9 +2060,6 @@ const getProfileTargetSeconds = (profileValue, requestedTargetSeconds) => {
 const createGenerateJobCommand = (job) => {
   const exportDir = getChannelExportDir(job.input.channel);
   const profile = resolveOutputProfileConfig(job.input.outputProfile);
-  const assetMode = assetModeOptions.some((option) => option.value === job.input.assetMode)
-    ? job.input.assetMode
-    : DEFAULT_ASSET_MODE;
   const args = [
     path.join(projectRoot, "scripts", "foiumaideia.mjs"),
     "--title",
@@ -1522,8 +2074,6 @@ const createGenerateJobCommand = (job) => {
     configuredVideoEngineRoot,
     "--export-dir",
     exportDir,
-    "--asset-mode",
-    assetMode,
     "--language",
     job.input.language,
     "--voice",
@@ -1761,7 +2311,7 @@ const runResumedGenerateJob = async (job) => {
         paths.outPath,
         `--props=${JSON.stringify(renderProps)}`,
         `--timeout=${process.env.REMOTION_TIMEOUT_MS || "1800000"}`,
-        `--concurrency=${process.env.REMOTION_CONCURRENCY || "6"}`,
+        `--concurrency=${process.env.REMOTION_CONCURRENCY || "2"}`,
         `--scale=${process.env.REMOTION_SCALE || "0.75"}`,
         `--video-bitrate=${process.env.REMOTION_VIDEO_BITRATE || "9M"}`,
         `--audio-bitrate=${process.env.REMOTION_AUDIO_BITRATE || "256k"}`,
@@ -1998,7 +2548,7 @@ const readRequestBody = async (request) => {
   return rawBody ? JSON.parse(rawBody) : {};
 };
 
-const allowedRoots = [projectRoot, configuredVideoEngineRoot, postarRoot].filter(Boolean);
+const allowedRoots = [projectRoot, configuredVideoEngineRoot, postarRoot, dataDir].filter(Boolean);
 
 const ensureAllowedFilePath = (rawPath) => {
   const resolved = path.resolve(String(rawPath || ""));
@@ -2060,6 +2610,14 @@ const serveStaticFile = async (request, response, filePath) => {
     }
 
     const contentType = contentTypes[path.extname(resolved)] || "application/octet-stream";
+    const shouldDisableCache = [".html", ".js", ".css"].includes(path.extname(resolved).toLowerCase());
+    const cacheHeaders = shouldDisableCache
+      ? {
+          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+          Pragma: "no-cache",
+          Expires: "0"
+        }
+      : {};
     const range = parseRangeHeader(request.headers.range, details.size);
 
     if (range) {
@@ -2067,7 +2625,8 @@ const serveStaticFile = async (request, response, filePath) => {
         "Content-Type": contentType,
         "Content-Length": range.end - range.start + 1,
         "Content-Range": `bytes ${range.start}-${range.end}/${details.size}`,
-        "Accept-Ranges": "bytes"
+        "Accept-Ranges": "bytes",
+        ...cacheHeaders
       });
       createReadStream(resolved, {start: range.start, end: range.end}).pipe(response);
       return;
@@ -2076,7 +2635,8 @@ const serveStaticFile = async (request, response, filePath) => {
     response.writeHead(200, {
       "Content-Type": contentType,
       "Content-Length": details.size,
-      "Accept-Ranges": "bytes"
+      "Accept-Ranges": "bytes",
+      ...cacheHeaders
     });
     createReadStream(resolved).pipe(response);
   } catch (error) {
@@ -2084,10 +2644,38 @@ const serveStaticFile = async (request, response, filePath) => {
   }
 };
 
+const resolveStylePreviewPath = (pathname) => {
+  const normalized = String(pathname || "").trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.startsWith("/style-previews/")) {
+    return path.join(stylePreviewDir, path.basename(normalized));
+  }
+
+  const matchedOption = imageStyleOptions.find((option) => `/${option.previewFile}` === normalized);
+  return matchedOption ? matchedOption.previewImagePath : "";
+};
+
+const resolvePublicStaticPath = (pathname) => {
+  const normalized = String(pathname || "").trim();
+  if (!normalized || normalized === "/") {
+    return "";
+  }
+
+  const candidate = path.resolve(publicDir, `.${normalized}`);
+  if (candidate === publicDir || !candidate.startsWith(`${publicDir}${path.sep}`)) {
+    return "";
+  }
+
+  return existsSync(candidate) ? candidate : "";
+};
+
 const VALID_LANGUAGES = ["pt-BR", "en-US"];
 const VALID_TONES = Object.keys(tonePresets);
 const VALID_VOICES = voiceOptions.map((option) => option.value);
-const VALID_ASSET_MODES = assetModeOptions.map((option) => option.value);
 const MAX_TITLE_LENGTH = 200;
 const MAX_SOURCE_TEXT_LENGTH = 50_000;
 const MAX_CUSTOM_VOICE_LENGTH = 100;
@@ -2111,21 +2699,23 @@ const handleGenerateRequest = async (request, response) => {
 
   const language = VALID_LANGUAGES.includes(body.language) ? body.language : "pt-BR";
   const tone = VALID_TONES.includes(body.tone) ? body.tone : "natural_clean";
-  const selectedVoice = String(body.voice || DEFAULT_VOICE).trim();
+  const selectedVoice = String(body.voice || "").trim();
   const customVoice = String(body.customVoice || "").trim().slice(0, MAX_CUSTOM_VOICE_LENGTH);
-  const voice = selectedVoice === "__custom" ? customVoice : (VALID_VOICES.includes(selectedVoice) ? selectedVoice : DEFAULT_VOICE);
-  const assetMode = VALID_ASSET_MODES.includes(String(body.assetMode || "").trim())
-    ? String(body.assetMode).trim()
-    : DEFAULT_ASSET_MODE;
   const outputProfile = resolveOutputProfileConfig(body.outputProfile);
+  const channel = getChannelConfig(String(body.channel || "foiumaideia"));
+  const channelPreset = getChannelPreset(channel.value);
+  const voice = resolveRequestedVoice({
+    selectedVoice,
+    customVoice,
+    language,
+    channelPreset
+  });
 
   if (!voice) {
     sendJson(response, 400, {error: "Escolha uma voz valida."});
     return;
   }
 
-  const channel = getChannelConfig(String(body.channel || "foiumaideia"));
-  const channelPreset = getChannelPreset(channel.value);
   const targetSeconds = getProfileTargetSeconds(outputProfile.id, Number(body.targetSeconds));
   const slug = `${new Date().toISOString().slice(0, 10)}-${slugify(title)}`;
   const sourceTextFile = sourceText ? path.join(inputsDir, `${createId()}-source.txt`) : "";
@@ -2136,6 +2726,8 @@ const handleGenerateRequest = async (request, response) => {
   }
 
   const tonePreset = tonePresets[tone] || tonePresets.natural_clean;
+  const explicitCustomStylePrompt = String(body.customStylePrompt || "").slice(0, MAX_STYLE_PROMPT_LENGTH).trim();
+  const channelCustomStylePrompt = resolveChannelCustomStylePrompt({channelPreset, language});
   const job = {
     id: createId(),
     type: "generate",
@@ -2155,7 +2747,6 @@ const handleGenerateRequest = async (request, response) => {
       outputProfile: outputProfile.id,
       language,
       targetSeconds,
-      assetMode,
       imageStyle: imageStyleOptions.some((option) => option.value === body.imageStyle)
         ? String(body.imageStyle)
         : DEFAULT_VISUAL_STYLE_PRESET,
@@ -2164,9 +2755,14 @@ const handleGenerateRequest = async (request, response) => {
       stylePrompt: combineStylePrompt({
         language,
         tone,
-        customStylePrompt: String(body.customStylePrompt || "").slice(0, MAX_STYLE_PROMPT_LENGTH)
+        customStylePrompt: explicitCustomStylePrompt || channelCustomStylePrompt
       }),
-      scriptGuidance: String(body.scriptGuidance || tonePreset.scriptGuidance || channelPreset.scriptGuidance || "").trim(),
+      scriptGuidance: resolveEffectiveScriptGuidance({
+        explicitScriptGuidance: body.scriptGuidance,
+        explicitTone: body.tone,
+        channelPreset,
+        tonePreset
+      }),
       channelHandle: channel.handle,
       noMusic: Boolean(body.noMusic),
       force: body.force !== false,
@@ -2260,9 +2856,14 @@ const handleRerenderRequest = async (request, response) => {
 
   const language = VALID_LANGUAGES.includes(body.language) ? body.language : "pt-BR";
   const tone = VALID_TONES.includes(body.tone) ? body.tone : "natural_clean";
-  const selectedVoice = String(body.voice || DEFAULT_VOICE).trim();
+  const selectedVoice = String(body.voice || "").trim();
   const customVoice = String(body.customVoice || "").trim().slice(0, MAX_CUSTOM_VOICE_LENGTH);
-  const voice = selectedVoice === "__custom" ? customVoice : (VALID_VOICES.includes(selectedVoice) ? selectedVoice : DEFAULT_VOICE);
+  const voice = resolveRequestedVoice({
+    selectedVoice,
+    customVoice,
+    language,
+    channelPreset: null
+  });
 
   if (!voice) {
     sendJson(response, 400, {error: "Escolha uma voz valida."});
@@ -2294,7 +2895,12 @@ const handleRerenderRequest = async (request, response) => {
         tone,
         customStylePrompt: String(body.customStylePrompt || "").slice(0, MAX_STYLE_PROMPT_LENGTH)
       }),
-      scriptGuidance: tonePreset.scriptGuidance
+      scriptGuidance: resolveEffectiveScriptGuidance({
+        explicitScriptGuidance: body.scriptGuidance,
+        explicitTone: body.tone,
+        channelPreset: {tone, scriptGuidance: ""},
+        tonePreset
+      })
     },
     outputPath: null,
     storyboardPath: null,
@@ -2387,12 +2993,26 @@ const handleResumeRequest = async (request, response) => {
 const handleVideosRequest = async (response) => {
   const videos = await listExportVideos();
   const failedJobs = await listFailedLibraryJobs();
+  const agendadorProfiles = channelOptions.map((channel) => {
+    const profile = resolveAgendadorChannelProfile(channel.value);
+    return {
+      channel: channel.value,
+      label: channel.label,
+      configured: Boolean(profile.identifier && profile.password),
+      identifierSource: profile.identifierSource || "",
+      publicUrl: profile.publicUrl || "",
+      profileUrlSource: profile.profileUrlSource || ""
+    };
+  });
   sendJson(response, 200, {
     videos,
     failedJobs,
     agendador: {
-      configured: Boolean(baseChildEnv.AGENDADOR_EMAIL && baseChildEnv.AGENDADOR_PASSWORD),
-      keychainBacked: HAS_SECURITY_CLI
+      configured: agendadorProfiles.some((item) => item.configured),
+      keychainBacked: HAS_SECURITY_CLI,
+      siteUrl: normalizeAgendadorSiteUrl(baseChildEnv.AGENDADOR_ONLINE_URL || baseChildEnv.AGENDADOR_URL || DEFAULT_AGENDADOR_SITE_URL),
+      apiBase: AGENDADOR_API_BASE,
+      profiles: agendadorProfiles
     }
   });
 };
@@ -2408,6 +3028,7 @@ const handleVideoMetaRequest = async (request, response) => {
   const caption = String(body.caption || "").trim().slice(0, 5000);
   const scheduleAt = String(body.scheduleAt || "").trim().slice(0, 64);
   const isDraft = body.isDraft === true;
+  const channel = getChannelConfig(resolveChannelValue(body.channel || existingMeta?.channel || inferChannelValueFromPath(target.path)));
   const hashtags = Array.isArray(body.hashtags)
     ? body.hashtags.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 30)
     : Array.isArray(existingMeta?.hashtags) ? existingMeta.hashtags : [];
@@ -2422,6 +3043,7 @@ const handleVideoMetaRequest = async (request, response) => {
     caption,
     scheduleAt,
     isDraft,
+    channel: channel.value,
     hashtags,
     platforms: safePlatforms,
     updatedAt: new Date().toISOString()
@@ -2460,6 +3082,8 @@ const handleVideoRefazerRequest = async (request, response) => {
   const selectedVoice = String(body.voice || previousJob?.input?.voice || DEFAULT_VOICE).trim();
   const voice = VALID_VOICES.includes(selectedVoice) ? selectedVoice : DEFAULT_VOICE;
   const tonePreset = tonePresets[tone] || tonePresets.natural_clean;
+  const explicitCustomStylePrompt = String(body.customStylePrompt || "").slice(0, MAX_STYLE_PROMPT_LENGTH).trim();
+  const channelCustomStylePrompt = resolveChannelCustomStylePrompt({channelPreset, language});
   const title = String(storyboard.videoTitle || previousJob?.title || slugToCaption(target.path)).trim();
   const job = {
     id: createId(),
@@ -2480,12 +3104,23 @@ const handleVideoRefazerRequest = async (request, response) => {
       outputProfile: outputProfile.id,
       language,
       targetSeconds,
-      assetMode: previousJob?.input?.assetMode || DEFAULT_ASSET_MODE,
       imageStyle: previousJob?.input?.imageStyle || DEFAULT_VISUAL_STYLE_PRESET,
       voice,
       tone,
-      stylePrompt: previousJob?.input?.stylePrompt || combineStylePrompt({language, tone, customStylePrompt: ""}),
-      scriptGuidance: previousJob?.input?.scriptGuidance || tonePreset.scriptGuidance || channelPreset.scriptGuidance || "",
+      stylePrompt:
+        previousJob?.input?.stylePrompt ||
+        combineStylePrompt({
+          language,
+          tone,
+          customStylePrompt: explicitCustomStylePrompt || channelCustomStylePrompt
+        }),
+      scriptGuidance:
+        String(previousJob?.input?.scriptGuidance || "").trim() ||
+        resolveEffectiveScriptGuidance({
+          explicitTone: body.tone || previousJob?.input?.tone,
+          channelPreset,
+          tonePreset
+        }),
       channelHandle: channel.handle,
       noMusic: previousJob?.input?.noMusic !== false,
       force: true,
@@ -2533,6 +3168,7 @@ const handleRetryFailedJobRequest = async (request, response) => {
   const selectedVoice = String(sourceJob.input?.voice || DEFAULT_VOICE).trim();
   const voice = VALID_VOICES.includes(selectedVoice) ? selectedVoice : DEFAULT_VOICE;
   const tonePreset = tonePresets[tone] || tonePresets.natural_clean;
+  const channelCustomStylePrompt = resolveChannelCustomStylePrompt({channelPreset, language});
   const title = String(storyboard.videoTitle || sourceJob.title || slugToCaption(sourceJob.slug)).trim();
   const retriedJob = {
     id: createId(),
@@ -2556,8 +3192,16 @@ const handleRetryFailedJobRequest = async (request, response) => {
       targetSeconds,
       voice,
       tone,
-      stylePrompt: sourceJob.input?.stylePrompt || combineStylePrompt({language, tone, customStylePrompt: ""}),
-      scriptGuidance: sourceJob.input?.scriptGuidance || tonePreset.scriptGuidance || channelPreset.scriptGuidance || "",
+      stylePrompt:
+        sourceJob.input?.stylePrompt ||
+        combineStylePrompt({language, tone, customStylePrompt: channelCustomStylePrompt}),
+      scriptGuidance:
+        String(sourceJob.input?.scriptGuidance || "").trim() ||
+        resolveEffectiveScriptGuidance({
+          explicitTone: sourceJob.input?.tone,
+          channelPreset,
+          tonePreset
+        }),
       channelHandle: channel.handle,
       noMusic: sourceJob.input?.noMusic !== false,
       force: true,
@@ -2579,12 +3223,14 @@ const handleVideoDeleteRequest = async (request, response) => {
     slug: body.slug,
     filePath: body.path
   });
+  const video = await buildVideoRecord({targetPath: target.path});
   const paths = getRunPaths(target.slug);
+  const channel = getChannelConfig(body.channel || video.channel || "foiumaideia");
 
   await safeUnlink(target.path);
   await safeUnlink(paths.outPath);
   await safeUnlink(getVideoMetaPath(target.slug));
-  await removeVideoMetadataEntry({channel: body.channel || "foiumaideia", slug: target.slug}).catch(() => {});
+  await removeVideoMetadataEntry({channel: channel.value, slug: target.slug}).catch(() => {});
 
   sendJson(response, 200, {
     ok: true,
@@ -2601,6 +3247,8 @@ const handleVideoPublishRequest = async (request, response) => {
   });
   const video = await buildVideoRecord({targetPath: target.path});
   const meta = await readVideoMeta(target.slug);
+  const publishChannel = getChannelConfig(String(body.channel || video.channel || meta?.channel || "foiumaideia"));
+  const publishProfile = resolveAgendadorChannelProfile(publishChannel.value);
   const hashtags = Array.isArray(body.hashtags)
     ? body.hashtags.map((item) => String(item || "").trim()).filter(Boolean)
     : Array.isArray(meta?.hashtags) && meta.hashtags.length > 0
@@ -2615,13 +3263,15 @@ const handleVideoPublishRequest = async (request, response) => {
   const safePlatforms = platforms.length > 0 ? platforms : ["FB", "IG", "YT"];
   const publishDate = String(body.scheduleAt || meta?.scheduleAt || "").trim() || new Date().toISOString();
   const isDraft = body.isDraft === true;
-  const token = await getAgendadorToken();
+  const token = await getAgendadorToken(publishChannel.value);
   const accountsPayload = await agendadorFetch("/social-accounts", {token});
   const accounts = Array.isArray(accountsPayload?.accounts) ? accountsPayload.accounts : [];
-  const missingProviders = safePlatforms.filter((provider) => {
-    const account = accounts.find((item) => item.provider === provider);
-    return !account?.connected;
-  });
+  const missingProviders = safePlatforms
+    .map((provider) => {
+      const account = accounts.find((item) => String(item.provider || "").trim().toUpperCase() === provider);
+      return isAccountPublishReady(account) ? null : describeAccountPublishIssue(account, provider);
+    })
+    .filter(Boolean);
 
   if (missingProviders.length > 0) {
     sendJson(response, 409, {error: `Conecte as redes: ${missingProviders.join(", ")}`});
@@ -2629,17 +3279,53 @@ const handleVideoPublishRequest = async (request, response) => {
   }
 
   const mediaUrl = await uploadVideoToAgendador(token, target.path);
-  const created = await agendadorFetch("/posts", {
-    method: "POST",
-    token,
-    body: {
-      date: publishDate,
-      mediaUrl,
-      caption,
-      platforms: safePlatforms,
-      isDraft
+  let thumbnailPath = "";
+  let thumbnailUrl = "";
+
+  try {
+    thumbnailPath = await ensurePublishThumbnail(target.path, target.slug);
+    thumbnailUrl = thumbnailPath ? await uploadThumbnailToAgendador(token, thumbnailPath) : "";
+  } catch (error) {
+    console.warn(`[agendador] thumbnail opcional ignorada: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const basePostBody = {
+    date: publishDate,
+    mediaUrl,
+    caption,
+    platforms: safePlatforms,
+    isDraft
+  };
+  const enrichedPostBody = thumbnailUrl
+    ? {
+        ...basePostBody,
+        thumbnailUrl,
+        coverUrl: thumbnailUrl
+      }
+    : basePostBody;
+
+  let created;
+  try {
+    created = await agendadorFetch("/posts", {
+      method: "POST",
+      token,
+      body: enrichedPostBody
+    });
+  } catch (error) {
+    if (thumbnailUrl && [400, 422].includes(Number(error.status || 0))) {
+      created = await agendadorFetch("/posts", {
+        method: "POST",
+        token,
+        body: basePostBody
+      });
+      thumbnailUrl = "";
+    } else {
+      throw error;
     }
-  });
+  }
+
+  const publishStatus = isDraft ? "draft" : new Date(publishDate).getTime() > Date.now() ? "scheduled" : "published";
+  const publishedAt = publishStatus === "published" ? new Date().toISOString() : null;
 
   await writeVideoMeta(target.slug, {
     ...meta,
@@ -2649,17 +3335,65 @@ const handleVideoPublishRequest = async (request, response) => {
     scheduleAt: publishDate,
     isDraft,
     platforms: safePlatforms,
+    channel: publishChannel.value,
+    agendadorIdentifier: publishProfile.identifier,
+    agendadorIdentifierSource: publishProfile.identifierSource,
+    agendadorProfileUrl: publishProfile.publicUrl || "",
+    thumbnailPath: thumbnailPath || meta?.thumbnailPath || "",
+    thumbnailUrl: thumbnailUrl || meta?.thumbnailUrl || "",
     updatedAt: new Date().toISOString(),
-    publishedAt: new Date().toISOString(),
+    publishedAt,
     publishedPostId: created?.post?.id ?? null,
     lastPublishPlatforms: safePlatforms,
-    lastPublishStatus: isDraft ? "draft" : "scheduled"
+    lastPublishStatus: publishStatus,
+    publishStatus,
+    publishedProfile: publishChannel.value
   });
 
   sendJson(response, 200, {
     ok: true,
     post: created?.post ?? created ?? null,
     video: await buildVideoRecord({targetPath: target.path})
+  });
+};
+
+const handleVideoTikTokHelperRequest = async (request, response) => {
+  const body = await readRequestBody(request);
+  const target = await resolveVideoTarget({
+    slug: body.slug,
+    filePath: body.path
+  });
+  const video = await buildVideoRecord({targetPath: target.path});
+  const meta = await readVideoMeta(target.slug).catch(() => null);
+  const hashtags = Array.isArray(body.hashtags)
+    ? body.hashtags.map((item) => String(item || "").trim()).filter(Boolean)
+    : Array.isArray(meta?.hashtags) && meta.hashtags.length > 0
+      ? meta.hashtags
+      : Array.isArray(video.hashtags) ? video.hashtags : [];
+  const captionBase = String(body.caption || meta?.caption || video.caption || slugToCaption(target.path)).trim();
+  const caption = [captionBase, hashtags.join(" ")].filter(Boolean).join("\n\n");
+  const draftId = `${target.slug}-${Date.now().toString(36)}`;
+  const draft = {
+    id: draftId,
+    slug: target.slug,
+    title: String(body.title || meta?.title || video.title || "").trim() || slugToCaption(target.path),
+    channel: String(body.channel || meta?.channel || video.channel || "").trim(),
+    channelHandle: video.channelHandle || "",
+    caption,
+    videoUrl: video.url,
+    thumbnailUrl: String(video.thumbnailUrl || video.coverUrl || "").trim(),
+    storyboardUrl: String(video.storyboardUrl || "").trim(),
+    downloadName: path.basename(target.path),
+    thumbnailDownloadName: `${target.slug}-thumbnail${path.extname(String(video.thumbnailPath || video.thumbnailUrl || ".png")) || ".png"}`,
+    createdAt: new Date().toISOString()
+  };
+
+  await writeTikTokDraft(draftId, draft);
+
+  sendJson(response, 200, {
+    ok: true,
+    helperUrl: `/tiktok-helper?id=${encodeURIComponent(draftId)}`,
+    message: "Helper do TikTok aberto. O upload do MP4 no site do TikTok ainda precisa ser confirmado manualmente no browser."
   });
 };
 
@@ -2670,19 +3404,21 @@ const handleConfigRequest = async (response) => {
       language: "pt-BR",
       targetSeconds: 60,
       outputProfile: DEFAULT_OUTPUT_PROFILE,
-      assetMode: "google-cloud",
       imageStyle: DEFAULT_VISUAL_STYLE_PRESET,
       tone: "shortform_native",
       voice: DEFAULT_VOICE,
       noMusic: true,
       force: true
     },
-    voices: voiceOptions,
+    defaultVoicesByLanguage: {
+      "pt-BR": DEFAULT_VOICE,
+      "en-US": DEFAULT_ENGLISH_VOICE
+    },
+    voices: voiceOptions.map(serializeVoiceOption),
     channels: channelOptions,
     channelPresets,
     outputProfiles: outputProfileOptions,
-    assetModes: assetModeOptions,
-    imageStyles: imageStyleOptions,
+    imageStyles: imageStyleOptions.map(serializeImageStyleOption),
     tones: Object.entries(tonePresets).map(([value, config]) => ({
       value,
       label: config.label,
@@ -2691,7 +3427,23 @@ const handleConfigRequest = async (response) => {
     durations: defaultDurationOptions,
     durationsByProfile: Object.fromEntries(
       outputProfileOptions.map((profile) => [profile.value, profile.durations])
-    )
+    ),
+    agendador: {
+      siteUrl: normalizeAgendadorSiteUrl(baseChildEnv.AGENDADOR_ONLINE_URL || baseChildEnv.AGENDADOR_URL || DEFAULT_AGENDADOR_SITE_URL),
+      apiBase: AGENDADOR_API_BASE,
+      profiles: channelOptions.map((channel) => {
+        const profile = resolveAgendadorChannelProfile(channel.value);
+        return {
+          channel: channel.value,
+          label: channel.label,
+          handle: channel.handle,
+          configured: Boolean(profile.identifier && profile.password),
+          identifierSource: profile.identifierSource || "",
+          publicUrl: profile.publicUrl || "",
+          profileUrlSource: profile.profileUrlSource || ""
+        };
+      })
+    }
   });
 };
 
@@ -2766,6 +3518,7 @@ validateStartup();
 await mkdir(dataDir, {recursive: true});
 await mkdir(inputsDir, {recursive: true});
 await mkdir(videoLibraryDir, {recursive: true});
+await mkdir(tiktokDraftsDir, {recursive: true});
 await mkdir(postarRoot, {recursive: true});
 await Promise.all(channelOptions.map((channel) => mkdir(getChannelExportDir(channel.value), {recursive: true})));
 
@@ -2800,6 +3553,18 @@ const server = http.createServer(async (request, response) => {
 
     if (method === "GET" && ["/app.js", "/styles.css"].includes(pathname)) {
       await serveStaticFile(request, response, path.join(publicDir, pathname.slice(1)));
+      return;
+    }
+
+    const stylePreviewPath = resolveStylePreviewPath(pathname);
+    if (method === "GET" && stylePreviewPath) {
+      await serveStaticFile(request, response, stylePreviewPath);
+      return;
+    }
+
+    const publicStaticPath = resolvePublicStaticPath(pathname);
+    if (method === "GET" && publicStaticPath) {
+      await serveStaticFile(request, response, publicStaticPath);
       return;
     }
 
@@ -2899,6 +3664,24 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (method === "GET" && pathname === "/tiktok-helper") {
+      const draftId = String(url.searchParams.get("id") || "").trim();
+      if (!draftId) {
+        sendJson(response, 400, {error: "Parametro id ausente."});
+        return;
+      }
+
+      const draft = await readTikTokDraft(draftId);
+      if (!draft) {
+        sendJson(response, 404, {error: "Draft do TikTok nao encontrado."});
+        return;
+      }
+
+      response.writeHead(200, {"Content-Type": "text/html; charset=utf-8"});
+      response.end(buildTikTokHelperHtml(draft));
+      return;
+    }
+
     if (method === "POST" && pathname === "/api/generate") {
       await handleGenerateRequest(request, response);
       return;
@@ -2931,6 +3714,11 @@ const server = http.createServer(async (request, response) => {
 
     if (method === "POST" && pathname === "/api/videos/publish") {
       await handleVideoPublishRequest(request, response);
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/videos/tiktok-helper") {
+      await handleVideoTikTokHelperRequest(request, response);
       return;
     }
 
