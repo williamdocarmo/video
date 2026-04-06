@@ -83,13 +83,24 @@
                 </label>
               </div>
 
-              <div class="grid three">
+              <div class="grid two">
                 <label class="field">
                   <span>Duração</span>
                   <select name="targetSeconds" id="generateDuration"></select>
                   <small id="durationHint" class="field-hint"></small>
                 </label>
 
+                <label class="field">
+                  <span>Modelo de imagem</span>
+                  <select name="imageModel" id="generateImageModel"></select>
+                  <div class="field-note-row">
+                    <small id="imageModelHint" class="field-hint"></small>
+                    <small id="imageModelCost" class="field-pill hidden"></small>
+                  </div>
+                </label>
+              </div>
+
+              <div class="grid two">
                 <label class="field">
                   <span>Estilo de imagem</span>
                   <select name="imageStyle" id="generateImageStyle"></select>
@@ -159,23 +170,52 @@
             <div id="jobDetails" class="stack hidden">
               <div class="job-summary">
                 <div>
-                  <p class="job-kicker" id="jobType">generate</p>
                   <h3 id="jobTitle">Título</h3>
                   <p class="job-meta" id="jobMeta"></p>
+                  <p class="job-progress-meta" id="jobProgressMeta"></p>
                 </div>
-                <span class="status-pill" id="jobStatus">queued</span>
               </div>
 
-              <div class="link-row">
-                <a id="jobOutputLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir vídeo</a>
-                <a id="jobStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
+              <div class="state-strip">
+                <p class="state-label">Stage badges</p>
+                <div class="state-badge-row">
+                  <span class="stage-badge" id="jobType">generate</span>
+                  <span class="stage-badge" id="jobStatus">queued</span>
+                </div>
               </div>
 
-              <p id="jobFailureSummary" class="field-hint hidden"></p>
+              <div class="state-grid">
+                <article class="state-card state-card-accent">
+                  <p class="state-label">RCA</p>
+                  <p id="jobFailureSummary" class="state-copy hidden"></p>
+                  <p class="state-copy muted">O resumo da causa raiz aparece quando o job falha. Use este bloco para consolidar o diagnóstico do pipeline.</p>
+                </article>
 
-              <div class="button-row hidden" id="jobActions">
-                <button id="resumeJobButton" type="button" class="button secondary">Retomar a partir do ponto salvo</button>
+                <article class="state-card">
+                  <p class="state-label">Ação recomendada</p>
+                  <p id="jobRecommendedLabel" class="state-copy">Revise o RCA, abra os artefatos vinculados e retome a partir do ponto salvo quando o job oferecer essa rota.</p>
+                  <p id="jobRecommendedDetails" class="field-hint">A próxima ação é calculada a partir dos artefatos reais do run.</p>
+
+                  <div class="link-row">
+                    <a id="jobOutputLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir vídeo</a>
+                    <a id="jobStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
+                  </div>
+
+                  <div class="button-row hidden" id="jobActions">
+                    <button id="resumeJobButton" type="button" class="button secondary">Retomar a partir do ponto salvo</button>
+                    <button id="regenerateSceneButton" type="button" class="button secondary">Regenerar cena faltante</button>
+                    <button id="generateAudioButton" type="button" class="button secondary">Gerar áudio</button>
+                    <button id="renderOnlyButton" type="button" class="button secondary">Renderizar vídeo</button>
+                    <button id="validateJobButton" type="button" class="button secondary">Validar vídeo</button>
+                    <button id="forceFailJobButton" type="button" class="button danger">Marcar como travado e liberar fila</button>
+                  </div>
+                </article>
               </div>
+
+              <article class="state-card">
+                <p class="state-label">Checklist da pipeline</p>
+                <div id="jobStepChecklist" class="step-checklist"></div>
+              </article>
 
               <div id="previewPanel" class="stack hidden">
                 <div class="button-row">
@@ -236,6 +276,7 @@
                   <p class="job-kicker">Output ao vivo</p>
                   <h3 id="logsTitle">Job</h3>
                   <p id="logsMeta" class="job-meta"></p>
+                  <p id="logsProgressMeta" class="job-progress-meta"></p>
                 </div>
                 <span class="status-pill" id="logsStatus">queued</span>
               </div>
@@ -327,7 +368,7 @@
                 </div>
 
                 <div class="grid two">
-                  <label class="field">
+                  <div class="field">
                     <span>Modo de publicação</span>
                     <div class="publish-mode-toggle" role="radiogroup" aria-label="Modo de publicação">
                       <label class="publish-mode-card">
@@ -340,7 +381,7 @@
                       </label>
                     </div>
                     <small class="field-hint">Use agora para postar imediatamente. Use agendar para definir data e hora.</small>
-                  </label>
+                  </div>
 
                   <label class="field hidden" id="videoScheduleField">
                     <span>Agendar publicação</span>
@@ -398,23 +439,46 @@
             </div>
 
             <div id="failedJobDetails" class="stack hidden">
-              <div class="job-summary">
-                <div>
-                  <p class="job-kicker" id="failedJobChannel">Falhado</p>
+              <div class="failure-banner">
+                <div class="failure-banner-copy">
+                  <p class="job-kicker">Job falhado</p>
                   <h3 id="failedJobTitle">Job falhado</h3>
-                  <p id="failedJobMeta" class="job-meta"></p>
                 </div>
-                <span class="status-pill" id="failedJobStatus" data-state="failed">failed</span>
               </div>
 
-              <p id="failedJobError" class="field-hint error"></p>
-
-              <div class="link-row">
-                <a id="failedJobStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
+              <div class="state-strip">
+                <p class="state-label">Stage badges</p>
+                <div class="state-badge-row">
+                  <span class="stage-badge" id="failedJobChannel">Falhado</span>
+                  <span class="stage-badge" id="failedJobStatus" data-state="failed">failed</span>
+                </div>
               </div>
 
-              <div class="button-row">
-                <button id="retryFailedJobButton" type="button" class="button primary">Refazer este job</button>
+              <div class="state-grid state-grid-wide">
+                <article class="state-card">
+                  <p class="state-label">Stage detail</p>
+                  <p id="failedJobMeta" class="state-copy"></p>
+                </article>
+
+                <article class="state-card state-card-accent">
+                  <p class="state-label">RCA</p>
+                  <p id="failedJobError" class="state-copy error"></p>
+                  <p class="state-copy muted">Use este bloco para consolidar a causa raiz antes de reenfileirar ou ajustar o prompt, o storyboard ou o material de entrada.</p>
+                </article>
+
+                <article class="state-card">
+                  <p class="state-label">Ação recomendada</p>
+                  <p id="failedJobRecommendedLabel" class="state-copy">Abra o storyboard, revise o que foi gerado e siga a próxima ação segura indicada pelo sistema.</p>
+                  <p id="failedJobRecommendedDetails" class="field-hint">O painel de falhados reaproveita a recomendação calculada a partir dos artefatos reais do run.</p>
+
+                  <div class="link-row">
+                    <a id="failedJobStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
+                  </div>
+
+                  <div id="failedJobActions" class="button-row">
+                    <button id="retryFailedJobButton" type="button" class="button primary">Refazer este job</button>
+                  </div>
+                </article>
               </div>
             </div>
           </section>
@@ -424,19 +488,19 @@
       <section class="tab-panel hidden" data-tab-panel="layout">
         <section class="panel">
           <div class="panel-head">
-            <h2>Galeria de estilos</h2>
-            <p>Referências reais geradas pelo próprio app para comparar os estilos visuais antes de criar o vídeo.</p>
+            <h2>Galeria de estilos e modelos</h2>
+            <p>Referências reais geradas pelo próprio app para comparar presets visuais e também o comportamento dos modelos de imagem no caso do GPS.</p>
           </div>
 
           <div class="stack">
             <div class="link-row">
-              <a class="text-link" href="/style-gallery/index.html" target="_blank" rel="noreferrer">Abrir galeria em página própria</a>
+              <a class="text-link" href="/style-gallery/index.html" target="_blank" rel="noreferrer">Abrir galeria completa em página própria</a>
             </div>
 
             <iframe
               class="gallery-frame"
               src="/style-gallery/index.html"
-              title="Galeria de estilos visuais"
+              title="Galeria de estilos visuais e modelos de imagem"
               loading="lazy"
             ></iframe>
           </div>

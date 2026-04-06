@@ -82,6 +82,32 @@ const uniqueStrings = (values = []) => {
   return [...new Set((Array.isArray(values) ? values : []).filter(Boolean).map((value) => normalizeText(value)).filter(Boolean))];
 };
 
+const uniqueFindings = (values = []) => {
+  const seen = new Set();
+
+  return (Array.isArray(values) ? values : []).filter((finding) => {
+    if (!finding || typeof finding !== "object") {
+      return false;
+    }
+
+    const key = `${String(finding.severity || "")}|${String(finding.code || "")}|${String(finding.message || "")}|${JSON.stringify(finding.details || {})}`;
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+};
+
+const createQaFinding = ({code, message, severity, details = {}}) => ({
+  code,
+  severity,
+  message,
+  details
+});
+
 const withThinkingDisabled = (config = {}) => ({
   ...config,
   thinkingConfig: {
@@ -478,58 +504,136 @@ const getStoryboardIssueList = ({storyboard, title}) => {
   const offTopicQueryScenes = getOffTopicQueryScenes(storyboard, title);
 
   if (deskLaptopScenes > 4) {
-    issues.push(`Too many desk/laptop scenes (${deskLaptopScenes}). Rewrite several scenes to use phones, cards, routers, doors, wallets, checkout counters, home devices, hands-only object shots, or street/home settings instead.`);
+    issues.push(createQaFinding({
+      code: "too_many_desk_laptop_scenes",
+      severity: "issue",
+      message: `Too many desk/laptop scenes (${deskLaptopScenes}). Rewrite several scenes to use phones, cards, routers, doors, wallets, checkout counters, home devices, hands-only object shots, or street/home settings instead.`,
+      details: {deskLaptopScenes}
+    }));
   }
 
   if (textishQueries > 0) {
-    issues.push(`${textishQueries} searchQuery entries still imply readable interface text. Replace headlines, messages, links, emails, buttons, and form fields with blank panels, warning icons, lock symbols, or abstract alerts.`);
+    issues.push(createQaFinding({
+      code: "readable_interface_text_in_queries",
+      severity: "issue",
+      message: `${textishQueries} searchQuery entries still imply readable interface text. Replace headlines, messages, links, emails, buttons, and form fields with blank panels, warning icons, lock symbols, or abstract alerts.`,
+      details: {textishQueries}
+    }));
   }
 
   if (titleLeakScenes.length > 0) {
-    issues.push(
-      `Narration leaks the video title or generic intro phrasing in mid-storyboard scenes: ${titleLeakScenes
+    issues.push(createQaFinding({
+      code: "narration_title_leak",
+      severity: "issue",
+      message: `Narration leaks the video title or generic intro phrasing in mid-storyboard scenes: ${titleLeakScenes
         .map((scene) => `scene ${scene.index + 1} (${scene.title})`)
-        .join(", ")}. Rewrite those lines so they explain the topic directly instead of repeating the title.`
-    );
+        .join(", ")}. Rewrite those lines so they explain the topic directly instead of repeating the title.`,
+      details: {
+        sceneIndexes: titleLeakScenes.map((scene) => scene.index + 1),
+        sceneTitles: titleLeakScenes.map((scene) => scene.title)
+      }
+    }));
   }
 
   if (hookStartsAsQuestion(storyboard)) {
-    issues.push("The hook still opens as a question. Rewrite the hook and opening scene so the video starts with a hard statement, warning, accusation, or shocking reveal instead of asking the viewer a question.");
+    issues.push(createQaFinding({
+      code: "hook_opens_as_question",
+      severity: "issue",
+      message: "The hook still opens as a question. Rewrite the hook and opening scene so the video starts with a hard statement, warning, accusation, or shocking reveal instead of asking the viewer a question."
+    }));
   }
 
   if (hasSoftGenericEnding(storyboard)) {
-    issues.push("The ending is too soft or generic. Rewrite the last scene so it lands with a sharper cautionary sting, consequence, or memorable warning.");
+    issues.push(createQaFinding({
+      code: "ending_too_soft_generic",
+      severity: "issue",
+      message: "The ending is too soft or generic. Rewrite the last scene so it lands with a sharper cautionary sting, consequence, or memorable warning."
+    }));
   }
 
   if (firstAndLastSceneFeelDuplicated(storyboard)) {
-    issues.push("The ending feels too close to the opening scene. Rewrite the closing beat so it echoes the theme without duplicating the first scene or first sentence.");
+    issues.push(createQaFinding({
+      code: "ending_duplicates_opening",
+      severity: "issue",
+      message: "The ending feels too close to the opening scene. Rewrite the closing beat so it echoes the theme without duplicating the first scene or first sentence."
+    }));
   }
 
   if (crossTopicLeakScenes.length > 0) {
-    issues.push(
-      `Some scenes drift into an unrelated apps/productivity topic that does not match the title: ${crossTopicLeakScenes
+    issues.push(createQaFinding({
+      code: "cross_topic_leak",
+      severity: "issue",
+      message: `Some scenes drift into an unrelated apps/productivity topic that does not match the title: ${crossTopicLeakScenes
         .map((scene) => `scene ${scene.index + 1} (${scene.title}) via ${scene.fillerTokens.join(", ")}`)
-        .join(", ")}. Rewrite those scenes so they stay strictly on the video's real subject.`
-    );
+        .join(", ")}. Rewrite those scenes so they stay strictly on the video's real subject.`,
+      details: {
+        sceneIndexes: crossTopicLeakScenes.map((scene) => scene.index + 1),
+        sceneTitles: crossTopicLeakScenes.map((scene) => scene.title),
+        fillerTokens: crossTopicLeakScenes.flatMap((scene) => scene.fillerTokens)
+      }
+    }));
   }
 
   if (offTopicQueryScenes.length > 0) {
-    issues.push(
-      `Some searchQuery entries introduce unrelated visual domains that do not match their scene narration: ${offTopicQueryScenes
+    issues.push(createQaFinding({
+      code: "off_topic_search_query",
+      severity: "issue",
+      message: `Some searchQuery entries introduce unrelated visual domains that do not match their scene narration: ${offTopicQueryScenes
         .map((scene) => `scene ${scene.index + 1} (${scene.title}) via ${scene.reasons.join(", ")}`)
-        .join(", ")}. Rewrite those queries so they stay on the same exact subject as the narration.`
-    );
+        .join(", ")}. Rewrite those queries so they stay on the same exact subject as the narration.`,
+      details: {
+        sceneIndexes: offTopicQueryScenes.map((scene) => scene.index + 1),
+        sceneTitles: offTopicQueryScenes.map((scene) => scene.title),
+        reasons: offTopicQueryScenes.flatMap((scene) => scene.reasons)
+      }
+    }));
   }
 
   if (hasPostCaptionCta(storyboard)) {
-    issues.push("The postCaption or cta still contains a call to action. Rewrite the caption to stay descriptive and platform-native without asking the viewer to share, save, comment, like, or follow.");
+    issues.push(createQaFinding({
+      code: "caption_contains_cta",
+      severity: "issue",
+      message: "The postCaption or cta still contains a call to action. Rewrite the caption to stay descriptive and platform-native without asking the viewer to share, save, comment, like, or follow."
+    }));
   }
 
   if (hasOffTopicCaptionLeak(storyboard, title)) {
-    issues.push("The postCaption drifts into unrelated generic tech filler instead of the real title topic. Rewrite it so it stays tightly about the same concrete subject as the storyboard.");
+    issues.push(createQaFinding({
+      code: "caption_topic_drift",
+      severity: "issue",
+      message: "The postCaption drifts into unrelated generic tech filler instead of the real title topic. Rewrite it so it stays tightly about the same concrete subject as the storyboard."
+    }));
   }
 
   return issues;
+};
+
+const BLOCKING_QA_CODES = new Set([
+  "readable_interface_text_in_queries",
+  "cross_topic_leak",
+  "off_topic_search_query"
+]);
+
+const partitionQaFindings = (findings = []) => {
+  const blocking = [];
+  const advisory = [];
+
+  for (const finding of Array.isArray(findings) ? findings : []) {
+    if (!finding || typeof finding !== "object") {
+      continue;
+    }
+
+    if (BLOCKING_QA_CODES.has(String(finding.code || ""))) {
+      blocking.push({...finding, severity: "issue"});
+    } else {
+      advisory.push({...finding, severity: "warning"});
+    }
+  }
+
+  return {
+    blocking,
+    advisory
+  };
 };
 
 export const evaluateStoryboardQa = ({
@@ -539,8 +643,12 @@ export const evaluateStoryboardQa = ({
   desiredDurationSeconds = 100,
   scriptGuidance = ""
 }) => {
-  const issues = getStoryboardIssueList({storyboard, title});
-  const warnings = [];
+  const baseFindings = getStoryboardIssueList({storyboard, title});
+  const partitionedFindings = partitionQaFindings(baseFindings);
+  const issueFindings = [...partitionedFindings.blocking];
+  const warningFindings = [...partitionedFindings.advisory];
+  const issues = issueFindings.map((finding) => finding.message);
+  const warnings = warningFindings.map((finding) => finding.message);
   const {minWords, maxWords} = getTargetWordRange(desiredDurationSeconds, language);
   const wordCount = getStoryboardWordCount(storyboard);
   const uppercaseEmphasisTokens = collectUppercaseEmphasisTokens(storyboard);
@@ -549,57 +657,89 @@ export const evaluateStoryboardQa = ({
   const profile = isViralShortformGuidance(scriptGuidance) ? "viral_shortform" : "default";
   let viralScore = null;
 
+  const addIssueFinding = ({code, message, details = {}}) => {
+    issueFindings.push(createQaFinding({code, severity: "issue", message, details}));
+    issues.push(message);
+  };
+
+  const addWarningFinding = ({code, message, details = {}}) => {
+    warningFindings.push(createQaFinding({code, severity: "warning", message, details}));
+    warnings.push(message);
+  };
+
   if (profile === "viral_shortform") {
     viralScore = 100;
 
     if (!hasHardHookStatement(storyboard)) {
       viralScore -= 25;
-      issues.push("The hook still lacks a hard accusatory short-form opening. Rewrite the opening so it hits like a warning, mistake, or immediate danger instead of a soft explainer.");
+      addWarningFinding({
+        code: "viral_hook_not_accusatory",
+        message: "The hook still lacks a hard accusatory short-form opening. Rewrite the opening so it hits like a warning, mistake, or immediate danger instead of a soft explainer."
+      });
     }
 
     if (uppercaseEmphasisTokens.length === 0) {
       viralScore -= 18;
-      warnings.push("Add 2 to 5 impact words in ALL CAPS across the hook and narration so the script carries the channel's emphasis style.");
+      addWarningFinding({
+        code: "viral_all_caps_missing",
+        message: "Add 2 to 5 impact words in ALL CAPS across the hook and narration so the script carries the channel's emphasis style."
+      });
     } else if (uppercaseEmphasisTokens.length === 1) {
       viralScore -= 8;
-      warnings.push("The script uses too little ALL CAPS emphasis for this channel style. Add one or two more impact words.");
+      addWarningFinding({
+        code: "viral_all_caps_sparse",
+        message: "The script uses too little ALL CAPS emphasis for this channel style. Add one or two more impact words."
+      });
     }
 
     if (colloquialReactionLineCount === 0) {
       viralScore -= 15;
-      warnings.push("Add at least one human colloquial reaction line so the script sounds like a smart friend calling out a bad idea.");
+      addWarningFinding({
+        code: "viral_colloquial_reaction_missing",
+        message: "Add at least one human colloquial reaction line so the script sounds like a smart friend calling out a bad idea."
+      });
     }
 
     if (softAdviceLineCount >= 3) {
       viralScore -= 20;
-      issues.push("Too many scenes drift into generic advice or educational explainer tone. Rewrite several lines to sound sharper, more internet-native, and more emotionally charged.");
+      addWarningFinding({
+        code: "viral_soft_advice_drift",
+        message: "Too many scenes drift into generic advice or educational explainer tone. Rewrite several lines to sound sharper, more internet-native, and more emotionally charged."
+      });
     } else if (softAdviceLineCount === 2) {
       viralScore -= 8;
-      warnings.push("Some scenes are drifting into generic advice tone. Keep the pacing punchier and less educational.");
+      addWarningFinding({
+        code: "viral_soft_advice_drift_warning",
+        message: "Some scenes are drifting into generic advice tone. Keep the pacing punchier and less educational."
+      });
     }
 
     if (!hasViralEndingSting(storyboard)) {
       viralScore -= 18;
-      issues.push("The ending still lacks a strong consequence, cost, embarrassment, or cautionary sting. Rewrite the last scene so it lands harder.");
+      addWarningFinding({
+        code: "viral_ending_missing_sting",
+        message: "The ending still lacks a strong consequence, cost, embarrassment, or cautionary sting. Rewrite the last scene so it lands harder."
+      });
     }
 
     if (viralScore < 60) {
-      issues.push("Overall the storyboard still reads too educational for this channel. Rewrite it with more accusation, sharper contrast, stronger spoken rhythm, and clearer fail energy.");
-    }
-
-    const endingIssueIndex = issues.indexOf("The ending still lacks a strong consequence, cost, embarrassment, or cautionary sting. Rewrite the last scene so it lands harder.");
-
-    if (viralScore >= 80 && endingIssueIndex !== -1 && issues.length === 1) {
-      warnings.push("The ending could still hit harder, but the storyboard is strong enough to proceed without blocking image generation.");
-      issues.splice(endingIssueIndex, 1);
+      addWarningFinding({
+        code: "viral_overall_too_educational",
+        message: "Overall the storyboard still reads too educational for this channel. Rewrite it with more accusation, sharper contrast, stronger spoken rhythm, and clearer fail energy."
+      });
     }
   }
 
+  const uniqueIssueFindings = uniqueFindings(issueFindings);
+  const uniqueWarningFindings = uniqueFindings(warningFindings);
+
   return {
-    passed: issues.length === 0,
+    passed: uniqueIssueFindings.length === 0,
     profile,
-    issues: uniqueStrings(issues),
-    warnings: uniqueStrings(warnings),
+    issues: uniqueIssueFindings.map((finding) => finding.message),
+    issueObjects: uniqueIssueFindings,
+    warnings: uniqueWarningFindings.map((finding) => finding.message),
+    warningObjects: uniqueWarningFindings,
     metrics: {
       wordCount,
       minWords,
@@ -1709,7 +1849,7 @@ const buildRepairMessages = ({
   {
     role: "system",
     content:
-      `You are repairing a storyboard that failed strict visual QA. Return valid JSON only. Do not include markdown. ${buildFormatGuidance()}`
+      `You are repairing a storyboard that failed practical QA. Preserve the core creative direction while fixing only the problems that would break the video or pull it off-topic. Return valid JSON only. Do not include markdown. ${buildFormatGuidance()}`
   },
   {
     role: "user",
@@ -1722,22 +1862,16 @@ const buildRepairMessages = ({
       "Repair every issue listed below.",
       ...issues.map((issue, index) => `${index + 1}. ${issue}`),
       ...(warnings.length > 0 ? ["Keep these style nudges in mind:", ...warnings.map((warning, index) => `W${index + 1}. ${warning}`)] : []),
-      "Hard rules:",
-      "- The hook and first scene must not open as a question.",
-      "- Start with a hard statement, warning, accusation, or shocking reveal.",
-      "- Do not repeat the title sentence inside middle scenes.",
-      "- Do not use more than four desk-or-laptop scenes total.",
+      "Keep these constraints only where they matter technically:",
+      "- Keep the same topic and overall progression.",
       "- Keep scenes concrete and visually varied.",
-      "- End with a sharper warning or consequence, not a soft generic wrap-up.",
-      "- Remove any scene that drifts into apps, productivity, translation, summaries, organization, or any unrelated subtopic unless the title explicitly requires that topic.",
       "- Every narration line must be a complete spoken sentence in pt-BR when applicable.",
       "- Every searchQuery must be ASCII English only.",
       "- Every searchQuery must avoid readable text, labels, button copy, email copy, or UI chrome.",
       "- Never include literal UI words like 'Update', 'Login', 'Verify', or quoted button text in any searchQuery.",
-      "- Keep the video specific to the topic, not generic tech filler.",
-      "- Rewrite any scene that introduces an unrelated subtopic, generic app capability, AI productivity feature, translation feature, summary feature, search feature, or organization feature that is not directly tied to the title.",
+      "- Remove only scenes that drift into unrelated topics or generic filler not tied to the title.",
       "- Set cta to an empty string.",
-      "- postCaption must not ask the viewer to share, save, comment, like, follow, or tag anyone.",
+      "- postCaption must stay descriptive and on-topic.",
       ...buildCreativeContextLines({sourceText, scriptGuidance}),
       "Current storyboard JSON:",
       JSON.stringify(storyboard)

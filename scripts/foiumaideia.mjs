@@ -450,8 +450,12 @@ const run = async () => {
 
   if (args.noMusic) {
     runtimeEnv.DEFAULT_MUSIC_FILE = "";
-  } else if (args.musicFile) {
-    runtimeEnv.DEFAULT_MUSIC_FILE = resolvePathFrom(wrapperRoot, args.musicFile);
+    runtimeEnv.DISABLE_BACKGROUND_MUSIC = "true";
+  } else {
+    runtimeEnv.DISABLE_BACKGROUND_MUSIC = "false";
+    runtimeEnv.DEFAULT_MUSIC_FILE = args.musicFile
+      ? resolvePathFrom(wrapperRoot, args.musicFile)
+      : "";
   }
 
   Object.assign(runtimeEnv, {
@@ -563,6 +567,7 @@ const run = async () => {
             GOOGLE_TTS_STYLE_PROMPT: runtimeEnv.GOOGLE_TTS_STYLE_PROMPT || null,
             VIDEO_SCRIPT_GUIDANCE: runtimeEnv.VIDEO_SCRIPT_GUIDANCE || null,
             CHANNEL_HANDLE: runtimeEnv.CHANNEL_HANDLE || null,
+            DISABLE_BACKGROUND_MUSIC: runtimeEnv.DISABLE_BACKGROUND_MUSIC || null,
             DEFAULT_MUSIC_FILE: runtimeEnv.DEFAULT_MUSIC_FILE || null,
             OUTPUT_PROFILE: runtimeEnv.OUTPUT_PROFILE || null,
             RENDER_COMPOSITION_ID: runtimeEnv.RENDER_COMPOSITION_ID || null,
@@ -637,7 +642,7 @@ const run = async () => {
   // --- Vertex image generation step ---
   if (usesVertexImagePipeline()) {
     // Step 1: generate storyboard preview if it doesn't exist
-    if (!storyboardFileArg && (!existsSync(previewStoryboard) || args.force)) {
+    if (!storyboardFileArg && (!args.reusePreview || !existsSync(previewStoryboard) || args.force)) {
       process.stdout.write("[vertex-assets] generating storyboard preview...\n");
       const previewArgs = [
         path.join(projectRoot, "scripts", "make-plan1-video.mjs"),
@@ -709,33 +714,6 @@ const run = async () => {
     }
   }
   // --- end Vertex asset step ---
-  const existingExport = await findExistingExportForTitle({
-    exportDir,
-    title
-  });
-
-  if ((existsSync(exportOutput) || existingExport) && !args.force) {
-    const resolvedExport = existingExport || exportOutput;
-    const lastRun = {
-      title,
-      slug,
-      targetSeconds,
-      generatedAt: new Date().toISOString(),
-      sourceOutput: existsSync(sourceOutput) ? sourceOutput : null,
-      exportOutput: resolvedExport,
-      skipped: true
-    };
-
-    await writeFile(path.join(wrapperRoot, "last-run.json"), JSON.stringify(lastRun, null, 2));
-
-    if (openVideo) {
-      spawnSync("open", [resolvedExport], {stdio: "ignore"});
-    }
-
-    process.stdout.write(`${resolvedExport}\n`);
-    return;
-  }
-
   const result = spawnSync("node", commandArgs, {
     cwd: projectRoot,
     stdio: "inherit",

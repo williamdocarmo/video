@@ -97,6 +97,64 @@ export const generateVertexImage = async ({
   aspectRatio = "9:16",
   numberOfImages = 1
 }) => {
+  if (String(model || "").trim().startsWith("imagen-")) {
+    const config = resolveGcpConfig(process.env);
+    const accessToken = await getGcpAccessToken();
+    const endpoint =
+      `https://${config.location}-aiplatform.googleapis.com/v1/projects/${config.projectId}` +
+      `/locations/${config.location}/publishers/google/models/${model}:predict`;
+
+    const body = {
+      instances: [
+        {
+          prompt: normalizeText(prompt)
+        }
+      ],
+      parameters: {
+        sampleCount: Math.max(1, Number(numberOfImages) || 1),
+        aspectRatio,
+        sampleImageSize: "1K",
+        personGeneration: "allow_all",
+        safetySetting: "block_medium_and_above",
+        enhancePrompt: false,
+        addWatermark: false,
+        outputOptions: {
+          mimeType: "image/png"
+        }
+      }
+    };
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const details = normalizeText(JSON.stringify(payload));
+      throw new Error(`Vertex image predict failed (${response.status}): ${details.slice(0, 300)}`);
+    }
+
+    const prediction = Array.isArray(payload?.predictions) ? payload.predictions[0] : null;
+    const mimeType = String(prediction?.mimeType || "image/png").trim().toLowerCase();
+    const data = String(prediction?.bytesBase64Encoded || "").trim();
+
+    if (!data) {
+      throw new Error("Vertex image response did not include image bytes.");
+    }
+
+    return {
+      payload,
+      mimeType,
+      bytes: Buffer.from(data, "base64")
+    };
+  }
+
   const config = resolveGcpConfig(process.env);
   const accessToken = await getGcpAccessToken();
   const endpoint =

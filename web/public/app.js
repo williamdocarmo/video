@@ -19,9 +19,13 @@ const state = {
   logAutoFollow: true,
   stream: null,
   streamJobId: null,
+  streamReconnectTimer: null,
   previewCache: new Map(),
   loadingPreviewIds: new Set()
 };
+
+const DEFAULT_REFRESH_INTERVAL_MS = 20000;
+const ACTIVE_JOB_REFRESH_INTERVAL_MS = 5000;
 
 const languageOptions = [
   {label: "Português (Brasil)", value: "pt-BR"},
@@ -41,6 +45,8 @@ const elements = {
   generateValidationHint: document.querySelector("#generateValidationHint"),
   outputProfileHint: document.querySelector("#outputProfileHint"),
   durationHint: document.querySelector("#durationHint"),
+  imageModelHint: document.querySelector("#imageModelHint"),
+  imageModelCost: document.querySelector("#imageModelCost"),
   imageStyleHint: document.querySelector("#imageStyleHint"),
   imageStylePreview: document.querySelector("#imageStylePreview"),
   imageStylePreviewLabel: document.querySelector("#imageStylePreviewLabel"),
@@ -59,13 +65,22 @@ const elements = {
   jobType: document.querySelector("#jobType"),
   jobTitle: document.querySelector("#jobTitle"),
   jobMeta: document.querySelector("#jobMeta"),
+  jobProgressMeta: document.querySelector("#jobProgressMeta"),
   jobStatus: document.querySelector("#jobStatus"),
   jobLog: document.querySelector("#jobLog"),
   jobOutputLink: document.querySelector("#jobOutputLink"),
   jobStoryboardLink: document.querySelector("#jobStoryboardLink"),
   jobFailureSummary: document.querySelector("#jobFailureSummary"),
+  jobRecommendedLabel: document.querySelector("#jobRecommendedLabel"),
+  jobRecommendedDetails: document.querySelector("#jobRecommendedDetails"),
+  jobStepChecklist: document.querySelector("#jobStepChecklist"),
   jobActions: document.querySelector("#jobActions"),
   resumeJobButton: document.querySelector("#resumeJobButton"),
+  regenerateSceneButton: document.querySelector("#regenerateSceneButton"),
+  generateAudioButton: document.querySelector("#generateAudioButton"),
+  renderOnlyButton: document.querySelector("#renderOnlyButton"),
+  validateJobButton: document.querySelector("#validateJobButton"),
+  forceFailJobButton: document.querySelector("#forceFailJobButton"),
   previewPanel: document.querySelector("#previewPanel"),
   previewSummary: document.querySelector("#previewSummary"),
   previewScenes: document.querySelector("#previewScenes"),
@@ -76,6 +91,7 @@ const elements = {
   logsDetails: document.querySelector("#logsDetails"),
   logsTitle: document.querySelector("#logsTitle"),
   logsMeta: document.querySelector("#logsMeta"),
+  logsProgressMeta: document.querySelector("#logsProgressMeta"),
   logsStatus: document.querySelector("#logsStatus"),
   logsOutputLink: document.querySelector("#logsOutputLink"),
   logsStoryboardLink: document.querySelector("#logsStoryboardLink"),
@@ -116,7 +132,10 @@ const elements = {
   failedJobMeta: document.querySelector("#failedJobMeta"),
   failedJobStatus: document.querySelector("#failedJobStatus"),
   failedJobError: document.querySelector("#failedJobError"),
+  failedJobRecommendedLabel: document.querySelector("#failedJobRecommendedLabel"),
+  failedJobRecommendedDetails: document.querySelector("#failedJobRecommendedDetails"),
   failedJobStoryboardLink: document.querySelector("#failedJobStoryboardLink"),
+  failedJobActions: document.querySelector("#failedJobActions"),
   retryFailedJobButton: document.querySelector("#retryFailedJobButton")
 };
 
@@ -137,6 +156,22 @@ const fetchJson = async (url, options) => {
   }
 
   return payload;
+};
+
+const getJobTypeLabel = (job) => {
+  if (!job) {
+    return "generate";
+  }
+
+  if (job.type === "generate") {
+    return job.input?.previewOnly ? "preview" : "generate";
+  }
+
+  if (job.type === "rerender") {
+    return "rerender-voice";
+  }
+
+  return job.type;
 };
 
 const findOptionLabel = (options, value, fallback = "") => {
@@ -173,8 +208,9 @@ const renderVideoCreationParams = (video) => {
     {label: "Idioma", value: findOptionLabel(languageOptions, params.language, params.language)},
     {label: "Formato", value: findOptionLabel(state.config?.outputProfiles, params.outputProfile, params.outputProfile)},
     {label: "Duração", value: params.targetSeconds ? `${params.targetSeconds}s` : ""},
+    {label: "Modelo de imagem", value: findOptionLabel(state.config?.imageModels, params.imageModel, params.imageModel)},
     {label: "Estilo de imagem", value: findOptionLabel(state.config?.imageStyles, params.imageStyle, params.imageStyle)},
-    {label: "Estilo de roteiro", value: findOptionLabel(state.config?.tonePresets, params.tone, params.tone)},
+    {label: "Estilo de roteiro", value: findOptionLabel(state.config?.tones, params.tone, params.tone)},
     {label: "Voz", value: findOptionLabel(state.config?.voices, params.voice, params.voice)},
     {label: "Canal", value: params.channelHandle || findOptionLabel(state.config?.channels, params.channel, params.channel)},
     {label: "Forçar regeneração", value: params.force ? "Sim" : "Não"},
@@ -220,6 +256,29 @@ const formatBytes = (value) => {
   return `${current >= 10 || index === 0 ? current.toFixed(0) : current.toFixed(1)} ${units[index]}`;
 };
 
+const formatElapsed = (value) => {
+  const milliseconds = Number(value || 0);
+
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) {
+    return "";
+  }
+
+  const totalSeconds = Math.max(1, Math.round(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  }
+
+  return `${seconds}s`;
+};
+
 const toDateTimeLocalValue = (value) => {
   const date = new Date(value);
 
@@ -244,6 +303,9 @@ const toDateTimeLocalValue = (value) => {
 const getImageStyleMeta = (styleId) =>
   state.config?.imageStyles?.find((item) => item.value === styleId) || null;
 
+const getImageModelMeta = (modelId) =>
+  state.config?.imageModels?.find((item) => item.value === modelId) || null;
+
 const getChannelMeta = (channelId) =>
   state.config?.channels?.find((item) => item.value === channelId) || null;
 
@@ -261,6 +323,93 @@ const getOutputProfileMeta = (profileId) =>
 const getJobById = (jobId) => state.jobs.find((job) => job.id === jobId) || null;
 const getVideoById = (videoId) => state.videos.find((video) => video.id === videoId) || null;
 const getFailedJobById = (jobId) => state.failedJobs.find((job) => job.id === jobId) || null;
+
+const JOB_FAILURE_STAGE_LABELS = {
+  "timestamp-extraction": "Extração de timestamps",
+  render: "Renderização",
+  qa: "Validação QA",
+  audio: "Áudio",
+  pipeline: "Pipeline"
+};
+
+const normalizeText = (value) => String(value ?? "").trim();
+
+const getJobFailureStage = (job) => normalizeText(job?.failureStage || job?.stage || job?.currentStage || "");
+
+const getJobFailureStageLabel = (job) => {
+  const explicitLabel = normalizeText(
+    job?.failureStageLabel ||
+    job?.stageLabel ||
+    job?.currentStageLabel ||
+    job?.failureStageName ||
+    job?.stageName
+  );
+
+  if (explicitLabel) {
+    return explicitLabel;
+  }
+
+  const stage = getJobFailureStage(job);
+
+  if (!stage) {
+    return "";
+  }
+
+  return JOB_FAILURE_STAGE_LABELS[stage] || stage.replace(/-/g, " ");
+};
+
+const getJobFailureRca = (job) =>
+  normalizeText(
+    job?.failureRca ||
+    job?.rca ||
+    job?.rootCause ||
+    job?.rootCauseAnalysis ||
+    job?.rootCauseSummary ||
+    job?.analysis?.rootCause ||
+    job?.failureDiagnosis
+  );
+
+const getJobNextRecommendedAction = (job) =>
+  normalizeText(
+    job?.recommendedAction?.label ||
+    job?.recommendedAction?.details ||
+    job?.nextRecommendedAction ||
+    job?.recommendedAction ||
+    job?.nextAction ||
+    job?.failureAction ||
+    job?.recommendedNextStep ||
+    job?.actionRecommendation ||
+    job?.repairAction ||
+    job?.nextStep
+  );
+
+const getJobFailureDetailsHtml = (job) => {
+  const pieces = [];
+  const stageLabel = getJobFailureStageLabel(job);
+  const rca = getJobFailureRca(job);
+  const nextAction = getJobNextRecommendedAction(job);
+  const fallbackSummary = normalizeText(job?.failureSummary || job?.error || "");
+
+  if (stageLabel) {
+    pieces.push(`<strong>Etapa</strong>: ${escapeHtml(stageLabel)}`);
+  }
+
+  if (rca) {
+    pieces.push(`<strong>RCA</strong>: ${escapeHtml(rca)}`);
+  } else if (fallbackSummary) {
+    pieces.push(`<strong>Falha</strong>: ${escapeHtml(fallbackSummary)}`);
+  }
+
+  if (rca && fallbackSummary && fallbackSummary !== rca) {
+    pieces.push(`<strong>Detalhe</strong>: ${escapeHtml(fallbackSummary)}`);
+  }
+
+  if (nextAction) {
+    pieces.push(`<strong>Ação sugerida</strong>: ${escapeHtml(nextAction)}`);
+  }
+
+  return pieces.join("<br>");
+};
 
 const getSelectedPublishMode = () => {
   const selected = elements.videoMetaForm?.querySelector('input[name="publishMode"]:checked');
@@ -384,6 +533,21 @@ const syncImageStylePreview = (styleId) => {
   }
 };
 
+const syncImageModelHint = (modelId) => {
+  const selected = getImageModelMeta(modelId);
+
+  if (elements.imageModelHint) {
+    const parts = [selected?.badge, selected?.description].filter(Boolean);
+    elements.imageModelHint.textContent = parts.join(" • ");
+  }
+
+  if (elements.imageModelCost) {
+    const costText = [selected?.costLabel, selected?.costDetail].filter(Boolean).join(" • ");
+    elements.imageModelCost.textContent = costText;
+    elements.imageModelCost.classList.toggle("hidden", !costText);
+  }
+};
+
 const getJobQueueLane = (job) => {
   if (!job) {
     return "heavy";
@@ -398,13 +562,25 @@ const getJobQueueLane = (job) => {
 
 const getQueueLaneLabel = (lane) => (lane === "preview" ? "roteiro" : "render");
 
+const getJobStageLabel = (job) => {
+  if (!job) {
+    return "";
+  }
+
+  if (job.status === "failed") {
+    return getJobFailureStageLabel(job) || job.failureStage || "falha";
+  }
+
+  return job.stage?.label || getQueueLaneLabel(getJobQueueLane(job));
+};
+
 const getJobFailureLabel = (job) => {
   if (!job || job.status !== "failed") {
     return "";
   }
 
-  const stage = job.failureStage ? `etapa ${job.failureStage}` : "falha";
-  const summary = job.failureSummary || job.error || "sem detalhe";
+  const stage = getJobFailureStageLabel(job) || getJobFailureStage(job) || "falha";
+  const summary = getJobFailureRca(job) || job.failureSummary || job.error || "sem detalhe";
   return `${stage}: ${summary}`;
 };
 
@@ -416,16 +592,164 @@ const getJobMetaLine = (job) => {
   const outputProfile = getOutputProfileMeta(job.input?.outputProfile);
   return [
     job.slug,
-    getQueueLaneLabel(getJobQueueLane(job)),
+    getJobStageLabel(job),
     job.input?.channelHandle || null,
     job.input?.language || null,
     outputProfile ? outputProfile.label : null,
     job.input?.targetSeconds ? `${job.input.targetSeconds}s` : null,
     job.queuePosition ? `${getQueueLaneLabel(getJobQueueLane(job))} ${job.queuePosition}` : null,
-    job.failureStage ? `falha: ${job.failureStage}` : null
+    job.heartbeatAt ? `atividade ${formatDateTime(job.heartbeatAt)}` : null,
+    job.status === "failed" ? `falha: ${getJobFailureStageLabel(job) || getJobFailureStage(job) || "falha"}` : null
   ]
     .filter(Boolean)
     .join(" • ");
+};
+
+const getChecklistStep = (job, key) =>
+  (Array.isArray(job?.stepChecklist) ? job.stepChecklist : []).find((step) => step.key === key) || null;
+
+const extractSceneCount = (job) => {
+  const candidates = [
+    getChecklistStep(job, "storyboard")?.detail,
+    getChecklistStep(job, "assets")?.detail
+  ].filter(Boolean);
+
+  for (const text of candidates) {
+    const match = String(text).match(/(\d+)\s+cenas?|\bTodos os\s+(\d+)\s+clips?/i);
+    const value = Number(match?.[1] || match?.[2] || 0);
+
+    if (Number.isInteger(value) && value > 0) {
+      return value;
+    }
+  }
+
+  return 0;
+};
+
+const extractMissingSceneNumber = (job) => {
+  const explicit = Number(job?.nextMissingSceneNumber || 0);
+  if (Number.isInteger(explicit) && explicit > 0) {
+    return explicit;
+  }
+
+  const detail = getChecklistStep(job, "assets")?.detail || "";
+  const match = String(detail).match(/Falta a cena\s+(\d+)/i);
+  const value = Number(match?.[1] || 0);
+  return Number.isInteger(value) && value > 0 ? value : null;
+};
+
+const extractRenderProgress = (job) => {
+  const logLines = Array.isArray(job?.logTail) ? [...job.logTail].reverse() : [];
+
+  for (const line of logLines) {
+    const match = String(line).match(/Rendered\s+(\d+)\s*\/\s*(\d+)/i);
+    const done = Number(match?.[1] || 0);
+    const total = Number(match?.[2] || 0);
+
+    if (total > 0 && done >= 0) {
+      return {
+        done,
+        total,
+        ratio: Math.max(0, Math.min(1, done / total))
+      };
+    }
+  }
+
+  return null;
+};
+
+const getStepCompletionRatio = (job, key) => {
+  const step = getChecklistStep(job, key);
+  const status = String(step?.status || "missing");
+
+  if (status === "completed") {
+    return 1;
+  }
+
+  if (key === "assets") {
+    const totalScenes = extractSceneCount(job);
+    const missingScene = extractMissingSceneNumber(job);
+
+    if (totalScenes > 0 && Number.isInteger(missingScene) && missingScene > 0) {
+      return Math.max(0, Math.min(1, (missingScene - 1) / totalScenes));
+    }
+  }
+
+  if (key === "render") {
+    const renderProgress = extractRenderProgress(job);
+
+    if (renderProgress) {
+      return renderProgress.ratio;
+    }
+
+    const logSignal = (Array.isArray(job?.logTail) ? job.logTail : []).join("\n").toLowerCase();
+    if (logSignal.includes("a renderizar no remotion") || logSignal.includes("getting composition")) {
+      return 0.04;
+    }
+  }
+
+  if (key === "timestamps") {
+    const logSignal = (Array.isArray(job?.logTail) ? job.logTail : []).join("\n").toLowerCase();
+    if (logSignal.includes("karaoke") || logSignal.includes("speech-to-text") || logSignal.includes("timestamps")) {
+      return 0.55;
+    }
+  }
+
+  if (key === "audio") {
+    const logSignal = (Array.isArray(job?.logTail) ? job.logTail : []).join("\n").toLowerCase();
+    if (logSignal.includes("a gerar voz") || logSignal.includes("voiceover")) {
+      return 0.35;
+    }
+  }
+
+  if (status === "ready") {
+    return 0;
+  }
+
+  if (status === "partial") {
+    return 0.55;
+  }
+
+  return 0;
+};
+
+const getJobProgressInfo = (job) => {
+  if (!job) {
+    return {percent: null, text: ""};
+  }
+
+  if (job.status === "completed") {
+    return {percent: 100, text: "100% • concluído"};
+  }
+
+  const weights = {
+    storyboard: 10,
+    assets: 45,
+    audio: 15,
+    timestamps: 10,
+    render: 15,
+    qa: 5
+  };
+
+  const weightedTotal = Object.values(weights).reduce((sum, item) => sum + item, 0);
+  const weightedProgress = Object.entries(weights).reduce(
+    (sum, [key, weight]) => sum + getStepCompletionRatio(job, key) * weight,
+    0
+  );
+
+  const percent = Math.max(0, Math.min(100, Math.round((weightedProgress / weightedTotal) * 100)));
+  const startedAt = job.startedAt ? new Date(job.startedAt).getTime() : 0;
+  const heartbeatAt = job.heartbeatAt ? new Date(job.heartbeatAt).getTime() : 0;
+  const now = Date.now();
+  const elapsedText = startedAt ? `criando há ${formatElapsed(now - startedAt)}` : "";
+  const activityText = heartbeatAt ? `última atividade há ${formatElapsed(now - heartbeatAt)}` : "";
+  const renderProgress = extractRenderProgress(job);
+  const renderText = renderProgress ? `render ${renderProgress.done}/${renderProgress.total}` : "";
+
+  return {
+    percent,
+    text: [percent !== null ? `${percent}%` : "", elapsedText, activityText, renderText].filter(Boolean).join(" • ")
+  };
 };
 
 const isLogPinnedToBottom = (log = elements.jobLog) => {
@@ -453,19 +777,66 @@ const maybeFollowLog = (log, shouldFollow) => {
   });
 };
 
+const getJobFreshnessScore = (job) => {
+  if (!job) {
+    return 0;
+  }
+
+  const candidates = [
+    job.updatedAt,
+    job.heartbeatAt,
+    job.completedAt,
+    job.startedAt,
+    job.createdAt
+  ]
+    .map((value) => new Date(value || 0).getTime())
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  return candidates.length > 0 ? Math.max(...candidates) : 0;
+};
+
+const shouldReplaceJob = (currentJob, nextJob) => {
+  if (!currentJob) {
+    return true;
+  }
+
+  const currentScore = getJobFreshnessScore(currentJob);
+  const nextScore = getJobFreshnessScore(nextJob);
+
+  if (nextScore > currentScore) {
+    return true;
+  }
+
+  if (nextScore < currentScore) {
+    return false;
+  }
+
+  const currentLogLength = Array.isArray(currentJob.logTail) ? currentJob.logTail.length : 0;
+  const nextLogLength = Array.isArray(nextJob.logTail) ? nextJob.logTail.length : 0;
+
+  return nextLogLength >= currentLogLength;
+};
+
 const upsertJob = (job) => {
   const index = state.jobs.findIndex((item) => item.id === job.id);
 
   if (index === -1) {
     state.jobs.unshift(job);
   } else {
-    state.jobs[index] = job;
+    if (shouldReplaceJob(state.jobs[index], job)) {
+      state.jobs[index] = job;
+    }
   }
 
   state.jobs.sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
 };
 
 const closeStream = () => {
+  if (state.streamReconnectTimer) {
+    clearTimeout(state.streamReconnectTimer);
+    state.streamReconnectTimer = null;
+  }
+
   if (state.stream) {
     state.stream.close();
   }
@@ -495,6 +866,13 @@ const connectStream = (jobId) => {
 
   state.stream.onerror = () => {
     closeStream();
+
+    state.streamReconnectTimer = window.setTimeout(() => {
+      const currentJob = getJobById(jobId);
+      if (currentJob && (currentJob.status === "queued" || currentJob.status === "running")) {
+        connectStream(jobId);
+      }
+    }, 3000);
   };
 };
 
@@ -633,11 +1011,14 @@ const renderSelectedJob = () => {
 
   const shouldFollowLog = state.logAutoFollow || isLogPinnedToBottom(elements.jobLog);
 
-  elements.jobType.textContent = job.type === "rerender" ? "rerender-voice" : job.input.previewOnly ? "preview" : "generate";
+  elements.jobType.textContent = getJobTypeLabel(job);
   elements.jobTitle.textContent = job.title;
   elements.jobStatus.textContent = job.status;
   elements.jobStatus.dataset.state = job.status;
   elements.jobMeta.textContent = getJobMetaLine(job);
+  if (elements.jobProgressMeta) {
+    elements.jobProgressMeta.textContent = getJobProgressInfo(job).text || "";
+  }
   elements.jobLog.textContent = (job.logTail || []).join("\n");
   maybeFollowLog(elements.jobLog, shouldFollowLog);
 
@@ -658,16 +1039,90 @@ const renderSelectedJob = () => {
 
   const failureLabel = getJobFailureLabel(job);
   if (failureLabel) {
-    elements.jobFailureSummary.textContent = failureLabel;
+    elements.jobFailureSummary.innerHTML = getJobFailureDetailsHtml(job) || escapeHtml(failureLabel);
     elements.jobFailureSummary.classList.remove("hidden");
   } else {
     elements.jobFailureSummary.textContent = "";
     elements.jobFailureSummary.classList.add("hidden");
   }
 
+  if (elements.jobRecommendedLabel) {
+    elements.jobRecommendedLabel.textContent = job.recommendedAction?.label || "Acompanhar execução";
+  }
+  if (elements.jobRecommendedDetails) {
+    elements.jobRecommendedDetails.textContent = job.recommendedAction?.details || "A próxima ação é calculada a partir dos artefatos reais do run.";
+  }
+
+  if (elements.jobStepChecklist) {
+    const steps = Array.isArray(job.stepChecklist) ? job.stepChecklist : [];
+    elements.jobStepChecklist.innerHTML = steps.length > 0
+      ? steps.map((step) => `
+          <div class="step-checklist-item">
+            <span class="step-checklist-badge" data-step-status="${escapeHtml(step.status || "missing")}">${escapeHtml(step.status || "missing")}</span>
+            <div class="step-checklist-copy">
+              <strong>${escapeHtml(step.label || step.key || "Etapa")}</strong>
+              <p>${escapeHtml(step.detail || "")}</p>
+            </div>
+          </div>
+        `).join("")
+      : '<div class="history-item muted">Sem checklist disponível para este job.</div>';
+  }
+
   const canResume = job.resumeAvailable !== false && job.type === "generate" && job.status === "failed" && !job.input.previewOnly;
-  elements.jobActions.classList.toggle("hidden", !canResume);
+  const canRegenerateScene =
+    job.sceneRegenerateAvailable === true &&
+    !job.input.previewOnly;
+  const canGenerateAudio = job.audioPrepAvailable === true && !job.input.previewOnly;
+  const canRenderOnly = job.renderOnlyAvailable === true && !job.input.previewOnly;
+  const canValidateOnly = job.validateOnlyAvailable === true && !job.input.previewOnly;
+  const canForceFail = job.forceFailAvailable === true;
+  const primaryActionValue = String(job.recommendedAction?.value || "").trim();
+
+  const actionButtons = [
+    elements.resumeJobButton,
+    elements.regenerateSceneButton,
+    elements.generateAudioButton,
+    elements.renderOnlyButton,
+    elements.validateJobButton,
+    elements.forceFailJobButton
+  ].filter(Boolean);
+  actionButtons.forEach((button) => button.classList.add("hidden"));
+
   elements.resumeJobButton.disabled = !canResume;
+  elements.resumeJobButton.title = canResume ? "" : "Retomada automática indisponível para este job.";
+  elements.regenerateSceneButton.disabled = !canRegenerateScene;
+  elements.regenerateSceneButton.title = canRegenerateScene ? "" : "Disponível apenas quando houver uma cena faltante detectada.";
+  elements.regenerateSceneButton.textContent = canRegenerateScene && Number.isInteger(job.nextMissingSceneNumber)
+    ? `Regenerar cena ${job.nextMissingSceneNumber}`
+    : "Regenerar cena faltante";
+  elements.generateAudioButton.disabled = !canGenerateAudio;
+  elements.generateAudioButton.title = canGenerateAudio ? "" : "Disponível quando storyboard, cenas e render-props já existem.";
+  elements.renderOnlyButton.disabled = !canRenderOnly;
+  elements.renderOnlyButton.title = canRenderOnly ? "" : "Disponível quando as cenas e o áudio final já existem.";
+  elements.validateJobButton.disabled = !canValidateOnly;
+  elements.validateJobButton.title = canValidateOnly ? "" : "Disponível quando o MP4 final já existe.";
+  elements.forceFailJobButton.disabled = !canForceFail;
+  elements.forceFailJobButton.title = canForceFail ? "" : "Disponível apenas para jobs queued ou running.";
+
+  let visibleActionButton = null;
+  if (primaryActionValue === "resume-rebuild" && canResume) {
+    visibleActionButton = elements.resumeJobButton;
+  } else if (primaryActionValue === "regenerate-missing-scene" && canRegenerateScene) {
+    visibleActionButton = elements.regenerateSceneButton;
+  } else if (primaryActionValue === "generate-audio" && canGenerateAudio) {
+    visibleActionButton = elements.generateAudioButton;
+  } else if (primaryActionValue === "render-only" && canRenderOnly) {
+    visibleActionButton = elements.renderOnlyButton;
+  } else if (primaryActionValue === "validate-only" && canValidateOnly) {
+    visibleActionButton = elements.validateJobButton;
+  } else if (primaryActionValue === "force-fail" && canForceFail) {
+    visibleActionButton = elements.forceFailJobButton;
+  }
+
+  if (visibleActionButton) {
+    visibleActionButton.classList.remove("hidden");
+  }
+  elements.jobActions.classList.toggle("hidden", !visibleActionButton);
 
   const isPreviewReady =
     job.type === "generate" &&
@@ -708,10 +1163,11 @@ const renderLogsJobsList = () => {
   elements.logsJobsList.innerHTML = state.jobs
     .map((job) => {
       const activeClass = job.id === state.selectedJobId ? " active" : "";
+      const stageLabel = getJobStageLabel(job);
       return `
         <button class="history-item video-item${activeClass}" data-logs-job-id="${escapeHtml(job.id)}">
           <span class="history-title">${escapeHtml(job.title || job.slug || job.id)}</span>
-          <span class="history-meta">${escapeHtml(job.status || "")} • ${escapeHtml(getQueueLaneLabel(getJobQueueLane(job)))} • ${escapeHtml(formatDateTime(job.createdAt))}</span>
+          <span class="history-meta">${escapeHtml(job.status || "")} • ${escapeHtml(stageLabel)} • ${escapeHtml(formatDateTime(job.createdAt))}</span>
         </button>
       `;
     })
@@ -749,6 +1205,9 @@ const renderLogsPanel = () => {
   elements.logsDetails.classList.remove("hidden");
   elements.logsTitle.textContent = job.title || job.slug || "Job";
   elements.logsMeta.textContent = getJobMetaLine(job);
+  if (elements.logsProgressMeta) {
+    elements.logsProgressMeta.textContent = getJobProgressInfo(job).text || "";
+  }
   elements.logsStatus.textContent = job.status;
   elements.logsStatus.dataset.state = job.status;
   const shouldFollowLog = state.logAutoFollow || isLogPinnedToBottom(elements.logsJobLog);
@@ -757,7 +1216,7 @@ const renderLogsPanel = () => {
 
   const failureLabel = getJobFailureLabel(job);
   if (failureLabel) {
-    elements.logsFailureSummary.textContent = failureLabel;
+    elements.logsFailureSummary.innerHTML = getJobFailureDetailsHtml(job) || escapeHtml(failureLabel);
     elements.logsFailureSummary.classList.remove("hidden");
   } else {
     elements.logsFailureSummary.textContent = "";
@@ -790,11 +1249,13 @@ const renderJobs = () => {
     .slice(0, 6)
     .map((job) => {
       const activeClass = job.id === state.selectedJobId ? " active" : "";
+      const stageLabel = getJobStageLabel(job);
 
       return `
         <button class="history-item${activeClass}" data-job-id="${escapeHtml(job.id)}">
           <span class="history-title">${escapeHtml(job.title)}</span>
-          <span class="history-meta">${escapeHtml(job.status)} • ${escapeHtml(job.failureStage || getQueueLaneLabel(getJobQueueLane(job)))} • ${escapeHtml(job.slug)}</span>
+          <span class="history-meta">${escapeHtml(job.status)} • ${escapeHtml(stageLabel)} • ${escapeHtml(job.slug)}</span>
+          ${job.status === "failed" ? `<span class="history-meta">${escapeHtml(getJobFailureRca(job) || job.failureSummary || job.error || "Falha sem RCA disponível.")}</span>` : ""}
         </button>
       `;
     })
@@ -884,10 +1345,14 @@ const renderFailedJobs = () => {
   elements.failedJobsList.innerHTML = state.failedJobs
     .map((job) => {
       const activeClass = state.selectedLibraryKind === "failed" && job.id === state.selectedFailedJobId ? " active" : "";
+      const failureStageLabel = getJobFailureStageLabel(job) || job.failureStage || "pipeline";
+      const rca = getJobFailureRca(job) || job.failureSummary || job.error || "";
+      const nextAction = getJobNextRecommendedAction(job);
       return `
         <button class="history-item video-item${activeClass}" data-failed-job-id="${escapeHtml(job.id)}">
           <span class="history-title">${escapeHtml(job.title || job.slug)}</span>
-          <span class="history-meta">${escapeHtml(job.channelHandle || job.channel || "")} • ${escapeHtml(job.failureStage || "pipeline")} • ${escapeHtml(job.targetSeconds ? `${job.targetSeconds}s` : "")}</span>
+          <span class="history-meta">${escapeHtml(job.channelHandle || job.channel || "")} • ${escapeHtml(failureStageLabel)} • ${escapeHtml(job.targetSeconds ? `${job.targetSeconds}s` : "")}</span>
+          <span class="history-meta">${escapeHtml(rca || nextAction || "Falha sem RCA disponível.")}</span>
           <span class="history-meta">${escapeHtml(formatDateTime(job.createdAt))}</span>
         </button>
       `;
@@ -957,7 +1422,11 @@ const renderSelectedVideo = () => {
     .filter(Boolean)
     .join(" • ");
 
-  const publishStatus = video.lastPublishStatus || (video.publishedAt ? "published" : video.scheduleAt ? "ready" : "local");
+  const publishStatus =
+    video.publishStatus ||
+    video.state?.key ||
+    video.lastPublishStatus ||
+    (video.publishedAt ? "published" : video.scheduleAt ? "ready" : "local");
   elements.videoPublishStatus.textContent = publishStatus;
   elements.videoPublishStatus.dataset.state = publishStatus === "scheduled" || publishStatus === "published" ? "completed" : "";
 
@@ -1022,7 +1491,7 @@ const renderSelectedFailedJob = () => {
   elements.failedJobTitle.textContent = job.title || job.slug || "Job falhado";
   elements.failedJobMeta.textContent = [
     job.slug,
-    job.failureStage || "pipeline",
+    getJobFailureStageLabel(job) || job.failureStage || "pipeline",
     job.outputProfile || null,
     job.targetSeconds ? `${job.targetSeconds}s` : null,
     formatDateTime(job.createdAt)
@@ -1031,7 +1500,13 @@ const renderSelectedFailedJob = () => {
     .join(" • ");
   elements.failedJobStatus.textContent = "failed";
   elements.failedJobStatus.dataset.state = "failed";
-  elements.failedJobError.textContent = job.failureSummary || job.error || "Falhou sem detalhe adicional.";
+  elements.failedJobError.innerHTML = getJobFailureDetailsHtml(job) || escapeHtml(job.failureSummary || job.error || "Falhou sem detalhe adicional.");
+  if (elements.failedJobRecommendedLabel) {
+    elements.failedJobRecommendedLabel.textContent = job.recommendedAction?.label || "Revisar storyboard e seguir a recuperação segura.";
+  }
+  if (elements.failedJobRecommendedDetails) {
+    elements.failedJobRecommendedDetails.textContent = job.recommendedAction?.details || "O painel de falhados reaproveita a recomendação calculada a partir dos artefatos reais do run.";
+  }
 
   if (job.storyboardUrl) {
     elements.failedJobStoryboardLink.href = job.storyboardUrl;
@@ -1040,7 +1515,15 @@ const renderSelectedFailedJob = () => {
     elements.failedJobStoryboardLink.classList.add("hidden");
   }
 
-  elements.retryFailedJobButton.disabled = job.retryFromStoryboardAvailable !== true;
+  const canRetryFromStoryboard =
+    job.retryFromStoryboardAvailable === true &&
+    String(job.recommendedAction?.value || "").trim() === "retry-from-storyboard";
+  elements.retryFailedJobButton.disabled = !canRetryFromStoryboard;
+  elements.retryFailedJobButton.title = canRetryFromStoryboard
+    ? ""
+    : "Use o painel principal do job quando a recuperação recomendada não for refazer do storyboard.";
+  elements.retryFailedJobButton.textContent = job.recommendedAction?.label || "Refazer este job";
+  elements.failedJobActions?.classList.toggle("hidden", !canRetryFromStoryboard);
 };
 
 const renderSelectedLibraryItem = () => {
@@ -1173,6 +1656,7 @@ const applyChannelPresetToForm = (channelId) => {
   const toneSelect = document.querySelector("#generateTone");
   const languageSelect = document.querySelector("#generateLanguage");
   const voiceSelect = document.querySelector("#generateVoice");
+  const imageModelSelect = document.querySelector("#generateImageModel");
   const imageStyleSelect = document.querySelector("#generateImageStyle");
   const profileSelect = document.querySelector("#generateOutputProfile");
   const customStyleInput = elements.generateForm?.querySelector('input[name="customStylePrompt"]');
@@ -1192,6 +1676,10 @@ const applyChannelPresetToForm = (channelId) => {
       preset.voice ||
       getPreferredVoiceForLanguage(language);
     syncVoiceOptionsForLanguage(language, presetVoice);
+  }
+
+  if (imageModelSelect && preset.imageModel) {
+    imageModelSelect.value = preset.imageModel;
   }
 
   if (imageStyleSelect && preset.imageStyle) {
@@ -1245,6 +1733,7 @@ const loadConfig = async () => {
 
   fillSelect(document.querySelector("#generateLanguage"), languageOptions, payload.defaults.language);
   fillSelect(document.querySelector("#generateOutputProfile"), payload.outputProfiles, payload.defaults.outputProfile);
+  fillSelect(document.querySelector("#generateImageModel"), payload.imageModels || [], payload.defaults.imageModel);
   fillSelect(document.querySelector("#generateImageStyle"), payload.imageStyles, payload.defaults.imageStyle);
   fillSelect(document.querySelector("#generateChannel"), payload.channels, payload.defaults.channel);
   fillSelect(document.querySelector("#generateTone"), payload.tones, payload.defaults.tone);
@@ -1270,6 +1759,10 @@ const loadConfig = async () => {
     syncImageStylePreview(document.querySelector("#generateImageStyle")?.value);
   };
 
+  const syncImageModelField = () => {
+    syncImageModelHint(document.querySelector("#generateImageModel")?.value || payload.defaults.imageModel);
+  };
+
   const syncProfileHints = () => {
     const profile = getOutputProfileMeta(document.querySelector("#generateOutputProfile")?.value);
     const durationSelect = document.querySelector("#generateDuration");
@@ -1288,6 +1781,7 @@ const loadConfig = async () => {
     elements.toneHint.textContent = selected?.description || "";
   };
 
+  document.querySelector("#generateImageModel")?.addEventListener("change", syncImageModelField);
   document.querySelector("#generateImageStyle")?.addEventListener("change", syncImageStyleHint);
   document.querySelector("#generateOutputProfile")?.addEventListener("change", syncProfileHints);
   document.querySelector("#generateTone")?.addEventListener("change", syncToneHint);
@@ -1300,6 +1794,7 @@ const loadConfig = async () => {
   document.querySelector("#generateChannel")?.addEventListener("change", () => {
     const channelId = document.querySelector("#generateChannel")?.value;
     applyChannelPresetToForm(channelId);
+    syncImageModelField();
     syncImageStyleHint();
     syncToneHint();
     syncChannelHint();
@@ -1317,6 +1812,7 @@ const loadConfig = async () => {
   elements.generateForm?.querySelector('textarea[name="sourceText"]')?.addEventListener("input", () => validateGenerateForm(elements.generateForm));
 
   applyChannelPresetToForm(payload.defaults.channel);
+  syncImageModelField();
   syncImageStyleHint();
   syncProfileHints();
   syncToneHint();
@@ -1337,6 +1833,7 @@ const buildGeneratePayload = (form, submitter) => {
     language: String(data.get("language") || "pt-BR"),
     outputProfile: String(data.get("outputProfile") || "vertical-short"),
     targetSeconds: Number(data.get("targetSeconds") || 60),
+    imageModel: String(data.get("imageModel") || state.config?.defaults?.imageModel || "gemini-2.5-flash-image"),
     imageStyle: String(data.get("imageStyle") || "claude"),
     channel: String(data.get("channel") || "foiumaideia"),
     tone: String(data.get("tone") || "shortform_native"),
@@ -1489,6 +1986,129 @@ elements.resumeJobButton?.addEventListener("click", async () => {
     state.logAutoFollow = true;
     connectStream(response.job.id);
     await refreshJobs();
+  } catch (error) {
+    window.alert(error.message);
+  }
+});
+
+elements.forceFailJobButton?.addEventListener("click", async () => {
+  const selectedJob = getJobById(state.selectedJobId);
+
+  if (!selectedJob) {
+    return;
+  }
+
+  try {
+    const response = await fetchJson(`/api/jobs/${encodeURIComponent(selectedJob.id)}/force-fail`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({jobId: selectedJob.id})
+    });
+
+    upsertJob(response.job);
+    state.selectedJobId = response.job.id;
+    state.logAutoFollow = true;
+    await Promise.allSettled([refreshJobs(), refreshVideos()]);
+  } catch (error) {
+    window.alert(error.message);
+  }
+});
+
+elements.regenerateSceneButton?.addEventListener("click", async () => {
+  const selectedJob = getJobById(state.selectedJobId);
+
+  if (!selectedJob) {
+    return;
+  }
+
+  try {
+    const response = await fetchJson(`/api/jobs/${encodeURIComponent(selectedJob.id)}/regenerate-missing-scene`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        jobId: selectedJob.id,
+        sceneNumber: selectedJob.nextMissingSceneNumber || null,
+        autoContinueAfterSceneRepair: true
+      })
+    });
+
+    upsertJob(response.job);
+    state.selectedJobId = response.job.id;
+    state.logAutoFollow = true;
+    connectStream(response.job.id);
+    await Promise.allSettled([refreshJobs(), refreshVideos()]);
+  } catch (error) {
+    window.alert(error.message);
+  }
+});
+
+elements.generateAudioButton?.addEventListener("click", async () => {
+  const selectedJob = getJobById(state.selectedJobId);
+
+  if (!selectedJob) {
+    return;
+  }
+
+  try {
+    const response = await fetchJson(`/api/jobs/${encodeURIComponent(selectedJob.id)}/generate-audio`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({jobId: selectedJob.id})
+    });
+
+    upsertJob(response.job);
+    state.selectedJobId = response.job.id;
+    state.logAutoFollow = true;
+    connectStream(response.job.id);
+    await Promise.allSettled([refreshJobs(), refreshVideos()]);
+  } catch (error) {
+    window.alert(error.message);
+  }
+});
+
+elements.renderOnlyButton?.addEventListener("click", async () => {
+  const selectedJob = getJobById(state.selectedJobId);
+
+  if (!selectedJob) {
+    return;
+  }
+
+  try {
+    const response = await fetchJson(`/api/jobs/${encodeURIComponent(selectedJob.id)}/render-only`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({jobId: selectedJob.id})
+    });
+
+    upsertJob(response.job);
+    state.selectedJobId = response.job.id;
+    state.logAutoFollow = true;
+    connectStream(response.job.id);
+    await Promise.allSettled([refreshJobs(), refreshVideos()]);
+  } catch (error) {
+    window.alert(error.message);
+  }
+});
+
+elements.validateJobButton?.addEventListener("click", async () => {
+  const selectedJob = getJobById(state.selectedJobId);
+
+  if (!selectedJob) {
+    return;
+  }
+
+  try {
+    const response = await fetchJson(`/api/jobs/${encodeURIComponent(selectedJob.id)}/validate`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({jobId: selectedJob.id})
+    });
+
+    upsertJob(response.job);
+    state.selectedJobId = response.job.id;
+    state.logAutoFollow = true;
+    connectStream(response.job.id);
+    await Promise.allSettled([refreshJobs(), refreshVideos()]);
   } catch (error) {
     window.alert(error.message);
   }
@@ -1683,4 +2303,19 @@ setInterval(() => {
   refreshJobs().catch(() => {});
   refreshRuns().catch(() => {});
   refreshVideos().catch(() => {});
-}, 20000);
+}, DEFAULT_REFRESH_INTERVAL_MS);
+
+setInterval(() => {
+  const selectedJob = getJobById(state.selectedJobId);
+  const activeJob = getJobById(state.activeJobId);
+  const targetJob =
+    (selectedJob && (selectedJob.status === "queued" || selectedJob.status === "running") && selectedJob) ||
+    (activeJob && (activeJob.status === "queued" || activeJob.status === "running") && activeJob) ||
+    null;
+
+  if (!targetJob) {
+    return;
+  }
+
+  refreshJobs().catch(() => {});
+}, ACTIVE_JOB_REFRESH_INTERVAL_MS);

@@ -1,83 +1,100 @@
 # video-engine
 
-Motor de render de video da pipeline APOS-KIRO. Converte storyboard + imagens em video final com narração, karaoke e transições via Remotion.
+Motor de storyboard, voz, timings, render e validação usado pela UI web e pelos wrappers do projeto.
 
-## Defaults atuais do fluxo web
+Documento principal:
+- para operação de produção, recovery, systemd, billing, modelos de imagem e bugs conhecidos, use primeiro [README.md](/root/repo/videos-flux2/README.md)
 
-Quando a geração vem da UI local, o fluxo padrão para `@foiumaideia` é:
+Este README foca no motor.
 
-- duração: `60s`
-- motor de imagem: `google-cloud`
-- estilo de roteiro: `shortform_native`
-- voz: `Iapetus`
-- estilo de imagem do canal: `editorial_line_green`
+## Papel do engine
 
-Esses valores chegam do `web/server.mjs` e são gravados no job antes de chamar o motor de vídeo.
+O `video-engine` recebe storyboard e assets e fecha:
+- voz
+- timestamps / karaoke
+- render final
+- QA final
 
-## Uso
+Também participa da geração completa quando o wrapper/UI disparam o fluxo end-to-end.
 
-Normalmente invocado pelo CLI principal (`scripts/foiumaideia.mjs`) ou pela UI web, mas pode ser usado diretamente:
+## Fluxo atual
+
+Hoje o engine é normalmente invocado por:
+- [scripts/foiumaideia.mjs](/root/repo/videos-flux2/scripts/foiumaideia.mjs)
+- [web/server.mjs](/root/repo/videos-flux2/web/server.mjs)
+
+O caminho normal em produção **não** é mais um uso manual de `--asset-mode` como fonte principal de operação. O fluxo atual é UI-first + jobs parciais.
+
+## Arquivos principais
+
+- [scripts/make-plan1-video.mjs](/root/repo/videos-flux2/video-engine/scripts/make-plan1-video.mjs)
+- [scripts/validate-run.mjs](/root/repo/videos-flux2/video-engine/scripts/validate-run.mjs)
+- [scripts/rerender-voice.mjs](/root/repo/videos-flux2/video-engine/scripts/rerender-voice.mjs)
+- [scripts/lib/llm-provider.mjs](/root/repo/videos-flux2/video-engine/scripts/lib/llm-provider.mjs)
+- [scripts/lib/tts.mjs](/root/repo/videos-flux2/video-engine/scripts/lib/tts.mjs)
+- [scripts/lib/timings.mjs](/root/repo/videos-flux2/video-engine/scripts/lib/timings.mjs)
+- [scripts/lib/gcp-media.mjs](/root/repo/videos-flux2/video-engine/scripts/lib/gcp-media.mjs)
+
+## Scripts úteis
 
 ```bash
-cd video-engine
-npm run make -- --title "Os idosos estao usando IA sem saber" --asset-mode no-browser
+cd /root/repo/videos-flux2/video-engine
+
+# make completo, se precisar usar o engine direto
+npm run make -- --title "Exemplo"
+
+# validar um run existente
+npm run validate -- --slug "2026-04-06-exemplo"
+
+# rerender de voz sem recriar imagens
+node scripts/rerender-voice.mjs --slug 2026-04-06-exemplo --voice Charon
 ```
 
-Com assets gerados localmente pelo pipeline:
+## Defaults relevantes
 
-```bash
-npm run make -- --title "..." --asset-mode no-browser --local-assets-dir ../assets/envato/SLUG
-```
+Os defaults reais vêm do backend/wrapper, não deste README.
 
-## Scripts
+Hoje, no app:
+- TTS: Google Cloud Gemini-TTS
+- LLM textual: Vertex/Gemini
+- imagem: Vertex com seleção por modelo na UI
+- render: Remotion + ffmpeg
 
-```bash
-npm run make -- --title "..."
-npm run secrets:keychain
-npm run publish:retry -- --dry-run
-npm run validate -- --slug "2026-03-26-exemplo"
-npm run studio
-```
+## Recovery suportado
 
-## Estrutura
+O engine já suporta partes do recovery:
+- `audio-prep`
+- `render-only`
+- `validate-only`
+- `scene-regenerate` no wrapper de assets
 
-- `scripts/make-video.mjs`: wrapper com agentes `sysadmin`, `dev`, `editor` e `qa`
-- `scripts/make-plan1-video.mjs`: gera storyboard, voz, timeline e render
-- `scripts/fetch-envato-overrides.mjs`: resolve assets locais gerados para o manifesto
-- `scripts/lib/llm-provider.mjs`: integracao LLM (Gemini, OpenRouter)
-- `scripts/lib/gemini-usage.mjs`: consolidacao local de tokens/custo estimado do Gemini
-- `scripts/lib/tts.mjs`: TTS (Gemini) + STT (timestamps) + sync karaoke
-- `scripts/lib/timings.mjs`: timeline, captions, karaoke timing
-- `scripts/validate-run.mjs`: validacao E2E
-- `scripts/rerender-voice.mjs`: re-render com nova voz sem regenerar imagens
+Mas a recuperação ainda é **job-centric**, não revision-centric. Em `same slug`, ainda existe risco de mistura de artefatos antigos.
 
-## Notas
+## Custos e uso
 
-- `--asset-mode no-browser` nunca abre Chrome; usa apenas assets locais do slug.
-- O preview e sempre regenerado por omissao. Usa `--reuse-preview` para velocidade.
-- LLM provider: `gemini` (default). Na UI, a voz padrão atual é `Iapetus`.
-- A UI local agora expõe também biblioteca de vídeos concluídos, jobs falhados e ações para reprocessar um job a partir do storyboard salvo.
+Fontes locais de uso:
+- `runs/<slug>/gemini-usage.json`
+- `assets/envato/<slug>/gemini-usage.json`
+- `runs/<slug>/agent-report.json`
 
-## Gemini Usage E Cost
+Importante:
+- o valor local é estimativa operacional
+- não substitui billing oficial do GCP
+- custos de imagem/TTS devem ser lidos no contexto do projeto e do billing export
 
-- `runs/<slug>/gemini-usage.json`: uso do Gemini no storyboard, revisao e plano grafico
-- `assets/envato/<slug>/gemini-usage.json`: uso do Gemini no planner visual e na auditoria Gemini Vision
-- `runs/<slug>/agent-report.json`: resumo combinado em `llmUsage`
+## Known issues do engine
 
-O valor e estimado localmente a partir de `usageMetadata` devolvido pela Gemini API e do pricing oficial.
+- `same slug` ainda compartilha namespace de artefatos
+- partial regeneration ainda pode sobrescrever metadata global do slug
+- reuso de render ainda não está totalmente pinado por revisão real de áudio/cenas/música
+- quotas `429` podem ocorrer em Vertex/TTS
 
-- snapshot de pricing usado no codigo: `2026-03-30`
-- fonte oficial: https://ai.google.dev/gemini-api/docs/pricing
+## Regra prática
 
-Observacoes:
+Se o objetivo for operar o produto:
+- use a UI e o `README` principal
 
-- o valor guardado e uma estimativa, nao uma fatura oficial
-- se uma chamada nao devolver `usageMetadata`, ela nao entra no calculo
-- os modelos atualmente cobertos pelo estimador sao `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash` e `gemini-2.0-flash-lite`
-
-## Image Prompt Rules
-
-- `searchQuery` e `visualGoal` devem apontar para o mesmo assunto concreto
-- `overlay` deve resumir o assunto real da cena e nao um rotulo generico reciclado de outro tema
-- o pipeline agora evita overlays vagos como `No trabalho`, `Rotina`, `Pessoas` e `Novo normal` quando a narracao nao fala disso
-- o fallback de overlay passou a derivar do proprio `title/narration` da cena
+Se o objetivo for depurar o motor:
+- abra os arquivos acima
+- valide os artefatos do `slug`
+- confirme sempre se está a olhar para a tentativa certa, e não só para o `slug`

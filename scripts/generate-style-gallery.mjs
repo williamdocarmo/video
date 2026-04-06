@@ -12,6 +12,8 @@ const projectRoot = path.resolve(__dirname, "..");
 const publicDir = path.join(projectRoot, "web", "public");
 const galleryDir = path.join(publicDir, "style-gallery");
 const outputDir = path.join(galleryDir, "images");
+const stylesOutputDir = path.join(outputDir, "styles");
+const modelsOutputDir = path.join(outputDir, "models");
 
 const loadSimpleEnvFile = (targetPath) => {
   if (!existsSync(targetPath)) {
@@ -42,23 +44,67 @@ const loadSimpleEnvFile = (targetPath) => {
 loadSimpleEnvFile(path.join(projectRoot, ".env"));
 loadSimpleEnvFile(path.join(projectRoot, "video-engine", ".env"));
 
-const model = String(process.env.GOOGLE_IMAGE_MODEL || "gemini-2.5-flash-image").trim();
+const defaultStyleModel = String(process.env.GOOGLE_IMAGE_MODEL || "gemini-2.5-flash-image").trim();
 const aspectRatio = "9:16";
 const MAX_ATTEMPTS = 5;
 const BASE_RETRY_MS = 12_000;
 const cliArgs = new Set(process.argv.slice(2));
 const forceRegenerate = cliArgs.has("--force");
+const galleryModels = [
+  ...new Set(
+    String(
+      process.env.STYLE_GALLERY_IMAGE_MODELS ||
+        [
+          "imagen-4.0-fast-generate-001",
+          "gemini-2.5-flash-image",
+          "imagen-4.0-generate-001",
+          "imagen-4.0-ultra-generate-001"
+        ].join(",")
+    )
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+  )
+];
 
-const scenePrompt = String(
+const styleScenePrompt = String(
   process.env.STYLE_GALLERY_SCENE_PROMPT ||
     "Create a single strong frame for a short-form tech video. A person is about to clean a smartphone screen with toothpaste on a desk in a modern home office. The phone, the toothpaste smear, and the hand must be clearly visible. One main subject, no text, no logos, no watermark, mobile-first readability, high clarity, dramatic but believable proof visual."
 ).trim();
+
+const gpsProblemPrompt = String(
+  process.env.STYLE_GALLERY_GPS_PROMPT ||
+    "Create a clean editorial ink illustration for a vertical 9:16 short video. Show one driver stuck in heavy traffic inside a car, frustrated, checking a wristwatch with one hand while the other hand remains naturally placed near the steering wheel. Show a low-fuel gauge on the dashboard. Keep exactly one human figure, natural human proportions, only two arms and two hands, no extra limbs, no duplicate watches. This is not a macro hardware shot. Use a readable medium-wide in-car composition, not a device close-up. No text, no logos, no watermark, no fake UI."
+).trim();
+
+const imageModelMeta = {
+  "gemini-2.5-flash-image": {
+    label: "Gemini 2.5 Flash Image",
+    cost: "~US$ 0,039 / imagem",
+    note: "Mais rápido, mas menos confiável para anatomia."
+  },
+  "imagen-4.0-fast-generate-001": {
+    label: "Imagen 4 Fast",
+    cost: "US$ 0,02 / imagem",
+    note: "Mais barato do grupo Imagen, bom para volume e testes."
+  },
+  "imagen-4.0-generate-001": {
+    label: "Imagen 4",
+    cost: "US$ 0,04 / imagem",
+    note: "Melhor equilíbrio para produção."
+  },
+  "imagen-4.0-ultra-generate-001": {
+    label: "Imagen 4 Ultra",
+    cost: "US$ 0,06 / imagem",
+    note: "Melhor qualidade e consistência."
+  }
+};
 
 const composePrompt = (presetId) => {
   const preset = resolveVisualStylePreset(presetId);
   const backgroundRules = Array.isArray(preset.backgroundDirectives) ? preset.backgroundDirectives.join(" ") : "";
   return [
-    scenePrompt,
+    styleScenePrompt,
     `Style preset: ${preset.label}.`,
     preset.plannerGuidance,
     preset.characterPrompt,
@@ -73,6 +119,50 @@ const composePrompt = (presetId) => {
     .join(" ");
 };
 
+const generateImageForModel = async ({model, prompt}) => {
+  return generateVertexImage({
+    model,
+    prompt,
+    aspectRatio,
+    numberOfImages: 1
+  });
+};
+
+const renderCardGrid = ({
+  items,
+  kind = "style",
+  promptLabel = "Prompt usado",
+  imageCta = "Abrir imagem"
+}) => items.map((item) => {
+  const imageHtml = item.imagePath
+    ? `<a href="${escapeHtml(item.imagePath)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(item.imagePath)}" alt="${escapeHtml(item.label)}"></a>`
+    : `<div class="error-box">${escapeHtml(item.error || "Falhou ao gerar.")}</div>`;
+  const copyHtml = kind === "model"
+    ? `<p class="kicker">${escapeHtml(item.id)}</p>
+        <h2>${escapeHtml(item.label)}</h2>
+        <p>${escapeHtml(item.description || "")}</p>
+        <p class="meta-line">Modelo real: <code>${escapeHtml(item.model || item.id)}</code></p>
+        <p class="meta-line">${escapeHtml(item.cost || "")}</p>
+        <p class="meta-line">${escapeHtml(item.note || "")}</p>`
+    : `<p class="kicker">${escapeHtml(item.id)}</p>
+        <h2>${escapeHtml(item.label)}</h2>
+        <p>${escapeHtml(item.description || "")}</p>`;
+
+  return `
+    <article class="card">
+      <div class="card-copy">
+        ${copyHtml}
+        <a class="text-link" href="${item.imagePath ? escapeHtml(item.imagePath) : "#"}" target="_blank" rel="noreferrer">${escapeHtml(imageCta)}</a>
+      </div>
+      ${imageHtml}
+      <details>
+        <summary>${escapeHtml(promptLabel)}</summary>
+        <pre>${escapeHtml(item.prompt)}</pre>
+      </details>
+    </article>
+  `;
+}).join("\n");
+
 const escapeHtml = (value) =>
   String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -81,15 +171,16 @@ const escapeHtml = (value) =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
-await mkdir(outputDir, {recursive: true});
+await mkdir(stylesOutputDir, {recursive: true});
+await mkdir(modelsOutputDir, {recursive: true});
 
-const results = [];
+const styleResults = [];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 for (const preset of Object.values(VISUAL_STYLE_PRESETS)) {
   const prompt = composePrompt(preset.id);
   const safeName = `${preset.id}.png`;
-  const outputPath = path.join(outputDir, safeName);
+  const outputPath = path.join(stylesOutputDir, safeName);
 
   try {
     if (forceRegenerate || !existsSync(outputPath)) {
@@ -97,11 +188,9 @@ for (const preset of Object.values(VISUAL_STYLE_PRESETS)) {
       let lastError = null;
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
         try {
-          const result = await generateVertexImage({
-            model,
-            prompt,
-            aspectRatio,
-            numberOfImages: 1
+          const result = await generateImageForModel({
+            model: defaultStyleModel,
+            prompt
           });
           await writeFile(outputPath, result.bytes);
           lastError = null;
@@ -122,15 +211,15 @@ for (const preset of Object.values(VISUAL_STYLE_PRESETS)) {
       }
     }
 
-    results.push({
+    styleResults.push({
       id: preset.id,
       label: preset.label,
       description: preset.description,
-      imagePath: `./images/${safeName}`,
+      imagePath: `./images/styles/${safeName}`,
       prompt
     });
   } catch (error) {
-    results.push({
+    styleResults.push({
       id: preset.id,
       label: preset.label,
       description: preset.description,
@@ -141,27 +230,77 @@ for (const preset of Object.values(VISUAL_STYLE_PRESETS)) {
   }
 }
 
-const cardsHtml = results.map((item) => {
-  const imageHtml = item.imagePath
-    ? `<a href="${escapeHtml(item.imagePath)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(item.imagePath)}" alt="${escapeHtml(item.label)}"></a>`
-    : `<div class="error-box">${escapeHtml(item.error || "Falhou ao gerar.")}</div>`;
+const modelResults = [];
 
-  return `
-    <article class="card">
-      <div class="card-copy">
-        <p class="kicker">${escapeHtml(item.id)}</p>
-        <h2>${escapeHtml(item.label)}</h2>
-        <p>${escapeHtml(item.description || "")}</p>
-        <a class="text-link" href="${item.imagePath ? escapeHtml(item.imagePath) : "#"}" target="_blank" rel="noreferrer">Abrir imagem</a>
-      </div>
-      ${imageHtml}
-      <details>
-        <summary>Prompt usado</summary>
-        <pre>${escapeHtml(item.prompt)}</pre>
-      </details>
-    </article>
-  `;
-}).join("\n");
+for (const model of galleryModels) {
+  const safeName = `${model.replace(/[^a-z0-9.-]+/gi, "-").toLowerCase()}.png`;
+  const outputPath = path.join(modelsOutputDir, safeName);
+
+  try {
+    if (forceRegenerate || !existsSync(outputPath)) {
+      process.stdout.write(`Generating model sample ${model}...\n`);
+      let lastError = null;
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+        try {
+          const result = await generateImageForModel({
+            model,
+            prompt: gpsProblemPrompt
+          });
+          await writeFile(outputPath, result.bytes);
+          lastError = null;
+          break;
+        } catch (error) {
+          lastError = error;
+          const message = String(error?.message || error);
+          if (!message.includes("429") || attempt >= MAX_ATTEMPTS - 1) {
+            throw error;
+          }
+          const waitMs = BASE_RETRY_MS * (attempt + 1);
+          process.stderr.write(`Rate limit em ${model}, retry em ${Math.round(waitMs / 1000)}s...\n`);
+          await sleep(waitMs);
+        }
+      }
+      if (lastError) {
+        throw lastError;
+      }
+    }
+
+    modelResults.push({
+      id: model,
+      model,
+      label: imageModelMeta[model]?.label || model,
+      description: "Mesmo prompt do caso GPS, sem trocar o texto entre modelos. Serve para ver aderência, composição e limpeza real.",
+      cost: imageModelMeta[model]?.cost || "",
+      note: imageModelMeta[model]?.note || "",
+      imagePath: `./images/models/${safeName}`,
+      prompt: gpsProblemPrompt
+    });
+  } catch (error) {
+    modelResults.push({
+      id: model,
+      model,
+      label: imageModelMeta[model]?.label || model,
+      description: "Mesmo prompt do caso GPS, sem trocar o texto entre modelos. Serve para ver aderência, composição e limpeza real.",
+      cost: imageModelMeta[model]?.cost || "",
+      note: imageModelMeta[model]?.note || "",
+      imagePath: "",
+      prompt: gpsProblemPrompt,
+      error: String(error?.message || error)
+    });
+  }
+}
+
+const styleCardsHtml = renderCardGrid({
+  items: styleResults,
+  kind: "style",
+  promptLabel: "Prompt do preset"
+});
+
+const modelCardsHtml = renderCardGrid({
+  items: modelResults,
+  kind: "model",
+  promptLabel: "Prompt do caso GPS"
+});
 
 const html = `<!doctype html>
 <html lang="pt-BR">
@@ -189,6 +328,9 @@ const html = `<!doctype html>
       h1 { margin: 0 0 10px; font-size: clamp(2rem, 4vw, 3.4rem); line-height: .95; }
       .lede { margin: 0 0 26px; color: var(--muted); max-width: 820px; line-height: 1.6; }
       .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+      .section-block { display: grid; gap: 18px; margin-top: 32px; }
+      .section-head { display: grid; gap: 8px; }
+      .section-head h2 { margin: 0; font-size: clamp(1.35rem, 2vw, 1.8rem); }
       .card {
         background: rgba(255,252,246,.92);
         border: 1px solid var(--line);
@@ -217,6 +359,13 @@ const html = `<!doctype html>
       }
       h2 { margin: 0 0 8px; font-size: 1.08rem; }
       p { margin: 0; line-height: 1.5; }
+      code {
+        font: .82rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: rgba(20,34,30,.06);
+        border-radius: 8px;
+        padding: 2px 6px;
+      }
+      .meta-line { color: var(--muted); }
       .text-link { color: var(--accent); text-decoration: none; font-weight: 700; }
       .error-box {
         border: 1px solid rgba(198,91,43,.2);
@@ -236,11 +385,29 @@ const html = `<!doctype html>
   </head>
   <body>
     <main>
-      <h1>Galeria de estilos reais</h1>
-      <p class="lede">Cada imagem abaixo foi gerada com o próprio motor Vertex do app, usando a mesma cena-base e o prompt do preset correspondente. A ideia é comparar o comportamento real dos estilos, não mockups inventados.</p>
-      <p class="lede"><strong>Cena-base:</strong> ${escapeHtml(scenePrompt)}</p>
-      <section class="grid">
-        ${cardsHtml}
+      <h1>Galeria de estilos e modelos reais</h1>
+      <p class="lede">As imagens abaixo são geradas pelo próprio app. A primeira seção compara presets visuais com a mesma cena-base. A segunda compara modelos de imagem usando o mesmo prompt do caso do GPS.</p>
+
+      <section class="section-block">
+        <div class="section-head">
+          <h2>Presets visuais</h2>
+          <p class="lede"><strong>Cena-base:</strong> ${escapeHtml(styleScenePrompt)}</p>
+          <p class="lede"><strong>Modelo usado para os presets:</strong> ${escapeHtml(defaultStyleModel)}</p>
+        </div>
+        <section class="grid">
+          ${styleCardsHtml}
+        </section>
+      </section>
+
+      <section class="section-block">
+        <div class="section-head">
+          <h2>Comparação por modelo de imagem</h2>
+          <p class="lede"><strong>Prompt corrigido do caso GPS:</strong> ${escapeHtml(gpsProblemPrompt)}</p>
+          <p class="lede">Essa seção compara anatomia, aderência ao enquadramento e limpeza visual com o mesmo prompt. Os valores abaixo são referências de custo por imagem no Vertex AI.</p>
+        </div>
+        <section class="grid">
+          ${modelCardsHtml}
+        </section>
       </section>
     </main>
   </body>
@@ -249,11 +416,16 @@ const html = `<!doctype html>
 await writeFile(path.join(galleryDir, "index.html"), html);
 
 const manifest = {
-  model,
+  schemaVersion: 2,
+  model: defaultStyleModel,
   aspectRatio,
-  scenePrompt,
+  scenePrompt: styleScenePrompt,
+  gpsProblemPrompt,
+  modelComparisonModels: galleryModels,
   generatedAt: new Date().toISOString(),
-  items: results
+  items: styleResults,
+  styleItems: styleResults,
+  modelItems: modelResults
 };
 
 await writeFile(path.join(galleryDir, "manifest.json"), JSON.stringify(manifest, null, 2));

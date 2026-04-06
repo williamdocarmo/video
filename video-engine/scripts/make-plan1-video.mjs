@@ -60,6 +60,15 @@ const STORYBOARD_PREVIEW_QA_REPAIR_MAX_ATTEMPTS = Math.max(
   0,
   Number.parseInt(process.env.STORYBOARD_PREVIEW_QA_REPAIR_MAX_ATTEMPTS || "3", 10) || 3
 );
+const DEFAULT_ENVATO_MUSIC_DIR = String(
+  process.env.DEFAULT_ENVATO_MUSIC_DIR ||
+    path.join(process.env.HOME || "/root", "Documents", "scripts", "envato", "music")
+).trim();
+const MIN_BACKGROUND_MUSIC_BYTES = Math.max(
+  262144,
+  Number.parseInt(process.env.MIN_BACKGROUND_MUSIC_BYTES || "262144", 10) || 262144
+);
+const BACKGROUND_MUSIC_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"]);
 
 const buildProfileContext = (profileValue) => {
   const profile = resolveOutputProfileConfig(profileValue);
@@ -70,6 +79,78 @@ const buildProfileContext = (profileValue) => {
     outputHeight: Number(process.env.OUTPUT_HEIGHT || profile.height || 1920),
     compositionId: String(process.env.RENDER_COMPOSITION_ID || profile.compositionId || "CodexShort"),
     targetSeconds: Number(process.env.TARGET_DURATION_SECONDS || profile.defaultTargetSeconds || 100)
+  };
+};
+
+const listBackgroundMusicCandidates = async (musicDir) => {
+  if (!musicDir || !existsSync(musicDir)) {
+    return [];
+  }
+
+  const entries = await readdir(musicDir, {withFileTypes: true});
+  const candidates = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+
+    if (!entry.name.startsWith("track-")) {
+      continue;
+    }
+
+    const extension = path.extname(entry.name).toLowerCase();
+
+    if (!BACKGROUND_MUSIC_EXTENSIONS.has(extension)) {
+      continue;
+    }
+
+    const absolutePath = path.join(musicDir, entry.name);
+
+    try {
+      const fileStats = await stat(absolutePath);
+
+      if (fileStats.size < MIN_BACKGROUND_MUSIC_BYTES) {
+        continue;
+      }
+
+      candidates.push({
+        absolutePath,
+        fileName: entry.name,
+        size: fileStats.size
+      });
+    } catch {
+      // Ignore unreadable files and keep scanning the remaining tracks.
+    }
+  }
+
+  return candidates.sort((left, right) => left.fileName.localeCompare(right.fileName));
+};
+
+const chooseRandomBackgroundMusic = async () => {
+  const candidates = await listBackgroundMusicCandidates(DEFAULT_ENVATO_MUSIC_DIR);
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  return candidates[Math.floor(Math.random() * candidates.length)] || null;
+};
+
+const materializeBackgroundMusic = async ({slug, audioDir, sourcePath}) => {
+  if (!sourcePath || !existsSync(sourcePath)) {
+    return null;
+  }
+
+  const extension = path.extname(sourcePath).toLowerCase() || ".mp3";
+  const targetFileName = `background-music${extension}`;
+  const targetPath = path.join(audioDir, targetFileName);
+  await copyFile(sourcePath, targetPath);
+
+  return {
+    sourcePath,
+    targetPath,
+    publicPath: path.posix.join("runs", slug, "audio", targetFileName)
   };
 };
 
@@ -1137,6 +1218,74 @@ const logAgent = (agent, message) => {
 
 const roundMetric = (value, digits = 3) => Number(Number(value || 0).toFixed(digits));
 
+const summarizeStoryboardScene = (scene, index) => ({
+  index: index + 1,
+  title: normalizeText(scene?.title),
+  overlay: normalizeText(scene?.overlay),
+  narration: normalizeText(scene?.narration),
+  searchQuery: normalizeText(scene?.searchQuery),
+  sceneType: String(scene?.sceneType || "").trim() || null,
+  candidateQueries: Array.isArray(scene?.candidateQueries)
+    ? scene.candidateQueries.map((query) => normalizeText(query)).filter(Boolean)
+    : []
+});
+
+const summarizeStoryboard = (storyboard) => {
+  const scenes = Array.isArray(storyboard?.scenes) ? storyboard.scenes : [];
+
+  return {
+    videoTitle: normalizeText(storyboard?.videoTitle),
+    hook: normalizeText(storyboard?.hook),
+    postCaption: normalizeText(storyboard?.postCaption),
+    cta: normalizeText(storyboard?.cta),
+    sceneCount: scenes.length,
+    wordCount: scenes
+      .map((scene) => scene?.narration || "")
+      .join(" ")
+      .split(/\s+/)
+      .filter(Boolean).length,
+    scenes: scenes.map((scene, index) => summarizeStoryboardScene(scene, index))
+  };
+};
+
+const summarizeStoryboardQa = (storyboardQa) => ({
+  passed: Boolean(storyboardQa?.passed),
+  profile: String(storyboardQa?.profile || "").trim() || null,
+  issues: Array.isArray(storyboardQa?.issues) ? storyboardQa.issues : [],
+  warnings: Array.isArray(storyboardQa?.warnings) ? storyboardQa.warnings : [],
+  issueObjects: Array.isArray(storyboardQa?.issueObjects) ? storyboardQa.issueObjects : [],
+  warningObjects: Array.isArray(storyboardQa?.warningObjects) ? storyboardQa.warningObjects : [],
+  issueCount: Array.isArray(storyboardQa?.issues) ? storyboardQa.issues.length : 0,
+  warningCount: Array.isArray(storyboardQa?.warnings) ? storyboardQa.warnings.length : 0,
+  metrics: storyboardQa?.metrics ?? null
+});
+
+const buildStoryboardPreviewMetadata = ({
+  title,
+  language,
+  desiredDurationSeconds,
+  initialStoryboard,
+  finalStoryboard,
+  initialQa,
+  finalQa,
+  repairHistory
+}) => ({
+  schemaVersion: 1,
+  title,
+  language,
+  desiredDurationSeconds,
+  initialStoryboard: summarizeStoryboard(initialStoryboard),
+  finalStoryboard: summarizeStoryboard(finalStoryboard),
+  initialQa: summarizeStoryboardQa(initialQa),
+  finalQa: summarizeStoryboardQa(finalQa),
+  repair: {
+    maxAttempts: STORYBOARD_PREVIEW_QA_REPAIR_MAX_ATTEMPTS,
+    attemptCount: Array.isArray(repairHistory) ? repairHistory.length : 0,
+    repaired: Array.isArray(repairHistory) && repairHistory.length > 0,
+    attempts: Array.isArray(repairHistory) ? repairHistory : []
+  }
+});
+
 const buildQaSummary = (validation, qaPass, outPath) => ({
   passed: qaPass,
   outputPath: outPath,
@@ -1609,6 +1758,9 @@ const main = async () => {
     desiredDurationSeconds: targetSeconds,
     scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || ""
   });
+  const initialStoryboard = linkedStoryboard;
+  const initialStoryboardQa = storyboardQa;
+  const storyboardPreviewRepairHistory = [];
 
   for (
     let repairAttempt = 0;
@@ -1616,13 +1768,15 @@ const main = async () => {
     repairAttempt += 1
   ) {
     const attemptLabel = `${repairAttempt + 1}/${STORYBOARD_PREVIEW_QA_REPAIR_MAX_ATTEMPTS}`;
+    const beforeRepairStoryboard = linkedStoryboard;
+    const beforeRepairQa = storyboardQa;
     process.stderr.write(
       `[roteirista] QA pre-visual falhou; a reescrever storyboard com base no feedback (${attemptLabel})\n`
     );
     appendAgentNote(
       report,
       "roteirista",
-      `QA pre-visual falhou; repair automatico ${attemptLabel}: ${storyboardQa.issues.join(" | ")}`
+      `QA pre-visual falhou; repair automatico ${attemptLabel}: ${beforeRepairQa.issues.join(" | ")}`
     );
 
     linkedStoryboard = await runLlmStageWithRetries({
@@ -1639,21 +1793,56 @@ const main = async () => {
           storyboard: linkedStoryboard,
           sourceText,
           scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || "",
-          issues: storyboardQa.issues,
-          warnings: storyboardQa.warnings
+          issues: beforeRepairQa.issues,
+          warnings: beforeRepairQa.warnings
         })
     });
 
-    storyboardQa = evaluateStoryboardQa({
+    const repairedStoryboardQa = evaluateStoryboardQa({
       storyboard: linkedStoryboard,
       title,
       language: videoLanguage,
       desiredDurationSeconds: targetSeconds,
       scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || ""
     });
+    storyboardPreviewRepairHistory.push({
+      attempt: repairAttempt + 1,
+      status: repairedStoryboardQa.passed ? "repaired" : "still_failing",
+      requestedIssues: beforeRepairQa.issues,
+      requestedWarnings: beforeRepairQa.warnings,
+      before: {
+        storyboard: summarizeStoryboard(beforeRepairStoryboard),
+        qa: summarizeStoryboardQa(beforeRepairQa)
+      },
+      after: {
+        storyboard: summarizeStoryboard(linkedStoryboard),
+        qa: summarizeStoryboardQa(repairedStoryboardQa)
+      }
+    });
+    storyboardQa = repairedStoryboardQa;
   }
 
-  await writeFile(path.join(runsDir, "storyboard-qa.json"), JSON.stringify(storyboardQa, null, 2));
+  const storyboardPreviewMetadata = buildStoryboardPreviewMetadata({
+    title,
+    language: videoLanguage,
+    desiredDurationSeconds: targetSeconds,
+    initialStoryboard,
+    finalStoryboard: linkedStoryboard,
+    initialQa: initialStoryboardQa,
+    finalQa: storyboardQa,
+    repairHistory: storyboardPreviewRepairHistory
+  });
+  await writeFile(
+    path.join(runsDir, "storyboard-qa.json"),
+    JSON.stringify(
+      {
+        ...storyboardQa,
+        previewMetadata: storyboardPreviewMetadata
+      },
+      null,
+      2
+    )
+  );
 
   report.agents.roteirista.sceneCount = linkedStoryboard.scenes.length;
   report.agents.roteirista.wordCount = linkedStoryboard.scenes
@@ -1662,6 +1851,7 @@ const main = async () => {
     .split(/\s+/)
     .filter(Boolean).length;
   report.agents.roteirista.storyboardQa = storyboardQa;
+  report.agents.roteirista.storyboardPreviewMetadata = storyboardPreviewMetadata;
   appendAgentNote(
     report,
     "roteirista",
@@ -2116,7 +2306,56 @@ const main = async () => {
     timedWords: alignedTimedWords,
     sceneSpans: voicePlan.sceneSpans
   });
-  const musicPath = process.env.DEFAULT_MUSIC_FILE ? process.env.DEFAULT_MUSIC_FILE.trim() : null;
+  const backgroundMusicDisabled = String(process.env.DISABLE_BACKGROUND_MUSIC || "")
+    .trim()
+    .toLowerCase() === "true";
+  const requestedMusicPath = String(process.env.DEFAULT_MUSIC_FILE || "").trim();
+  let musicPath = null;
+
+  if (!backgroundMusicDisabled) {
+    let selectedMusicSource = requestedMusicPath || null;
+
+    if (selectedMusicSource && !existsSync(selectedMusicSource)) {
+      appendAgentNote(
+        report,
+        "editor",
+        `Trilha explicita nao encontrada em ${selectedMusicSource}; a escolher uma track-* aleatoria.`
+      );
+      selectedMusicSource = null;
+    }
+
+    if (!selectedMusicSource) {
+      const randomTrack = await chooseRandomBackgroundMusic();
+
+      if (randomTrack) {
+        selectedMusicSource = randomTrack.absolutePath;
+        appendAgentNote(
+          report,
+          "editor",
+          `Trilha aleatoria selecionada: ${randomTrack.fileName}.`
+        );
+      } else {
+        appendAgentNote(
+          report,
+          "editor",
+          `Nenhuma track-* valida encontrada em ${DEFAULT_ENVATO_MUSIC_DIR}; a seguir sem musica de fundo.`
+        );
+      }
+    }
+
+    if (selectedMusicSource) {
+      const materializedMusic = await materializeBackgroundMusic({
+        slug,
+        audioDir,
+        sourcePath: selectedMusicSource
+      });
+
+      if (materializedMusic?.publicPath) {
+        musicPath = materializedMusic.publicPath;
+      }
+    }
+  }
+
   const renderProps = {
     title: enrichedStoryboard.videoTitle,
     hook: enrichedStoryboard.hook,

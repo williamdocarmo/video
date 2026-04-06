@@ -125,6 +125,10 @@ a {
   gap: 20px;
 }
 
+.layout > .panel:last-child {
+  grid-column: 1 / -1;
+}
+
 .tabbar,
 .tab-row {
   display: flex;
@@ -214,6 +218,27 @@ a {
   color: var(--muted);
   font-size: 0.84rem;
   line-height: 1.4;
+}
+
+.field-note-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
+}
+
+.field-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(15, 123, 108, 0.1);
+  color: var(--primary-strong);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .field-hint.error {
@@ -349,13 +374,8 @@ a {
 }
 
 .button.danger {
-  background: rgba(198, 91, 43, 0.12);
-  border: 1px solid rgba(198, 91, 43, 0.24);
-  color: var(--warn);
-}
-
-.button.danger {
   background: var(--warn);
+  border: 1px solid var(--warn);
   color: white;
 }
 
@@ -376,6 +396,208 @@ a {
   align-items: start;
 }
 
+.state-strip {
+  display: grid;
+  gap: 10px;
+  padding: 18px 20px;
+  border: 1px solid rgba(20, 34, 30, 0.12);
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(15, 123, 108, 0.08), rgba(255, 250, 242, 0.96));
+}
+
+.state-label {
+  margin: 0;
+  color: var(--primary-strong);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.state-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.stage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px;
+  border-radius: 999px;
+  background: rgba(20, 34, 30, 0.08);
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.stage-badge[data-state="running"] {
+  background: rgba(15, 123, 108, 0.14);
+  color: var(--primary-strong);
+}
+
+.stage-badge[data-state="completed"] {
+  background: rgba(46, 125, 50, 0.14);
+  color: #1d6b24;
+}
+
+.stage-badge[data-state="failed"] {
+  background: rgba(198, 91, 43, 0.14);
+  color: var(--warn);
+}
+
+.stage-badge[data-state="partial"],
+.stage-badge[data-state="ready"] {
+  background: rgba(178, 124, 28, 0.14);
+  color: #8f6400;
+}
+
+.stage-badge[data-state="blocked"],
+.stage-badge[data-state="missing"] {
+  background: rgba(90, 98, 110, 0.12);
+  color: #5a626e;
+}
+
+.state-checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.state-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.state-grid-wide {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.state-card {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid rgba(20, 34, 30, 0.12);
+  border-radius: 22px;
+  background: var(--card-strong);
+}
+
+.state-card-accent {
+  background: linear-gradient(135deg, rgba(198, 91, 43, 0.08), rgba(255, 250, 242, 0.98));
+}
+
+.state-copy {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.55;
+}
+
+.state-copy.muted {
+  color: var(--muted);
+}
+
+.state-copy.error {
+  color: var(--warn);
+}
+
+.step-checklist {
+  display: grid;
+  gap: 10px;
+}
+
+.step-checklist-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid rgba(20, 34, 30, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 252, 246, 0.72);
+}
+
+.step-checklist-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 92px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(20, 34, 30, 0.08);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.step-checklist-badge[data-step-status="completed"] {
+  background: rgba(46, 125, 50, 0.14);
+  color: #1d6b24;
+}
+
+.step-checklist-badge[data-step-status="ready"] {
+  background: rgba(15, 123, 108, 0.14);
+  color: var(--primary-strong);
+}
+
+.step-checklist-badge[data-step-status="partial"] {
+  background: rgba(189, 124, 21, 0.14);
+  color: #92630d;
+}
+
+.step-checklist-badge[data-step-status="blocked"],
+.step-checklist-badge[data-step-status="missing"] {
+  background: rgba(198, 91, 43, 0.14);
+  color: var(--warn);
+}
+
+.step-checklist-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.step-checklist-copy strong {
+  font-size: 0.96rem;
+}
+
+.step-checklist-copy p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.failure-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 18px 20px;
+  border: 1px solid rgba(198, 91, 43, 0.18);
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(198, 91, 43, 0.11), rgba(255, 250, 242, 0.96));
+}
+
+.failure-banner-copy {
+  display: grid;
+  gap: 8px;
+  max-width: 720px;
+}
+
+.failure-banner .job-kicker {
+  margin-bottom: 0;
+}
+
+.failure-banner h3 {
+  margin: 0;
+  font-size: 1.38rem;
+  letter-spacing: -0.03em;
+}
+
 .job-kicker {
   margin: 0 0 6px;
   color: var(--primary-strong);
@@ -394,6 +616,12 @@ a {
 .job-meta {
   margin: 10px 0 0;
   color: var(--muted);
+}
+
+.job-progress-meta {
+  margin: 8px 0 0;
+  color: var(--ink);
+  font-weight: 600;
 }
 
 .status-pill {

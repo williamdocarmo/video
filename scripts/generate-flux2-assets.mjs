@@ -70,16 +70,19 @@ const OUTPUT_HEIGHT = Math.max(1, Number(process.env.OUTPUT_HEIGHT || 1920));
 const OUTPUT_LAYOUT = OUTPUT_WIDTH > OUTPUT_HEIGHT ? "horizontal" : "vertical";
 const DEFAULT_FLUX2_CANVAS =
   OUTPUT_LAYOUT === "horizontal"
-    ? {width: 1024, height: 576}
-    : {width: 576, height: 1024};
+    ? {width: 1920, height: 1080}
+    : {width: 1080, height: 1920};
 
 const resolveFlux2Canvas = () => {
   const configuredWidth = Number(process.env.FLUX2_WIDTH || 0);
   const configuredHeight = Number(process.env.FLUX2_HEIGHT || 0);
   const hasConfiguredCanvas = configuredWidth > 0 && configuredHeight > 0;
   const configuredLayout = configuredWidth > configuredHeight ? "horizontal" : "vertical";
+  const isConfiguredCanvasLargeEnough =
+    configuredWidth >= DEFAULT_FLUX2_CANVAS.width &&
+    configuredHeight >= DEFAULT_FLUX2_CANVAS.height;
 
-  if (hasConfiguredCanvas && configuredLayout === OUTPUT_LAYOUT) {
+  if (hasConfiguredCanvas && configuredLayout === OUTPUT_LAYOUT && isConfiguredCanvasLargeEnough) {
     return {
       width: configuredWidth,
       height: configuredHeight,
@@ -89,7 +92,7 @@ const resolveFlux2Canvas = () => {
 
   return {
     ...DEFAULT_FLUX2_CANVAS,
-    source: hasConfiguredCanvas ? "layout-default-override" : "layout-default"
+    source: hasConfiguredCanvas ? "layout-default-upgrade" : "layout-default"
   };
 };
 
@@ -114,6 +117,19 @@ const LAYOUT_PROMPT_DIRECTIVES = OUTPUT_LAYOUT === "horizontal"
       "full character visible with comfortable margins",
       "keep head, hands, and feet inside frame",
       "avoid zoomed-in portrait crop"
+    ];
+const LAYOUT_OBJECT_CLOSEUP_DIRECTIVES = OUTPUT_LAYOUT === "horizontal"
+  ? [
+      "horizontal landscape close-up framing",
+      "object-led composition with the key hardware or prop dominating the frame",
+      "allow a tight crop around the main object detail",
+      "avoid full-body character framing unless the shot explicitly requires it"
+    ]
+  : [
+      "vertical portrait close-up framing",
+      "object-led composition with the key hardware or prop dominating the frame",
+      "allow a tight crop around the main object detail",
+      "avoid full-body character framing unless the shot explicitly requires it"
     ];
 
 // --- Config ---
@@ -223,6 +239,7 @@ const parseArgs = (argv) => {
     if (a === "--max-images") { parsed.maxImages = Number(argv[++i]); continue; }
     if (a === "--seed-base") { parsed.seedBase = Number(argv[++i]); continue; }
     if (a === "--force") { parsed.force = true; continue; }
+    if (a === "--scene-number") { parsed.sceneNumber = Number(argv[++i]); continue; }
     if (a === "--provider") { parsed.provider = argv[++i]; continue; }
   }
   return parsed;
@@ -231,7 +248,6 @@ const parseArgs = (argv) => {
 const cliArgs = parseArgs(process.argv.slice(2));
 const IMAGE_PROVIDER = "google-cloud";
 const ENABLE_PLANNER_FALLBACK = true;
-const USE_DIRECT_SCENE_PLANNER = true;
 const GOOGLE_CLOUD_PROJECT = String(process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0114845839").trim();
 const GOOGLE_CLOUD_LOCATION = String(process.env.GOOGLE_CLOUD_LOCATION || "us-central1").trim();
 const GOOGLE_IMAGE_MODEL = String(process.env.GOOGLE_IMAGE_MODEL || "gemini-2.5-flash-image").trim();
@@ -250,6 +266,10 @@ const GOOGLE_IMAGE_RETRY_DELAYS_MS = String(process.env.GOOGLE_IMAGE_RETRY_DELAY
 const ACTIVE_STYLE_PRESET = resolveVisualStylePreset(
   cliArgs.stylePreset || process.env.IMAGE_STYLE_PRESET || process.env.FLUX2_STYLE_PRESET || "claude"
 );
+const STYLE_IS_INK = ACTIVE_STYLE_PRESET.id === "ink";
+const USE_DIRECT_SCENE_PLANNER = String(
+  process.env.USE_DIRECT_SCENE_PLANNER || (STYLE_IS_INK ? "false" : "true")
+).trim().toLowerCase() === "true";
 const CHARACTER = process.env.IMAGE_CHARACTER_PROMPT || process.env.FLUX2_CHARACTER_PROMPT || ACTIVE_STYLE_PRESET.characterPrompt;
 // Legacy DEFAULT_FLUX2_STYLE leaked the old Claude-style prompt into unrelated presets.
 // Style presets are now the source of truth unless a per-run --style override is passed.
@@ -707,6 +727,28 @@ const sanitizeShotText = (value) => {
     [/\bintense posture\b/gi, "tense forward posture"]
   ];
 
+  if (STYLE_IS_INK) {
+    replacements.push(
+      [/\bdimly lit secure military command center\b/gi, "simplified military operations room"],
+      [/\bmilitary command center\b/gi, "simplified military operations room"],
+      [/\bsatellite dishes visible in the background\b/gi, "abstract satellite dish silhouettes in the background"],
+      [/\bsatellite dishes\b/gi, "abstract satellite dish silhouettes"],
+      [/\btactical map on a screen\b/gi, "abstract tactical map panel"],
+      [/\btactical map\b/gi, "abstract tactical map panel"],
+      [/\bnavigation app\b/gi, "abstract navigation panel"],
+      [/\bprominent gps map on screen\b/gi, "abstract route line on a blank glowing screen"],
+      [/\bgps map on screen\b/gi, "abstract route line on a blank glowing screen"],
+      [/\bgps route\b/gi, "abstract route line"],
+      [/\bclear, easy-to-follow gps route\b/gi, "simple abstract route line"],
+      [/\bclear easy-to-follow gps route\b/gi, "simple abstract route line"],
+      [/\bthought bubble containing a question mark\b/gi, "puzzled body language"],
+      [/\bthought bubble with a question mark\b/gi, "puzzled body language"],
+      [/\bquestion mark\b/gi, "puzzled gesture"],
+      [/\bserious and focused\b/gi, "tense forward posture"],
+      [/\bmodern and sleek\b/gi, "clean futuristic backdrop"]
+    );
+  }
+
   for (const [pattern, replacement] of replacements) {
     text = text.replace(pattern, replacement);
   }
@@ -729,6 +771,19 @@ const shotLikelyShowsCharacterHead = (shot) => {
   ].join(" "));
 
   return /\bcharacter\b|\bperson\b|\bbusinessman\b|\bexecutive\b|\bengineer\b|\bman\b|\bwoman\b|\bhuman\b|\bdriver\b/.test(haystack);
+};
+
+const shotHasHumanTouchpoint = (shot) => {
+  const haystack = normalizeForMatch([
+    shot?.coverageText,
+    ...(Array.isArray(shot?.mustShow) ? shot.mustShow : []),
+    ...(Array.isArray(shot?.supportingDetails) ? shot.supportingDetails : []),
+    shot?.setting,
+    shot?.composition,
+    shot?.action
+  ].join(" "));
+
+  return /\bcharacter\b|\bperson\b|\bbusinessman\b|\bexecutive\b|\bengineer\b|\bman\b|\bwoman\b|\bhuman\b|\bdriver\b|\bhand\b|\bhands\b|\bfinger\b|\bfingertip\b/.test(haystack);
 };
 
 const shotNeedsBlankDeviceScreen = (shot) => {
@@ -767,7 +822,37 @@ const shotNeedsObjectLedCloseup = (shot) => {
     shot?.action
   ].join(" "));
 
-  return /\bclose up\b|\bclose-up\b|\bmacro\b|\bcharging port\b|\bport\b|\bconnector\b|\bscreen\b|\bdisplay\b|\bglass\b|\bpeeling\b|\bpeel(?:ing)?\b|\bprotective layer\b|\bfilm edge\b|\bsmudge\b|\bsmudges\b|\bresidue\b|\bscratch(?:es)?\b|\bcorrosion\b|\bdiscoloration\b|\boleophobic\b/.test(haystack);
+  const explicitCloseupIntent = /\bclose up\b|\bclose-up\b|\bextreme close-up\b|\bmacro\b|\bdetail shot\b|\bhero close-up\b/.test(haystack);
+  const hardwareDamageIntent = /\bcharging port\b|\bport\b|\bconnector\b|\bglass\b|\bpeeling\b|\bpeel(?:ing)?\b|\bprotective layer\b|\bfilm edge\b|\bsmudge\b|\bsmudges\b|\bresidue\b|\bscratch(?:es)?\b|\bcorrosion\b|\bdiscoloration\b|\boleophobic\b/.test(haystack);
+  const genericScreenIntent = /\bscreen\b|\bdisplay\b/.test(haystack);
+  const humanContext = shotHasHumanTouchpoint(shot);
+
+  if (explicitCloseupIntent || hardwareDamageIntent) {
+    return true;
+  }
+
+  if (genericScreenIntent && !humanContext) {
+    return true;
+  }
+
+  return false;
+};
+
+const shotNeedsFullHumanFigure = (shot) => shotLikelyShowsCharacterHead(shot) && !shotNeedsObjectLedCloseup(shot);
+
+const filterConflictingCloseupDirectives = (directives = []) =>
+  directives.filter((directive) => !/\bfull body\b|\bfull-body\b|\bfull character\b|\bfull stick figure\b|\bentire stick figure\b|\bfull character visible\b|\bkeep enough body in frame\b|\bkeep the body readable\b|\bcharacter head\b|\blarge round head\b|\bone readable stick figure\b|\bone readable human figure\b/i.test(String(directive || "")));
+
+const buildHumanSubjectPrompt = (shot) => {
+  if (shotNeedsFullHumanFigure(shot)) {
+    return CHARACTER;
+  }
+
+  if (shotNeedsObjectLedCloseup(shot) && shotHasHumanTouchpoint(shot)) {
+    return "if human interaction is needed, show only one clean hand or one fingertip interacting with the main object detail, with no extra limbs and no partial second person";
+  }
+
+  return null;
 };
 
 const shotNeedsPortFocus = (shot) => {
@@ -824,10 +909,15 @@ const shotIncludesPaperLikeObject = (shot) => {
 
 const buildAttemptDirectives = ({shot, attempt = 0, failureSummary = ""}) => {
   const directives = [];
+  const objectLedCloseup = shotNeedsObjectLedCloseup(shot);
+  const layoutDirectives = objectLedCloseup ? LAYOUT_OBJECT_CLOSEUP_DIRECTIVES : LAYOUT_PROMPT_DIRECTIVES;
+  const styleAttemptDirectives = objectLedCloseup
+    ? filterConflictingCloseupDirectives(STYLE_ATTEMPT_DIRECTIVES)
+    : STYLE_ATTEMPT_DIRECTIVES;
 
-  directives.push(...STYLE_ATTEMPT_DIRECTIVES, ...LAYOUT_PROMPT_DIRECTIVES);
+  directives.push(...styleAttemptDirectives, ...layoutDirectives);
 
-  if (shotLikelyShowsCharacterHead(shot)) {
+  if (shotNeedsFullHumanFigure(shot)) {
     directives.push(
       "character head is a simple circle with minimal features: two dots for eyes and a small curve for mouth, no hair detail, no ears, no nose, no eyebrows",
       "keep enough body in frame that the stick figure reads as a full character with clear posture, not just a tiny head and one stick line"
@@ -1166,11 +1256,27 @@ const buildSemanticFallbackShot = (scene, segmentText) => {
     action = "character engaging with an abstract chat interface";
   }
 
-  if (/quartel general|headquarters|comando/.test(source)) {
-    addMustShow("military-style digital command center", "strategy table", "large world map screen without readable text");
-    addSupporting("officers coordinating around a tactical display", "high-alert operations room");
-    setting = "high-tech command center with strategy table and wall-sized network map";
-    action = "command team analyzing a digital battlefield";
+  if (/quartel general|headquarters|comando|military|soldier|camouflage|tactical map|satellite dish|command center/.test(source)) {
+    addMustShow("soldier in camouflage silhouette", "abstract tactical map panel");
+    if (STYLE_IS_INK) {
+      addSupporting("simplified military operations room", "abstract satellite dish silhouettes");
+      setting = "editorial military operations vignette with an abstract tactical map panel and simplified command-room cues";
+      action = "soldier studying an abstract tactical display in a secure operations setting";
+    } else {
+      addMustShow("military-style digital command center", "strategy table", "large world map screen without readable text");
+      addSupporting("officers coordinating around a tactical display", "high-alert operations room");
+      setting = "high-tech command center with strategy table and wall-sized network map";
+      action = "command team analyzing a digital battlefield";
+    }
+  }
+
+  if (/\bgps\b|\bnavigation\b|\broute\b|\bdirections\b|\bnavigator\b/.test(source)) {
+    addMustShow("generic smartphone or dashboard navigation device");
+    if (STYLE_IS_INK) {
+      addSupporting("blank glowing navigation panel with one abstract route line", "device readable by silhouette, not UI text");
+    } else {
+      addSupporting("clean abstract route display with no readable text");
+    }
   }
 
   if (/\bcharging port\b|\bport\b|\bconnector\b|\busb port\b/.test(source)) {
@@ -1619,6 +1725,7 @@ const buildNegativePrompt = (shot) => {
 };
 
 const buildImagePrompt = ({scene, shot, style, sceneIndex = 0, segmentIndex = 0, extraDirectives = []}) => {
+  const humanSubjectPrompt = buildHumanSubjectPrompt(shot);
   const attemptDirectives = uniqueStrings([
     ...buildAttemptDirectives({shot, attempt: 0}),
     ...buildVariationDirectives({sceneIndex, segmentIndex, shot}),
@@ -1637,14 +1744,14 @@ const buildImagePrompt = ({scene, shot, style, sceneIndex = 0, segmentIndex = 0,
 
   return [
     `Create a high-end ${styleGuidance} scene with one clear focal subject and clean anatomy.`,
-    CHARACTER,
+    humanSubjectPrompt,
     `Show ${shot.coverageText} with ${shot.mustShow.join(", ")}.`,
     supportingDetailsText,
     `Set the scene in ${shot.setting}.`,
     `Frame it as ${shot.composition}, with ${shot.camera}.`,
     `The visible action is ${shot.action}.`,
     `Lighting should feel ${shot.lighting}.`,
-    `Keep the subject fully readable in a vertical 9:16 layout with subtle safe margins for captions and UI.`,
+    `Keep the subject fully readable in a ${OUTPUT_LAYOUT === "horizontal" ? "horizontal 16:9" : "vertical 9:16"} layout with subtle safe margins for captions and UI.`,
     `Maintain this visual identity: ${DEFAULT_STYLE_LOCK_PROMPT}.`,
     `Composition rules: ${DEFAULT_COMPOSITION_RULES}.`,
     backgroundGuidance,
@@ -1758,7 +1865,7 @@ const persistArtifacts = async ({assetDir, scenePlans, manifest, reuseMetadata, 
 const runLocalVisualAudit = ({imagePath, shot}) => {
   const commandArgs = [LOCAL_VISUAL_AUDIT_SCRIPT, "--image", imagePath];
 
-  if (EXPECT_STICKMAN_AUDIT && shotLikelyShowsCharacterHead(shot)) {
+  if (EXPECT_STICKMAN_AUDIT && shotNeedsFullHumanFigure(shot)) {
     commandArgs.push("--expect-stickman");
   }
 
@@ -1949,6 +2056,12 @@ const auditWithGeminiVision = async ({imagePath, visualGoal, narration}) => {
     "- Characters drawn as stick figures when the goal mentions 'woman', 'man', 'person' etc.",
     "- Minor detail differences or missing secondary elements",
     "- Tiny illegible pseudo-text or broken printer-like marks on a receipt, ticket, invoice, or paper slip when that paper object is only a supporting prop and the text cannot be semantically read",
+    ...(STYLE_IS_INK
+      ? [
+          "- A clean paper background or simplified editorial backdrop instead of a literal room, street, office, or command center, as long as the core subject and action match",
+          "- Simplified environmental cues replacing a literal realistic setting when the intended style is editorial ink"
+        ]
+      : []),
     "",
     "If only one stick figure is visible, it must not have more than two hands or more than two arms. Occluded limbs are acceptable, extra limbs are not.",
     "When the scene narration or visual goal clearly involves a person, reject images where the character is barely visible, too tiny to read, or looks like just a stick line instead of a clear stick figure.",
@@ -2097,6 +2210,24 @@ const concatClips = async ({clips, outputPath, tempDir}) => {
   ], {stdio: "inherit"});
 };
 
+const clearSceneArtifacts = async ({assetDir, imagesDir, sceneNum}) => {
+  const targets = [
+    path.join(assetDir, `scene-${sceneNum}.mp4`)
+  ];
+
+  for (const target of targets) {
+    await rm(target, {force: true}).catch(() => {});
+  }
+
+  const entries = await readdir(imagesDir).catch(() => []);
+  const prefix = `scene-${sceneNum}-`;
+  await Promise.all(
+    entries
+      .filter((entry) => entry.startsWith(prefix))
+      .map((entry) => rm(path.join(imagesDir, entry), {force: true}).catch(() => {}))
+  );
+};
+
 // --- Main ---
 const main = async () => {
   const args = parseArgs(process.argv.slice(2));
@@ -2118,25 +2249,36 @@ const main = async () => {
 
   if (scenes.length === 0) throw new Error("Storyboard sem cenas.");
 
+  const requestedSceneNumber = Number.isFinite(Number(args.sceneNumber)) ? Math.floor(Number(args.sceneNumber)) : 0;
+  if (requestedSceneNumber && (requestedSceneNumber < 1 || requestedSceneNumber > scenes.length)) {
+    throw new Error(`Cena invalida para regenerar: ${requestedSceneNumber}. Storyboard tem ${scenes.length} cenas.`);
+  }
+
   const assetDir = path.join(envatoRoot, "assets", "envato", args.slug);
   const imagesDir = path.join(assetDir, "_flux2_images");
 
   // Reuse existing assets if available (avoid re-generating on retry)
   const forceRegenerate = args.force === true;
-  if (forceRegenerate) {
+  if (forceRegenerate && !requestedSceneNumber) {
     await rm(assetDir, {recursive: true, force: true});
   }
   await mkdir(imagesDir, {recursive: true});
+  if (requestedSceneNumber) {
+    await clearSceneArtifacts({assetDir, imagesDir, sceneNum: String(requestedSceneNumber).padStart(2, "0")});
+  }
 
   const seedBase = args.seedBase ?? 200;
   const allowFallback = args.allowFallback || ENABLE_PLANNER_FALLBACK;
   const manifest = [];
   const scenePlans = [];
+  const plannedSceneEntries = [];
   let globalSeed = seedBase;
   let totalImages = 0;
   const incompleteScenes = [];
 
-  for (let i = 0; i < scenes.length; i++) {
+  const targetSceneIndexes = requestedSceneNumber ? [requestedSceneNumber - 1] : scenes.map((_, index) => index);
+
+  for (const i of targetSceneIndexes) {
     const scene = scenes[i];
     const sceneNum = String(i + 1).padStart(2, "0");
     const plan = await planSceneShots(scene, {allowFallback});
@@ -2150,6 +2292,12 @@ const main = async () => {
       shotCount: plan.shots.length,
       shots: plan.shots,
       suggestedShots: plan.suggestedShots ?? null
+    });
+    plannedSceneEntries.push({
+      index: i,
+      scene,
+      sceneNum,
+      plan
     });
 
     process.stdout.write(`[vertex-assets] scene ${sceneNum}: ${plan.shots.length} planned image(s) via ${plan.planner}\n`);
@@ -2183,23 +2331,25 @@ const main = async () => {
     await mkdir(imagesDir, {recursive: true});
   }
 
-  const totalSegmentCount = Math.min(
-    scenePlans.reduce((sum, scenePlan) => sum + scenePlan.shotCount, 0),
-    maxImages
+  const totalSegmentCount = Math.min(plannedSceneEntries.reduce((sum, entry) => sum + entry.plan.shotCount, 0), maxImages);
+  process.stdout.write(
+    `[vertex-assets] ${plannedSceneEntries.length} scene(s)` +
+    (requestedSceneNumber ? ` (target scene ${requestedSceneNumber})` : "") +
+    ` → ${totalSegmentCount} images to generate\n`
   );
-  process.stdout.write(`[vertex-assets] ${scenes.length} scenes → ${totalSegmentCount} images to generate\n`);
 
   const pendingSdxlJobs = [];
 
-  for (let i = 0; i < scenes.length; i++) {
+  for (const entry of plannedSceneEntries) {
     if (totalImages >= totalSegmentCount) {
       break;
     }
 
-    const scene = scenes[i];
-    const sceneNum = String(i + 1).padStart(2, "0");
+    const i = entry.index;
+    const scene = entry.scene;
+    const sceneNum = entry.sceneNum;
     const videoPath = path.join(assetDir, `scene-${sceneNum}.mp4`);
-    const plannedShots = scenePlans[i]?.shots ?? [];
+    const plannedShots = entry.plan?.shots ?? [];
     const segmentClips = [];
     let sceneFailed = plannedShots.length === 0;
 
@@ -2255,7 +2405,7 @@ const main = async () => {
         if (segVideoExists) segmentClips.push(segVideoPath);
         manifest.push({
           scene: sceneNum, segment: j + 1, title: scene.title,
-          planner: scenePlans[i]?.planner ?? "unknown",
+          planner: entry.plan?.planner ?? "unknown",
           narration: scene.narration, coverageText: shot.coverageText,
           mustShow: shot.mustShow, prompt, negativePrompt, validation,
           duration: segDuration, seed: globalSeed + j,
@@ -2290,7 +2440,7 @@ const main = async () => {
             scene: sceneNum,
             segment: j + 1,
             title: scene.title,
-            planner: scenePlans[i]?.planner ?? "unknown",
+            planner: entry.plan?.planner ?? "unknown",
             narration: scene.narration,
             coverageText: shot.coverageText,
             mustShow: shot.mustShow,
@@ -2324,7 +2474,7 @@ const main = async () => {
           scene: sceneNum,
           segment: j + 1,
           title: scene.title,
-          planner: scenePlans[i]?.planner ?? "unknown",
+          planner: entry.plan?.planner ?? "unknown",
           narration: scene.narration,
           coverageText: shot.coverageText,
           mustShow: shot.mustShow,
@@ -2462,7 +2612,7 @@ const main = async () => {
           scene: sceneNum,
           segment: j + 1,
           title: scene.title,
-          planner: scenePlans[i]?.planner ?? "unknown",
+          planner: entry.plan?.planner ?? "unknown",
           narration: scene.narration,
           coverageText: shot.coverageText,
           mustShow: shot.mustShow,
@@ -2487,7 +2637,7 @@ const main = async () => {
           scene: sceneNum,
           segment: j + 1,
           title: scene.title,
-          planner: scenePlans[i]?.planner ?? "unknown",
+          planner: entry.plan?.planner ?? "unknown",
           narration: scene.narration,
           coverageText: shot.coverageText,
           mustShow: shot.mustShow,
