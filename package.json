@@ -7,6 +7,9 @@
     "make": "node scripts/foiumaideia.mjs",
     "make:batch": "node scripts/make-batch.mjs",
     "make:original": "node scripts/foiumaideia.mjs",
-    "generate-assets": "node scripts/generate-flux2-assets.mjs"
+    "generate-assets": "node scripts/generate-flux2-assets.mjs",
+    "test:flux2-rules": "node scripts/test-generate-flux2-rules.mjs",
+    "test:scene-spec": "node scripts/test-scene-spec.mjs",
+    "test:scene-failure-taxonomy": "node scripts/test-scene-failure-taxonomy.mjs"
   }
 }

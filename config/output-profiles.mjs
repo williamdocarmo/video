@@ -1,3 +1,20 @@
+/**
+ * @typedef {object} OutputProfile
+ * @property {string} id - Profile key (e.g. "vertical-short").
+ * @property {string} label - Human-readable name.
+ * @property {string} description - Short description.
+ * @property {"vertical"|"horizontal"} layout
+ * @property {string} aspectRatio - e.g. "9:16", "16:9".
+ * @property {number} width - Render width in pixels.
+ * @property {number} height - Render height in pixels.
+ * @property {string} compositionId - Remotion composition ID.
+ * @property {number} defaultTargetSeconds - Default video duration.
+ * @property {number[]} durations - Allowed duration options in seconds.
+ * @property {number} minScenes
+ * @property {number} maxScenes
+ */
+
+/** @type {Record<string, OutputProfile>} */
 export const OUTPUT_PROFILES = {
   "vertical-short": {
     id: "vertical-short",
@@ -45,11 +62,20 @@ export const OUTPUT_PROFILES = {
 
 export const DEFAULT_OUTPUT_PROFILE = "vertical-short";
 
+/**
+ * Resolve an output profile by ID, falling back to the default.
+ * @param {string} value - Profile ID.
+ * @returns {OutputProfile}
+ */
 export const resolveOutputProfileConfig = (value) => {
   const normalized = String(value || DEFAULT_OUTPUT_PROFILE).trim().toLowerCase();
   return OUTPUT_PROFILES[normalized] || OUTPUT_PROFILES[DEFAULT_OUTPUT_PROFILE];
 };
 
+/**
+ * List all profiles as UI-friendly option objects.
+ * @returns {{value: string, label: string, description: string, layout: string, aspectRatio: string, width: number, height: number, defaultTargetSeconds: number, durations: number[], compositionId: string}[]}
+ */
 export const listOutputProfileOptions = () =>
   Object.values(OUTPUT_PROFILES).map((profile) => ({
     value: profile.id,
@@ -64,8 +90,19 @@ export const listOutputProfileOptions = () =>
     compositionId: profile.compositionId
   }));
 
+/**
+ * Get allowed duration options (in seconds) for a given profile.
+ * @param {string} profileValue - Profile ID.
+ * @returns {number[]}
+ */
 export const getDurationOptionsForProfile = (profileValue) => resolveOutputProfileConfig(profileValue).durations;
 
+/**
+ * Infer the best output profile from pixel dimensions.
+ * @param {number} width
+ * @param {number} height
+ * @returns {OutputProfile}
+ */
 export const inferOutputProfileFromDimensions = (width, height) => {
   const numericWidth = Number(width);
   const numericHeight = Number(height);

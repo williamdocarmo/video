@@ -6,6 +6,7 @@ import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {z} from "zod";
 import {resolveOutputProfileConfig} from "../../config/output-profiles.mjs";
+import {normalizeText, slugify, uniqueStrings, sleep as wait, runLoggedCommand as runLoggedCommandBase} from "../../../shared/utils.mjs";
 import {loadSecretsIntoEnv} from "./lib/secrets.mjs";
 import {analyzeSceneSpeechPacing, buildTimeline} from "./lib/timings.mjs";
 import {sanitizeTimedWordsForAudio} from "./lib/alignment-utils.mjs";
@@ -312,16 +313,6 @@ const timedWordsLookPlausible = (timedWords) => {
   return true;
 };
 
-const slugify = (input) => {
-  return input
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-};
-
 const deriveTitleFromText = (input) => {
   const text = String(input || "").trim();
 
@@ -339,40 +330,6 @@ const deriveTitleFromText = (input) => {
     .replace(/\s+/g, " ")
     .slice(0, 120)
     .trim();
-};
-
-const normalizeText = (value) => {
-  return String(value ?? "")
-    .replace(/```json/gi, "")
-    .replace(/```/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-};
-
-const extractJsonObject = (input) => {
-  const start = input.indexOf("{");
-  const end = input.lastIndexOf("}");
-
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("Nao encontrei JSON valido na resposta do OpenRouter.");
-  }
-
-  return input.slice(start, end + 1);
-};
-
-const uniqueStrings = (values) => {
-  const seen = new Set();
-
-  return values.filter((value) => {
-    const normalized = value.toLowerCase();
-
-    if (seen.has(normalized)) {
-      return false;
-    }
-
-    seen.add(normalized);
-    return true;
-  });
 };
 
 const PORTUGUESE_QUERY_HINTS = [
@@ -713,8 +670,6 @@ const isRetryableLlmStageError = (error) => {
   ].some((term) => message.includes(term));
 };
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 const runLlmStageWithRetries = async ({stageLabel, task}) => {
   let lastError = null;
 
@@ -830,13 +785,22 @@ const runCommand = (command, args, options = {}) => {
 };
 
 const runLoggedCommand = async (command, args, options = {}) => {
-  const result = await runStreamingCommand(command, args, {
+  if (options.compactProgress) {
+    const result = await runStreamingCommand(command, args, {
+      cwd: options.cwd ?? projectRoot,
+      env: {...process.env, ...(options.env ?? {})},
+      compactProgress: true
+    });
+    if (result.status !== 0) {
+      throw new Error(`${command} falhou: ${result.stderr || result.stdout || "sem detalhes"}`);
+    }
+    return;
+  }
+  const result = await runLoggedCommandBase(command, args, {
     cwd: options.cwd ?? projectRoot,
-    env: {...process.env, ...(options.env ?? {})},
-    compactProgress: options.compactProgress
+    env: options.env
   });
-
-  if (result.status !== 0) {
+  if (result.code !== 0) {
     throw new Error(`${command} falhou: ${result.stderr || result.stdout || "sem detalhes"}`);
   }
 };

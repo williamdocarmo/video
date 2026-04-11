@@ -1,7 +1,7 @@
 import http from "node:http";
 import {spawn, spawnSync} from "node:child_process";
-import {createReadStream, existsSync, readFileSync, readdirSync} from "node:fs";
-import {copyFile, mkdir, readFile, readdir, stat, unlink, writeFile} from "node:fs/promises";
+import {createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync} from "node:fs";
+import {copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {
@@ -10,13 +10,192 @@ import {
   listOutputProfileOptions,
   resolveOutputProfileConfig
 } from "../config/output-profiles.mjs";
-import {DEFAULT_VISUAL_STYLE_PRESET, VISUAL_STYLE_PRESETS} from "../config/visual-style-presets.mjs";
+import {DEFAULT_VISUAL_STYLE_PRESET} from "../config/visual-style-presets.mjs";
 import {analyzeSceneSpeechPacing, buildTimeline} from "../video-engine/scripts/lib/timings.mjs";
+import {
+  init as initJobState,
+  getArtifactEpochMs,
+  isPreviewStoryboardSlug,
+  getPreviewStoryboardSlug,
+  getStoryboardPathCandidates,
+  findExistingStoryboardPath,
+  isUsableSceneClipPath,
+  isReadySceneClipForJob,
+  isFreshArtifactForJob,
+  readJsonSyncIfExists,
+  getArtifactSnapshot,
+  doesQaReportMatchOutputArtifact,
+  resolveEffectiveStoryboardPath,
+  shouldAllowPreviewStoryboardFallback,
+  resolveOperationalStoryboardPath,
+  getFreshSceneNumbers,
+  getSceneCompletionStats,
+  getMissingSceneHintFromJob,
+  hasBasicResumeArtifacts,
+  getFirstMissingSceneNumber,
+  getReferencedRecoveryJobIds,
+  getLatestGenerateJobForSlug,
+  getRecoverySourceJob,
+  getRecoveryArtifactEpochAt,
+  getQaReportForSlug,
+  getQaReportForJob,
+  isQaPassedReport,
+  isQaPassedForSlug,
+  isQaPassedForJob,
+  canPrepareAudioForJob,
+  canRenderOnlyForJob,
+  canValidateOnlyForJob,
+  getFailureStage,
+  getFailureSummary,
+  normalizeFailureLine,
+  isLowSignalFailureLine,
+  getMostRelevantFailureLogLine,
+  getProcessFailureMessage,
+  normalizeSignalText,
+  inferJobStageValue,
+  getStageLabel,
+  getJobStateInfo,
+  getJobStageInfo,
+  getJobRca,
+  getJobFailureTaxonomy,
+  getJobRecommendedAction,
+  buildJobStepChecklist,
+  getJobStepChecklist,
+  buildCaseSummary,
+  buildJobsSummary
+} from "./lib/job-state.mjs";
+import {
+  init as initAgendador,
+  getAgendadorSiteUrl,
+  getAgendadorApiBase,
+  resolveAgendadorChannelProfile,
+  hasAgendadorCredentialsForChannel,
+  normalizePlatforms,
+  agendadorFetch,
+  getAgendadorToken,
+  uploadVideoToAgendador,
+  uploadThumbnailToAgendador,
+  isAccountPublishReady,
+  describeAccountPublishIssue
+} from "./lib/agendador.mjs";
+import {
+  FOIUMAIDEIA_VIRAL_SCRIPT_GUIDANCE,
+  tonePresets,
+  DEFAULT_VOICE,
+  DEFAULT_ENGLISH_VOICE,
+  DEFAULT_IMAGE_MODEL,
+  DEFAULT_GENERATION_MODE,
+  voiceOptions,
+  imageModelOptions,
+  generationModeOptions,
+  imageStylePreviewFiles,
+  buildImageStyleOptions,
+  channelOptions,
+  channelPublishProfiles,
+  channelPresets
+} from "./lib/presets.mjs";
+import {addRoute, matchRoute} from "./lib/routes.mjs";
+import {
+  parseEnvFile,
+  resolvePathFrom,
+  slugify,
+  deriveTitleFromText,
+  createId,
+  readJsonFile,
+  PROCESS_UID,
+  getDesiredOwnerForPath,
+  syncPathOwnership,
+  syncPathMode,
+  ensureManagedDir,
+  writeManagedFile,
+  copyManagedFile,
+  normalizeManagedTree,
+  writeJsonFile,
+  fileExists,
+  createFileUrl,
+  readTextFile,
+  safeUnlink,
+  toVideoId,
+  fromVideoId,
+  roundSeconds,
+  countWords,
+  escapeHtml,
+  toIsoNow,
+  toTimestampMs,
+  normalizePositiveInt
+} from "./lib/utils.mjs";
+import {buildTikTokHelperHtml, readTikTokDraft, writeTikTokDraft} from "./lib/tiktok-helper.mjs";
+import {
+  init as initVideoLibrary,
+  getVideoStateInfo,
+  getVideoStageInfo,
+  getVideoRca,
+  getVideoRecommendedAction,
+  buildVideoCaseSummary,
+  buildVideosSummary,
+  getVideoMetadataKey,
+  persistVideoMetadata,
+  getVideoMetadataEntry,
+  saveVideoMetadataEntry,
+  removeVideoMetadataEntry,
+  getVideoMetaPath,
+  readVideoMeta,
+  writeVideoMeta,
+  findJobForVideoPath,
+  inferVideoSlug,
+  findLatestJobForSlug,
+  findLatestCompletedJobForSlug,
+  hasRecoveredSuccessfulArtifactsForSlug,
+  findLatestDisplayJobForSlug,
+  getRetryStoryboardPathForJob,
+  canRetryFailedJobFromStoryboard,
+  getVideoDurationSeconds,
+  createVideoRecord,
+  buildVideoRecord,
+  listAllExports,
+  listExportVideos,
+  listFailedLibraryJobs,
+  resolveVideoTarget,
+  inferChannelValueFromPath,
+  slugToCaption
+} from "./lib/video-library.mjs";
+import {
+  init as initJobQueue,
+  getJobQueueLane,
+  getQueueForLane,
+  getActiveJobIdForLane,
+  setActiveJobIdForLane,
+  getActiveJobIds,
+  getQueueLengths,
+  isLaneProcessing,
+  setLaneProcessing,
+  refreshQueuePositions,
+  failJobAndReleaseQueue,
+  enqueueJob
+} from "./lib/job-queue.mjs";
+import {
+  init as initJobExecution,
+  registerJobProcess,
+  clearJobProcess,
+  collectDescendantPids,
+  terminateJobProcessTree,
+  executeChildProcess,
+  createGenerateJobCommand,
+  createRerenderJobCommand,
+  createAudioPrepJobCommand,
+  createRenderOnlyJobCommand,
+  createValidateOnlyJobCommand,
+  createSceneRegenerateJobCommand
+} from "./lib/job-execution.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const publicDir = path.join(projectRoot, "web", "public");
 const dataDir = path.join(projectRoot, ".web-ui");
+const localTempRootDir = path.join(projectRoot, ".tmp");
+const localSystemTempDir = path.join(localTempRootDir, "system");
+const localXdgCacheDir = path.join(localTempRootDir, "xdg-cache");
+const localPuppeteerCacheDir = path.join(localTempRootDir, "puppeteer-cache");
 const inputsDir = path.join(dataDir, "inputs");
 const videoLibraryDir = path.join(dataDir, "videos");
 const tiktokDraftsDir = path.join(dataDir, "tiktok-drafts");
@@ -28,12 +207,9 @@ const defaultPostarRoot = path.resolve(projectRoot, "..", "..", "postar");
 const DEFAULT_PORT = Number(process.env.WEB_PORT || 3210);
 const DEFAULT_HOST = process.env.WEB_HOST || "127.0.0.1";
 const RESUME_RENDER_FPS = 30;
-const MAX_LOG_LINES = 500;
+const MAX_LOG_LINES = 2000;
 const MAX_BODY_BYTES = 1_500_000;
-const DEFAULT_AGENDADOR_SITE_URL = "https://agendador.online";
-let AGENDADOR_API_BASE = `${DEFAULT_AGENDADOR_SITE_URL}/api`;
-const AGENDADOR_DEFAULT_PLATFORMS = ["FB", "IG", "YT"];
-const AGENDADOR_MAX_UPLOAD_MB = 24;
+const MISSING_RUN_SLUG = "__missing_run_slug__";
 const HAS_SECURITY_CLI = spawnSync("sh", ["-lc", "command -v security >/dev/null 2>&1"], {stdio: "ignore"}).status === 0;
 const stylePreviewDir = path.join(publicDir, "style-previews");
 
@@ -49,419 +225,19 @@ const contentTypes = {
   ".txt": "text/plain; charset=utf-8"
 };
 
-const normalizeAgendadorSiteUrl = (value) => {
-  const raw = String(value || "").trim().replace(/\/+$/, "");
-  if (!raw) {
-    return DEFAULT_AGENDADOR_SITE_URL;
-  }
+// Presets imported from ./lib/presets.mjs
+// Utils imported from ./lib/utils.mjs
 
-  return raw.endsWith("/api") ? raw.slice(0, -4) : raw;
-};
 
-const normalizeAgendadorApiBase = (value) => {
-  const siteUrl = normalizeAgendadorSiteUrl(value);
-  return siteUrl.endsWith("/api") ? siteUrl : `${siteUrl}/api`;
-};
 
-const FOIUMAIDEIA_VIRAL_SCRIPT_GUIDANCE =
-  "Write like a sharp Brazilian short-form creator reacting to a bad tech idea that gives people false confidence. The tone should feel human, sarcastic, slightly exaggerated, and very internet-native, like a smart friend warning you before you do something dumb. Use casual spoken Brazilian Portuguese when the video is in pt-BR. Prefer lines that sound like real reactions, such as 'isso da ruim', 'nao cai nessa', 'eu ja vi gente fazer isso', or 'essa ideia nao foi uma boa ideia', whenever they fit naturally. Start with a hard statement, warning, accusation, or shocking reveal. Build momentum through consequence, embarrassment, cost, and fail energy. Keep the script punchy, specific, and visually concrete. Keep each scene focused on one clear beat, but let the full script carry real progression instead of feeling like generic educational filler. Use ALL CAPS selectively for 2 to 5 of the hardest-hitting words across the hook and narration. Let the ending land as a memorable sting that makes the bad idea feel obviously stupid in hindsight. Do not add audio directions, editing directions, or narration outside the script itself.";
 
-const tonePresets = {
-  natural_clean: {
-    label: "Natural limpo",
-    description: "Explicativo direto, visual e humano, sem conectores artificiais.",
-    scriptGuidance:
-      "Keep the current practical explainer structure, but remove filler connector openings. Do not start scenes with phrases like 'Só que', 'Mas olha só', 'Ao mesmo tempo', 'Agora' or 'Na prática'. Keep it direct, human, visual, and native to short-form video. Do not include CTA in the narration or ending.",
-    voiceStyles: {
-      "pt-BR": "com narracao natural, clara, segura e direta",
-      "en-US": "with a natural, clear, direct narration"
-    }
-  },
-  shortform_native: {
-    label: "Short-form nativo",
-    description: "Hook rapido, payoff cedo e ritmo nativo de TikTok/Reels/Shorts.",
-    scriptGuidance: FOIUMAIDEIA_VIRAL_SCRIPT_GUIDANCE,
-    voiceStyles: {
-      "pt-BR": "com ritmo curto, visual e nativo de redes sociais",
-      "en-US": "with a native short-form social rhythm"
-    }
-  },
-  wellness_comfort: {
-    label: "Wellness • Calmo reconfortante",
-    description: "Acolhe, valida e alivia sem parecer coaching vazio.",
-    scriptGuidance:
-      "Write a wellness script in a calm, human and comforting tone. Start from a real emotional state, validate it gently, reduce pressure, and end with relief or acceptance. Use short, spoken lines, no CTA, no guru language, no hype, no artificial connectors.",
-    voiceStyles: {
-      "pt-BR": "com voz calma, acolhedora, serena e reconfortante",
-      "en-US": "with a calm, gentle and comforting voice"
-    }
-  },
-  wellness_end_of_day: {
-    label: "Wellness • Soltar o peso do dia",
-    description: "Fecho de dia, cansaco, descanso e permissao para desacelerar.",
-    scriptGuidance:
-      "Write a wellness script for the end of the day. Speak to tiredness, mental overload, and the need to release pressure. Make it feel like permission to stop, rest and soften. Avoid spiritual grandiosity, productivity language, CTA, and generic inspiration. End with rest.",
-    voiceStyles: {
-      "pt-BR": "com voz baixa, serena e acolhedora",
-      "en-US": "with a soft, low and soothing voice"
-    }
-  }
-};
+const imageStyleOptions = buildImageStyleOptions(stylePreviewDir);
 
-const DEFAULT_VOICE = "Iapetus";
-const DEFAULT_ENGLISH_VOICE = "Charon";
-const DEFAULT_IMAGE_MODEL = "imagen-4.0-fast-generate-001";
 
-const voiceOptions = [
-  {
-    label: "Iapetus • Clear / claro",
-    value: "Iapetus",
-    badge: "Melhor para pt-BR geral",
-    description: "Voz Gemini-TTS do Google com timbre claro e limpo, boa para narracao geral.",
-    languages: ["pt-BR", "en-US"]
-  },
-  {
-    label: "Charon • Informative / informativo",
-    value: "Charon",
-    badge: "Melhor para en-US",
-    description: "Voz Gemini-TTS do Google com tom mais informativo e seguro, boa para explicacao e ingles.",
-    languages: ["en-US", "pt-BR"]
-  },
-  {
-    label: "Kore • Firm / firme",
-    value: "Kore",
-    badge: "Melhor para tom firme",
-    description: "Voz Gemini-TTS do Google com entrega firme e assertiva, boa para hooks e tom deciso.",
-    languages: ["en-US", "pt-BR"]
-  },
-  {
-    label: "Puck • Upbeat / energetico",
-    value: "Puck",
-    badge: "Melhor para shorts",
-    description: "Voz Gemini-TTS do Google com energia mais alta e ritmo mais animado para shorts.",
-    languages: ["en-US", "pt-BR"]
-  },
-  {
-    label: "Sulafat • Warm / caloroso",
-    value: "Sulafat",
-    badge: "Melhor para tom acolhedor",
-    description: "Voz Gemini-TTS do Google com timbre mais quente e acolhedor.",
-    languages: ["pt-BR", "en-US"]
-  }
-];
-
-const imageModelOptions = [
-  {
-    value: "imagen-4.0-fast-generate-001",
-    label: "Imagen 4 Fast",
-    provider: "Google",
-    badge: "Novo padrão",
-    description: "Mais barato do grupo Imagen e, nos teus testes, o melhor para pessoas e anatomia neste tipo de cena.",
-    costLabel: "US$ 0,02 / imagem",
-    costDetail: "Melhor opção para volume e produção diária."
-  },
-  {
-    value: "gemini-2.5-flash-image",
-    label: "Gemini 2.5 Flash Image",
-    provider: "Google",
-    badge: "Mais rápido",
-    description: "Modelo atual do app. Bom para volume e iteração, mas menos confiável em anatomia humana complexa.",
-    costLabel: "~US$ 0,039 / imagem",
-    costDetail: "Referência para 1024x1024 no Vertex."
-  },
-  {
-    value: "imagen-4.0-generate-001",
-    label: "Imagen 4",
-    provider: "Google",
-    badge: "Mais consistente",
-    description: "Melhor equilíbrio para produção. Mais estável para pessoas, mãos e composição do que o Flash Image.",
-    costLabel: "US$ 0,04 / imagem",
-    costDetail: "Melhor custo-benefício para renders finais."
-  },
-  {
-    value: "imagen-4.0-ultra-generate-001",
-    label: "Imagen 4 Ultra",
-    provider: "Google",
-    badge: "Maior qualidade",
-    description: "Melhor opção do grupo para cenas críticas com pessoas, mãos e fidelidade visual.",
-    costLabel: "US$ 0,06 / imagem",
-    costDetail: "Use para cenas difíceis e quando anatomia importa mais."
-  }
-];
-
-const imageStylePreviewFiles = {
-  claude: "video-estilo-claude.jpeg",
-  kiro: "video-estilo-kiro.jpeg",
-  editorial_clean: "editorial-clean.jpeg",
-  realistic_film: "realistic-film.jpeg",
-  cartoon_3d: "cartoon-3d.jpeg",
-  urban_sketching: "urban-sketching.jpeg",
-  ink: "ink.jpeg",
-  editorial_line_green: "editorial-line-green.jpeg",
-  time_split_bold: "time-split-bold.jpeg",
-  punk: "punk-poster.jpeg"
-};
-
-const imageStyleOptions = Object.values(VISUAL_STYLE_PRESETS).map((preset) => {
-  const previewFile = imageStylePreviewFiles[preset.id] || `${preset.id}.jpeg`;
-  const previewLinkPath = `/${previewFile}`;
-
-  return {
-    label: preset.label,
-    value: preset.id,
-    description: preset.description,
-    previewFile,
-    previewImagePath: path.join(stylePreviewDir, previewFile),
-    previewLinkPath
-  };
-});
-const channelOptions = [
-  {
-    label: "@foiumaideia",
-    value: "foiumaideia",
-    handle: "@foiumaideia",
-    folder: "foiumaideia",
-    description: "Curiosidade, explicação clara e impacto prático."
-  },
-  {
-    label: "@quiet2min",
-    value: "quiet2min",
-    handle: "@quiet2min",
-    folder: "quiet2min",
-    description: "Reflexões calmas, autocuidado e clareza interior em poucos minutos."
-  },
-  {
-    label: "@ate2min",
-    value: "ate2min",
-    handle: "@ate2min",
-    folder: "ate2min",
-    description: "Mensagens breves, tranquilas e inspiradoras para desacelerar."
-  }
-];
-
-const channelPublishProfiles = {
-  foiumaideia: {
-    identifierKeys: [
-      "AGENDADOR_ONLINE_FOIUMAIDEIA_EMAIL",
-      "AGENDADOR_ONLINE_FOIUMAIDEIA_USERNAME",
-      "FOIUMAIDEIA_USER",
-      "AGENDADOR_EMAIL",
-      "AGENDADOR_USERNAME"
-    ],
-    passwordKeys: ["AGENDADOR_ONLINE_PASSWORD", "AGENDADOR_PASSWORD"],
-    publicUrlKeys: ["FOIUMAIDEIA_URL"]
-  },
-  quiet2min: {
-    identifierKeys: [
-      "AGENDADOR_ONLINE_QUIET2MIN_EMAIL",
-      "AGENDADOR_ONLINE_QUIET2MIN_USERNAME",
-      "AGENDADOR_EMAIL",
-      "AGENDADOR_USERNAME"
-    ],
-    passwordKeys: ["AGENDADOR_ONLINE_PASSWORD", "AGENDADOR_PASSWORD"]
-  },
-  ate2min: {
-    identifierKeys: [
-      "AGENDADOR_ONLINE_ATE2MIN_EMAIL",
-      "AGENDADOR_ONLINE_ATE2MIN_USERNAME",
-      "AGENDADOR_EMAIL",
-      "AGENDADOR_USERNAME"
-    ],
-    passwordKeys: ["AGENDADOR_ONLINE_PASSWORD", "AGENDADOR_PASSWORD"]
-  }
-};
-
-const channelPresets = {
-  foiumaideia: {
-    tone: "shortform_native",
-    voice: DEFAULT_VOICE,
-    imageModel: DEFAULT_IMAGE_MODEL,
-    voiceByLanguage: {
-      "pt-BR": DEFAULT_VOICE,
-      "en-US": DEFAULT_ENGLISH_VOICE
-    },
-    imageStyle: "editorial_line_green",
-    outputProfile: "vertical-short",
-    targetSeconds: 60,
-    customStylePromptByLanguage: {
-      "pt-BR": "com ritmo curto, visual e nativo de redes sociais, com voz firme, curiosa, ritmada e muito nativa de internet, sem soar teatral",
-      "en-US": "with a native short-form social rhythm, a firm, curious, internet-native voice, and punchy delivery without sounding theatrical"
-    },
-    scriptGuidance: FOIUMAIDEIA_VIRAL_SCRIPT_GUIDANCE
-  },
-  quiet2min: {
-    language: "en-US",
-    tone: "wellness_comfort",
-    voice: DEFAULT_ENGLISH_VOICE,
-    imageModel: DEFAULT_IMAGE_MODEL,
-    voiceByLanguage: {
-      "pt-BR": DEFAULT_VOICE,
-      "en-US": DEFAULT_ENGLISH_VOICE
-    },
-    imageStyle: "punk",
-    outputProfile: "vertical-short",
-    targetSeconds: 100,
-    customStylePromptByLanguage: {
-      "pt-BR": "com voz calma, acolhedora, serena e ritmo suave",
-      "en-US": "with a calm, soothing, warm voice and a gentle, reassuring pace"
-    },
-    scriptGuidance:
-      "Write calm, reflective and soothing short scripts focused on personal growth, emotional clarity, inner peace and gentle self-help. The tone should feel peaceful, grounded, reassuring and visually concrete, like a quiet reset for the day."
-  },
-  ate2min: {
-    language: "pt-BR",
-    tone: "wellness_end_of_day",
-    voice: DEFAULT_VOICE,
-    imageModel: DEFAULT_IMAGE_MODEL,
-    voiceByLanguage: {
-      "pt-BR": DEFAULT_VOICE,
-      "en-US": DEFAULT_ENGLISH_VOICE
-    },
-    imageStyle: "punk",
-    outputProfile: "vertical-short",
-    targetSeconds: 100,
-    customStylePromptByLanguage: {
-      "pt-BR": "com voz calorosa, tranquila, humana e inspiradora",
-      "en-US": "with a warm, calm, human and inspiring voice"
-    },
-    scriptGuidance:
-      "Write brief reflective stories with a calm, human and inspiring tone. Prioritize emotional clarity, practical wisdom, soft transitions and a memorable ending that fits within two minutes."
-  }
-};
-
-const PREVIEW_QUEUE_LANE = "preview";
-const HEAVY_QUEUE_LANE = "heavy";
 const jobs = new Map();
 const streams = new Map();
-const jobProcesses = new Map();
-const previewQueue = [];
-const heavyQueue = [];
-let activePreviewJobId = null;
-let activeHeavyJobId = null;
 let persistTimer = null;
-const ARTIFACT_FRESHNESS_TOLERANCE_MS = 1500;
 
-const parseEnvFile = async (envPath) => {
-  if (!existsSync(envPath)) {
-    return {};
-  }
-
-  const content = await readFile(envPath, "utf8");
-  const result = {};
-
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-
-    if (!line || line.startsWith("#")) {
-      continue;
-    }
-
-    const separatorIndex = line.indexOf("=");
-
-    if (separatorIndex === -1) {
-      continue;
-    }
-
-    const key = line.slice(0, separatorIndex).trim();
-    const value = line.slice(separatorIndex + 1).trim();
-
-    if (key) {
-      result[key] = value;
-    }
-  }
-
-  return result;
-};
-
-const resolvePathFrom = (baseDir, value, fallback = "") => {
-  const raw = String(value || fallback || "").trim();
-
-  if (!raw) {
-    return "";
-  }
-
-  return path.isAbsolute(raw) ? raw : path.resolve(baseDir, raw);
-};
-
-const slugify = (input) =>
-  String(input || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-
-const deriveTitleFromText = (input) => {
-  const text = String(input || "").trim();
-
-  if (!text) {
-    return "";
-  }
-
-  const line = text
-    .split(/\r?\n/)
-    .map((item) => item.trim())
-    .find(Boolean) || text;
-
-  return line
-    .replace(/^#+\s*/, "")
-    .replace(/\s+/g, " ")
-    .slice(0, 120)
-    .trim();
-};
-
-const createId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-
-const readJsonFile = async (targetPath) => {
-  try {
-    return JSON.parse(await readFile(targetPath, "utf8"));
-  } catch {
-    return null;
-  }
-};
-
-const writeJsonFile = async (targetPath, payload) => {
-  await writeFile(targetPath, JSON.stringify(payload, null, 2));
-};
-
-const fileExists = async (targetPath) => {
-  try {
-    await stat(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const createFileUrl = (targetPath) => {
-  const absolutePath = path.resolve(String(targetPath || ""));
-  return `/api/file?path=${encodeURIComponent(absolutePath)}`;
-};
-
-const readTextFile = async (targetPath) => {
-  try {
-    return await readFile(targetPath, "utf8");
-  } catch {
-    return "";
-  }
-};
-
-const safeUnlink = async (targetPath) => {
-  try {
-    await unlink(targetPath);
-  } catch {}
-};
-
-const toVideoId = (filePath) => Buffer.from(String(filePath || ""), "utf8").toString("base64url");
-
-const fromVideoId = (value) => {
-  try {
-    return Buffer.from(String(value || ""), "base64url").toString("utf8");
-  } catch {
-    return "";
-  }
-};
 
 const getDatePrefixFromSlug = (slug) => {
   const match = String(slug || "").match(/^(\d{4}-\d{2}-\d{2})-/);
@@ -476,13 +252,6 @@ const resolveLocalizedExportPath = async ({exportDir, slug, fallbackTitle, story
   return path.join(exportDir, `${basename}.mp4`);
 };
 
-const roundSeconds = (value) => Math.round(Number(value || 0) * 1000) / 1000;
-
-const countWords = (text) =>
-  String(text || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean).length;
 
 const getTargetWordRange = (targetSeconds = 100, language = "pt-BR") => {
   const normalizedLanguage = String(language || "pt-BR").trim().toLowerCase();
@@ -592,8 +361,9 @@ const extractWordEntries = (text) => {
 };
 
 const getRunPaths = (slug) => {
-  const runDir = path.join(configuredVideoEngineRoot, "runs", slug);
-  const publicRunDir = path.join(configuredVideoEngineRoot, "public", "runs", slug);
+  const normalizedSlug = String(slug ?? "").trim() || MISSING_RUN_SLUG;
+  const runDir = path.join(configuredVideoEngineRoot, "runs", normalizedSlug);
+  const publicRunDir = path.join(configuredVideoEngineRoot, "public", "runs", normalizedSlug);
 
   return {
     runDir,
@@ -605,569 +375,12 @@ const getRunPaths = (slug) => {
     agentReportPath: path.join(runDir, "agent-report.json"),
     orchestrationReportPath: path.join(runDir, "orchestration-report.json"),
     postPath: path.join(runDir, "post.txt"),
-    assetDir: path.join(configuredVideoEngineRoot, "assets", "envato", slug),
+    assetDir: path.join(configuredVideoEngineRoot, "assets", "envato", normalizedSlug),
     publicRunDir,
     publicAudioDir: path.join(publicRunDir, "audio"),
     publicVideoDir: path.join(publicRunDir, "video"),
     publicAudioPath: path.join(publicRunDir, "audio", "voiceover.mp3"),
-    outPath: path.join(configuredVideoEngineRoot, "out", `${slug}.mp4`)
-  };
-};
-
-const toIsoNow = () => new Date().toISOString();
-const toTimestampMs = (value) => {
-  const ms = Date.parse(String(value || "").trim());
-  return Number.isFinite(ms) ? ms : null;
-};
-
-const getArtifactEpochMs = (jobOrSlug) => {
-  if (!jobOrSlug || typeof jobOrSlug === "string") {
-    return null;
-  }
-
-  return (
-    toTimestampMs(jobOrSlug.artifactEpochAt) ||
-    toTimestampMs(jobOrSlug.startedAt) ||
-    toTimestampMs(jobOrSlug.createdAt)
-  );
-};
-
-const normalizePositiveInt = (value) => {
-  const parsed = Number.parseInt(String(value ?? "").trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-};
-
-const isFreshArtifactForJob = (targetPath, jobOrSlug) => {
-  if (!existsSync(targetPath)) {
-    return false;
-  }
-
-  const epochMs = getArtifactEpochMs(jobOrSlug);
-  if (!epochMs) {
-    return true;
-  }
-
-  try {
-    return statSync(targetPath).mtimeMs + ARTIFACT_FRESHNESS_TOLERANCE_MS >= epochMs;
-  } catch {
-    return false;
-  }
-};
-
-const readJsonSyncIfExists = (targetPath) => {
-  try {
-    return JSON.parse(readFileSync(targetPath, "utf8"));
-  } catch {
-    return null;
-  }
-};
-
-const resolveEffectiveStoryboardPath = (jobOrSlug) => {
-  if (typeof jobOrSlug === "string") {
-    return getRunPaths(jobOrSlug).storyboardPath;
-  }
-
-  const slug = String(jobOrSlug?.slug || "").trim();
-  if (!slug) {
-    return "";
-  }
-
-  const candidates = [
-    String(jobOrSlug?.input?.storyboardFile || "").trim(),
-    String(jobOrSlug?.storyboardPath || "").trim(),
-    getRunPaths(slug).storyboardPath
-  ].filter(Boolean);
-
-  for (const candidate of candidates) {
-    const resolved = path.resolve(candidate);
-    if (existsSync(resolved)) {
-      return resolved;
-    }
-  }
-
-  return path.resolve(getRunPaths(slug).storyboardPath);
-};
-
-const getFreshSceneNumbers = (jobOrSlug) => {
-  const slug = typeof jobOrSlug === "string" ? jobOrSlug : String(jobOrSlug?.slug || "").trim();
-  if (!slug) {
-    return new Set();
-  }
-
-  const {assetDir} = getRunPaths(slug);
-  if (!existsSync(assetDir)) {
-    return new Set();
-  }
-
-  const sceneNumbers = new Set();
-  for (const entry of readdirSync(assetDir)) {
-    const match = /^scene-(\d+)\.mp4$/i.exec(entry);
-    if (!match) {
-      continue;
-    }
-
-    const sceneNumber = normalizePositiveInt(match[1]);
-    if (!sceneNumber) {
-      continue;
-    }
-
-    const scenePath = path.join(assetDir, entry);
-    if (typeof jobOrSlug === "string" || isFreshArtifactForJob(scenePath, jobOrSlug)) {
-      sceneNumbers.add(sceneNumber);
-    }
-  }
-
-  return sceneNumbers;
-};
-
-const getSceneCompletionStats = (jobOrSlug) => {
-  const slug = typeof jobOrSlug === "string" ? jobOrSlug : String(jobOrSlug?.slug || "").trim();
-  const paths = getRunPaths(slug);
-  const storyboardPath = resolveEffectiveStoryboardPath(jobOrSlug);
-  const storyboard = readJsonSyncIfExists(storyboardPath);
-  const sceneCount = Array.isArray(storyboard?.scenes) ? storyboard.scenes.length : 0;
-  const freshSceneNumbers = getFreshSceneNumbers(jobOrSlug);
-  let existingSceneCount = 0;
-  let firstMissingSceneNumber = null;
-
-  for (let index = 0; index < sceneCount; index += 1) {
-    const sceneNumber = index + 1;
-    if (freshSceneNumbers.has(sceneNumber)) {
-      existingSceneCount += 1;
-      continue;
-    }
-
-    if (firstMissingSceneNumber === null) {
-      firstMissingSceneNumber = sceneNumber;
-    }
-  }
-
-  return {
-    storyboardPath,
-    storyboard,
-    sceneCount,
-    existingSceneCount,
-    missingSceneCount: Math.max(0, sceneCount - existingSceneCount),
-    firstMissingSceneNumber: normalizePositiveInt(firstMissingSceneNumber),
-    freshSceneNumbers: Array.from(freshSceneNumbers).sort((left, right) => left - right)
-  };
-};
-
-const getMissingSceneHintFromJob = (job) => {
-  if (!job || String(job.status || "").trim().toLowerCase() !== "failed") {
-    return null;
-  }
-
-  const haystack = []
-    .concat(Array.isArray(job.logTail) ? job.logTail : [])
-    .concat([job.error, job.failureSummary, job.rca?.summary])
-    .filter(Boolean)
-    .join("\n");
-
-  const incompleteMatch = /incompleta nas cenas:\s*([0-9,\s]+)/i.exec(haystack);
-  if (incompleteMatch?.[1]) {
-    const firstValue = incompleteMatch[1]
-      .split(",")
-      .map((value) => normalizePositiveInt(value))
-      .find((value) => value !== null);
-    if (firstValue !== undefined) {
-      return firstValue ?? null;
-    }
-  }
-
-  const singleMatch = /falta a cena\s+(\d+)/i.exec(haystack);
-  if (singleMatch?.[1]) {
-    return normalizePositiveInt(singleMatch[1]);
-  }
-
-  return null;
-};
-
-const hasBasicResumeArtifacts = (job) => {
-  if (job.type !== "generate" || job.status !== "failed" || job.input?.previewOnly) {
-    return false;
-  }
-
-  const paths = getRunPaths(job.slug);
-  const sceneStats = getSceneCompletionStats(job);
-
-  if (
-    !existsSync(sceneStats.storyboardPath || paths.storyboardPath) ||
-    !isFreshArtifactForJob(paths.voiceoverPath, job) ||
-    !isFreshArtifactForJob(paths.publicAudioPath, job)
-  ) {
-    return false;
-  }
-
-  return sceneStats.sceneCount > 0 && sceneStats.missingSceneCount === 0;
-};
-
-const getFirstMissingSceneNumber = (job) => {
-  if (job.type !== "generate" || job.input?.previewOnly) {
-    return null;
-  }
-
-  return getSceneCompletionStats(job).firstMissingSceneNumber;
-};
-
-const getQaReportForSlug = (slug) => {
-  const paths = getRunPaths(slug);
-  return readJsonSyncIfExists(paths.agentReportPath) || readJsonSyncIfExists(paths.orchestrationReportPath);
-};
-
-const getQaReportForJob = (jobOrSlug) => {
-  if (!jobOrSlug || typeof jobOrSlug === "string") {
-    return getQaReportForSlug(jobOrSlug);
-  }
-
-  const slug = String(jobOrSlug.slug || "").trim();
-  if (!slug) {
-    return null;
-  }
-
-  const paths = getRunPaths(slug);
-  const reportCandidates = [paths.agentReportPath, paths.orchestrationReportPath];
-
-  for (const reportPath of reportCandidates) {
-    if (!isFreshArtifactForJob(reportPath, jobOrSlug)) {
-      continue;
-    }
-
-    const report = readJsonSyncIfExists(reportPath);
-    if (report) {
-      return report;
-    }
-  }
-
-  return null;
-};
-
-const isQaPassedForSlug = (slug) => {
-  const report = getQaReportForSlug(slug);
-  return report?.qa?.passed === true || Boolean(report?.finalVideo && report?.status === "completed");
-};
-
-const isQaPassedForJob = (jobOrSlug) => {
-  const report = getQaReportForJob(jobOrSlug);
-  return report?.qa?.passed === true || Boolean(report?.finalVideo && report?.status === "completed");
-};
-
-const getRecoverySourceJob = (job) => {
-  if (!job) {
-    return null;
-  }
-
-  if (job.type === "generate") {
-    return job;
-  }
-
-  const referencedJobIds = [
-    job.input?.sourceJobId,
-    job.input?.resumeFromJobId,
-    job.input?.approvedFromJobId
-  ]
-    .map((value) => String(value || "").trim())
-    .filter(Boolean);
-
-  for (const referencedJobId of referencedJobIds) {
-    const referenced = jobs.get(referencedJobId);
-    if (referenced?.type === "generate") {
-      return referenced;
-    }
-  }
-
-  return (
-    Array.from(jobs.values())
-      .filter((candidate) => candidate.slug === job.slug && candidate.type === "generate")
-      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0] ||
-    job
-  );
-};
-
-const canPrepareAudioForJob = (job) => {
-  const sourceJob = getRecoverySourceJob(job);
-  if (!sourceJob?.slug || sourceJob.input?.previewOnly) {
-    return false;
-  }
-
-  const paths = getRunPaths(sourceJob.slug);
-  const sceneStats = getSceneCompletionStats(sourceJob);
-  return (
-    sceneStats.sceneCount > 0 &&
-    sceneStats.missingSceneCount === 0 &&
-    existsSync(sceneStats.storyboardPath || paths.storyboardPath)
-  );
-};
-
-const canRenderOnlyForJob = (job) => {
-  const sourceJob = getRecoverySourceJob(job);
-  if (!sourceJob?.slug || sourceJob.input?.previewOnly) {
-    return false;
-  }
-
-  const paths = getRunPaths(sourceJob.slug);
-  const sceneStats = getSceneCompletionStats(sourceJob);
-  return (
-    sceneStats.sceneCount > 0 &&
-    sceneStats.missingSceneCount === 0 &&
-    existsSync(sceneStats.storyboardPath || paths.storyboardPath) &&
-    isFreshArtifactForJob(paths.renderPropsPath, sourceJob) &&
-    isFreshArtifactForJob(paths.publicAudioPath, sourceJob)
-  );
-};
-
-const canValidateOnlyForJob = (job) => {
-  const sourceJob = getRecoverySourceJob(job);
-  if (!sourceJob?.slug || sourceJob.input?.previewOnly) {
-    return false;
-  }
-
-  return isFreshArtifactForJob(getRunPaths(sourceJob.slug).outPath, sourceJob);
-};
-
-const buildJobStepChecklist = (job) => {
-  if (!job?.slug || (job.type !== "generate" && job.type !== "scene-regenerate" && job.type !== "rerender")) {
-    return [];
-  }
-
-  const paths = getRunPaths(job.slug);
-  const sceneStats = getSceneCompletionStats(job);
-  const storyboardQaPath = sceneStats.storyboardPath
-    ? path.join(path.dirname(sceneStats.storyboardPath), "storyboard-qa.json")
-    : path.join(paths.runDir, "storyboard-qa.json");
-  const storyboardQa = readJsonSyncIfExists(storyboardQaPath);
-  const voiceover = readJsonSyncIfExists(paths.voiceoverPath);
-  const renderProps = readJsonSyncIfExists(paths.renderPropsPath);
-  const agentReport = readJsonSyncIfExists(path.join(paths.runDir, "agent-report.json"));
-  const fluxReport =
-    readJsonSyncIfExists(path.join(paths.assetDir, "flux2-plan-report.json")) ||
-    readJsonSyncIfExists(path.join(paths.assetDir, "plan-report.json"));
-
-  const storyboardPassed = storyboardQa?.passed === true;
-  const storyboardBlocked = storyboardQa?.passed === false;
-  const timedWordCount = Array.isArray(voiceover?.timedWords) ? voiceover.timedWords.length : 0;
-  const rushedSceneCount = Array.isArray(voiceover?.sceneTimingAnalysis?.rushedScenes)
-    ? voiceover.sceneTimingAnalysis.rushedScenes.length
-    : 0;
-  const renderSceneCount = Array.isArray(renderProps?.scenes) ? renderProps.scenes.length : 0;
-  const renderCaptionCount = Array.isArray(renderProps?.captions) ? renderProps.captions.length : 0;
-  const qaPassed = agentReport?.qa?.passed === true || Boolean(agentReport?.finalVideo && agentReport?.status === "completed");
-
-  return [
-    {
-      id: "storyboard",
-      label: "Storyboard",
-      status: storyboardPassed ? "completed" : storyboardBlocked ? "blocked" : existsSync(paths.storyboardPath) ? "ready" : "pending",
-      summary: storyboardPassed
-        ? `QA ok • ${sceneStats.sceneCount} cenas`
-        : storyboardBlocked
-          ? `QA reprovou • ${Array.isArray(storyboardQa?.issues) ? storyboardQa.issues.length : 0} issues`
-          : existsSync(paths.storyboardPath)
-            ? "Storyboard gerado, aguardando QA"
-            : "Aguardando gerar storyboard",
-      counts: {
-        sceneCount: sceneStats.sceneCount,
-        issueCount: Array.isArray(storyboardQa?.issues) ? storyboardQa.issues.length : 0,
-        warningCount: Array.isArray(storyboardQa?.warnings) ? storyboardQa.warnings.length : 0
-      }
-    },
-    {
-      id: "assets",
-      label: "Cenas / imagens",
-      status:
-        sceneStats.sceneCount > 0 && sceneStats.existingSceneCount === sceneStats.sceneCount
-          ? "completed"
-          : sceneStats.existingSceneCount > 0
-            ? "partial"
-            : fluxReport?.totals?.localAuditFailureCount > 0 || fluxReport?.totals?.promptValidationFailureCount > 0
-              ? "blocked"
-              : storyboardPassed
-                ? "ready"
-                : "pending",
-      summary:
-        sceneStats.sceneCount > 0 && sceneStats.existingSceneCount === sceneStats.sceneCount
-          ? `Todas as ${sceneStats.sceneCount} cenas prontas`
-          : sceneStats.existingSceneCount > 0
-            ? `${sceneStats.existingSceneCount}/${sceneStats.sceneCount} cenas prontas`
-            : fluxReport?.totals?.localAuditFailureCount > 0 || fluxReport?.totals?.promptValidationFailureCount > 0
-              ? "Falhas na geracao visual"
-              : "Aguardando gerar cenas",
-      counts: {
-        sceneCount: sceneStats.sceneCount,
-        existingSceneCount: sceneStats.existingSceneCount,
-        missingSceneCount: sceneStats.missingSceneCount
-      }
-    },
-    {
-      id: "voiceover",
-      label: "Voz e timings",
-      status:
-        timedWordCount > 0 && rushedSceneCount === 0
-          ? "completed"
-          : voiceover
-            ? "partial"
-            : storyboardPassed
-              ? "ready"
-              : "pending",
-      summary:
-        timedWordCount > 0 && rushedSceneCount === 0
-          ? `${timedWordCount} palavras alinhadas`
-          : voiceover
-            ? `${timedWordCount} palavras alinhadas • ${rushedSceneCount} cenas corridas`
-            : "Aguardando gerar voiceover",
-      counts: {
-        timedWordCount,
-        rushedSceneCount
-      }
-    },
-    {
-      id: "audio",
-      label: "Audio final",
-      status: existsSync(paths.publicAudioPath) ? "completed" : voiceover ? "ready" : "pending",
-      summary: existsSync(paths.publicAudioPath) ? "voiceover.mp3 pronto" : "Aguardando MP3 final",
-      counts: {}
-    },
-    {
-      id: "renderPrep",
-      label: "Legenda / render props",
-      status:
-        renderSceneCount > 0 && renderCaptionCount > 0
-          ? "completed"
-          : renderProps
-            ? "partial"
-            : voiceover
-              ? "ready"
-              : "pending",
-      summary:
-        renderSceneCount > 0 && renderCaptionCount > 0
-          ? `${renderSceneCount} cenas • ${renderCaptionCount} captions`
-          : renderProps
-            ? "Props de render incompletas"
-            : "Aguardando preparar render",
-      counts: {
-        sceneCount: renderSceneCount,
-        captionCount: renderCaptionCount
-      }
-    },
-    {
-      id: "finalQa",
-      label: "Video final / QA",
-      status: qaPassed ? "completed" : existsSync(paths.outPath) ? "partial" : renderProps ? "ready" : "pending",
-      summary: qaPassed ? "QA final ok" : existsSync(paths.outPath) ? "Video existe, falta validar" : "Aguardando render final",
-      counts: {
-        outputExists: existsSync(paths.outPath) ? 1 : 0
-      }
-    }
-  ];
-};
-
-const getJobStepChecklist = (job) => {
-  const paths = getRunPaths(job.slug);
-  const effectiveStoryboardPath = resolveEffectiveStoryboardPath(job);
-  const storyboardExists = existsSync(effectiveStoryboardPath);
-  const sceneStats = getSceneCompletionStats(job);
-  const sceneCount = sceneStats.sceneCount;
-  const firstMissingSceneNumber =
-    getMissingSceneHintFromJob(job) ||
-    normalizePositiveInt(sceneStats.firstMissingSceneNumber);
-  const allSceneClipsExist = sceneCount > 0 && sceneStats.missingSceneCount === 0;
-  let qaPassed = isQaPassedForJob(job);
-  const trustCompletedArtifacts = job?.status === "completed" || (qaPassed && allSceneClipsExist);
-  const voiceoverJsonExists = trustCompletedArtifacts
-    ? existsSync(paths.voiceoverPath)
-    : isFreshArtifactForJob(paths.voiceoverPath, job);
-  const voiceoverMp3Exists = trustCompletedArtifacts
-    ? existsSync(paths.publicAudioPath)
-    : isFreshArtifactForJob(paths.publicAudioPath, job);
-  const renderPropsExists = trustCompletedArtifacts
-    ? existsSync(paths.renderPropsPath)
-    : isFreshArtifactForJob(paths.renderPropsPath, job);
-  const outputExists = trustCompletedArtifacts
-    ? existsSync(paths.outPath)
-    : isFreshArtifactForJob(paths.outPath, job);
-  let timedWordsReady = false;
-
-  if (voiceoverJsonExists && isFreshArtifactForJob(paths.voiceoverPath, job)) {
-    try {
-      const voiceover = JSON.parse(readFileSync(paths.voiceoverPath, "utf8"));
-      timedWordsReady = Array.isArray(voiceover?.timedWords) && voiceover.timedWords.length > 0;
-    } catch {}
-  } else {
-    timedWordsReady = false;
-  }
-
-  let effectiveRenderPropsExists = renderPropsExists;
-  let effectiveOutputExists = outputExists;
-
-  if (!allSceneClipsExist && !trustCompletedArtifacts) {
-    qaPassed = false;
-    effectiveRenderPropsExists = false;
-    effectiveOutputExists = false;
-  }
-
-  return {
-    firstMissingSceneNumber,
-    allSceneClipsExist,
-    steps: [
-      {
-        key: "storyboard",
-        label: "Storyboard",
-        status: storyboardExists ? "completed" : "missing",
-        detail: storyboardExists ? `${sceneCount || 0} cenas no storyboard` : "Storyboard ainda ausente"
-      },
-      {
-        key: "assets",
-        label: "Imagens e cenas",
-        status: !storyboardExists ? "blocked" : allSceneClipsExist ? "completed" : "blocked",
-        detail: !storyboardExists
-          ? "Sem storyboard não há geração visual"
-          : allSceneClipsExist
-            ? `Todos os ${sceneCount} clips de cena existem`
-            : `Falta a cena ${firstMissingSceneNumber || "?"}`
-      },
-      {
-        key: "audio",
-        label: "Voz",
-        status: voiceoverJsonExists && voiceoverMp3Exists ? "completed" : voiceoverJsonExists ? "partial" : "missing",
-        detail: voiceoverJsonExists && voiceoverMp3Exists
-          ? "voiceover.json e voiceover.mp3 prontos"
-          : voiceoverJsonExists
-            ? "voiceover.json existe, mas o mp3 final não"
-            : "A voz ainda não foi gerada"
-      },
-      {
-        key: "timestamps",
-        label: "Timestamps",
-        status: qaPassed || effectiveOutputExists ? "completed" : timedWordsReady ? "completed" : voiceoverJsonExists ? "partial" : "missing",
-        detail: qaPassed || effectiveOutputExists
-          ? "Timestamps resolvidos no vídeo final"
-          : timedWordsReady
-          ? "timedWords prontos para karaokê e legendas"
-          : voiceoverJsonExists
-            ? "Há voz base, mas faltam timestamps sólidos"
-            : "Aguardando voz para extrair timestamps"
-      },
-      {
-        key: "render",
-        label: "Render",
-        status: effectiveOutputExists ? "completed" : effectiveRenderPropsExists ? "ready" : "missing",
-        detail: effectiveOutputExists
-          ? "MP4 final já existe"
-          : effectiveRenderPropsExists
-            ? "render-props prontos; pode renderizar"
-            : "Ainda faltam props de render"
-      },
-      {
-        key: "qa",
-        label: "QA final",
-        status: qaPassed ? "completed" : effectiveOutputExists ? "ready" : "missing",
-        detail: qaPassed
-          ? "QA final validada"
-          : effectiveOutputExists
-            ? "Video existe; pode validar"
-            : "Aguardando video final para validar"
-      }
-    ]
+    outPath: path.join(configuredVideoEngineRoot, "out", `${normalizedSlug}.mp4`)
   };
 };
 
@@ -1250,7 +463,7 @@ const buildResumeAssetPlan = async ({slug, storyboard, publicVideoDir, assetDir}
     const publicClipPath = path.join(publicVideoDir, fileName);
 
     if (!existsSync(sourceClipPath)) {
-      throw new Error(`Falta o clip ${fileName} em assets/envato/${slug}.`);
+      throw new Error(`Falta o clip ${fileName} em assets/${slug}.`);
     }
 
     if (!existsSync(publicClipPath)) {
@@ -1268,7 +481,7 @@ const buildResumeAssetPlan = async ({slug, storyboard, publicVideoDir, assetDir}
       sceneType: scene.sceneType || "stock",
       clipPath: path.posix.join("runs", slug, "video", fileName),
       attribution: {
-        source: "envato-local",
+        source: "generated-local",
         path: sourceClipPath
       },
       queryUsed: scene.searchQuery || scene.candidateQueries?.[0] || null,
@@ -1287,7 +500,8 @@ const buildResumeRenderProps = ({
   assetPlan,
   timedWords,
   audioDurationSeconds,
-  outputProfile
+  outputProfile,
+  existingRenderProps
 }) => {
   const timeline = buildTimeline({
     scenes: assetPlan,
@@ -1296,7 +510,7 @@ const buildResumeRenderProps = ({
     timedWords,
     sceneSpans: Array.isArray(voiceover.sceneSpans) ? voiceover.sceneSpans : []
   });
-  const musicPath = job.input?.noMusic ? null : null;
+  const musicPath = job.input?.noMusic ? null : existingRenderProps?.musicPath || null;
 
   return {
     title: storyboard.videoTitle || job.title,
@@ -1315,570 +529,13 @@ const buildResumeRenderProps = ({
   };
 };
 
-const getFailureStage = (job) => {
-  const tail = Array.isArray(job?.logTail) ? job.logTail : [];
-  const joined = tail.join("\n").toLowerCase();
-
-  if (joined.includes("timestamps palavra-a-palavra") || joined.includes("stt part offset") || joined.includes("karaoke")) {
-    return "timestamp-extraction";
-  }
-
-  if (joined.includes("a renderizar no remotion") || joined.includes("remotion")) {
-    return "render";
-  }
-
-  if (joined.includes("a validar o render") || joined.includes("[qa]")) {
-    return "qa";
-  }
-
-  if (joined.includes("gera voz") || joined.includes("voiceover")) {
-    return "audio";
-  }
-
-  return job?.status === "failed" ? "pipeline" : null;
-};
-
-const getFailureSummary = (job) => {
-  const error = String(job?.error || "").trim();
-  const stage = getFailureStage(job);
-
-  if (!error && !stage) {
-    return "";
-  }
-
-  const hints = [];
-
-  if (stage) {
-    hints.push(`etapa=${stage}`);
-  }
-
-  if (error) {
-    hints.push(`erro=${error}`);
-  }
-
-  return hints.join(" | ");
-};
-
-const JOB_STATE_META = {
-  queued: {label: "Na fila", severity: "neutral", terminal: false},
-  running: {label: "Em execucao", severity: "info", terminal: false},
-  completed: {label: "Concluido", severity: "success", terminal: true},
-  failed: {label: "Falhou", severity: "danger", terminal: true}
-};
-
-const JOB_STAGE_LABELS = {
-  queue: "Fila",
-  preview: "Preview",
-  storyboard: "Storyboard",
-  audio: "Audio",
-  "timestamp-extraction": "Timestamps",
-  render: "Render",
-  qa: "QA",
-  resume: "Retomada",
-  pipeline: "Pipeline",
-  completed: "Concluido",
-  "video-published": "Publicado",
-  "video-draft": "Rascunho",
-  "video-ready": "Pronto"
-};
-
-const normalizeSignalText = (job) =>
-  [
-    job?.error || "",
-    Array.isArray(job?.logTail) ? job.logTail.slice(-12).join("\n") : "",
-    job?.status || "",
-    job?.type || ""
-  ]
-    .join("\n")
-    .toLowerCase();
-
-const inferJobStageValue = (job) => {
-  const status = String(job?.status || "").trim().toLowerCase();
-  const signal = normalizeSignalText(job);
-
-  if (status === "queued") {
-    return "queue";
-  }
-
-  if (status === "completed") {
-    return job?.input?.previewOnly ? "preview" : "completed";
-  }
-
-  if (status === "failed") {
-    return getFailureStage(job) || "pipeline";
-  }
-
-  if (signal.includes("[resume]") || signal.includes("retomando")) {
-    return "resume";
-  }
-
-  if (signal.includes("preview-only") || signal.includes("storyboard preview")) {
-    return "preview";
-  }
-
-  if (signal.includes("timestamps palavra-a-palavra") || signal.includes("stt part offset") || signal.includes("karaoke")) {
-    return "timestamp-extraction";
-  }
-
-  if (signal.includes("a validar o render") || signal.includes("[qa]")) {
-    return "qa";
-  }
-
-  if (signal.includes("a renderizar no remotion") || signal.includes("remotion")) {
-    return "render";
-  }
-
-  if (signal.includes("gera voz") || signal.includes("voiceover") || signal.includes("audio")) {
-    return "audio";
-  }
-
-  if (signal.includes("storyboard") || signal.includes("roteiro")) {
-    return "storyboard";
-  }
-
-  return "pipeline";
-};
-
-const getStageLabel = (value, fallback = "Pipeline") => JOB_STAGE_LABELS[value] || fallback;
-
-const getJobStateInfo = (job) => {
-  const status = String(job?.status || "queued").trim().toLowerCase();
-  const meta = JOB_STATE_META[status] || {label: status || "desconhecido", severity: "neutral", terminal: false};
-
-  return {
-    value: status,
-    label: meta.label,
-    severity: meta.severity,
-    terminal: Boolean(meta.terminal)
-  };
-};
-
-const getJobStageInfo = (job) => {
-  if (job?.stageValue) {
-    return {
-      value: job.stageValue,
-      label: getStageLabel(job.stageValue),
-      source: job.stageSource || "system",
-      confidence: job.stageConfidence || "high"
-    };
-  }
-
-  const value = inferJobStageValue(job);
-  const status = String(job?.status || "").trim().toLowerCase();
-  const source = status === "failed"
-    ? "failure-log"
-    : status === "completed"
-      ? "status"
-      : Array.isArray(job?.logTail) && job.logTail.length > 0
-        ? "log"
-        : "status";
-
-  return {
-    value,
-    label: getStageLabel(value),
-    source,
-    confidence: source === "log" || source === "failure-log" ? "medium" : "low"
-  };
-};
-
-const getJobRca = (job, stageInfo = getJobStageInfo(job)) => {
-  const error = String(job?.error || "").trim();
-  const signal = normalizeSignalText(job);
-  const causes = [];
-  const evidence = [];
-
-  if (error) {
-    evidence.push(error);
-  }
-
-  const latestLog = Array.isArray(job?.logTail) ? job.logTail.at(-1) || "" : "";
-  if (latestLog) {
-    evidence.push(latestLog);
-  }
-
-  if (signal.includes("timeout") || signal.includes("etimedout")) {
-    causes.push("timeout");
-  }
-
-  if (signal.includes("enoent") || signal.includes("no such file") || signal.includes("falta o clip") || signal.includes("ausente")) {
-    causes.push("missing-artifact");
-  }
-
-  if (signal.includes("ffmpeg") || signal.includes("ffprobe")) {
-    causes.push("media-tooling");
-  }
-
-  if (signal.includes("gemini") || signal.includes("openrouter") || signal.includes("google api") || signal.includes("llm")) {
-    causes.push("provider");
-  }
-
-  if (stageInfo.value === "audio") {
-    causes.push("audio-generation");
-  } else if (stageInfo.value === "render") {
-    causes.push("rendering");
-  } else if (stageInfo.value === "timestamp-extraction") {
-    causes.push("timestamp-alignment");
-  } else if (stageInfo.value === "qa") {
-    causes.push("quality-gate");
-  } else if (stageInfo.value === "resume") {
-    causes.push("resume-rebuild");
-  } else if (stageInfo.value === "storyboard") {
-    causes.push("storyboard-generation");
-  }
-
-  return {
-    summary: error || getFailureSummary(job) || stageInfo.label || "Sem detalhe disponivel",
-    causes: [...new Set(causes)],
-    evidence: evidence.slice(0, 3),
-    confidence: error || causes.length > 0 ? "medium" : "low"
-  };
-};
-
-const getJobRecommendedAction = (job, stageInfo = getJobStageInfo(job), rca = getJobRca(job, stageInfo)) => {
-  const stepChecklist = getJobStepChecklist(job);
-  const firstMissingSceneNumber = normalizePositiveInt(stepChecklist.firstMissingSceneNumber);
-  const stepMap = Object.fromEntries(
-    (Array.isArray(stepChecklist.steps) ? stepChecklist.steps : []).map((step) => [step.key, step])
-  );
-  const sourceJob = getRecoverySourceJob(job);
-  const isPreview = Boolean(sourceJob?.input?.previewOnly || job?.input?.previewOnly);
-
-  if (job?.status === "completed") {
-    return {
-      value: "review-output",
-      label: "Revisar saida",
-      details: "Abrir o arquivo final e validar se o resultado esta pronto para uso.",
-      urgency: "low"
-    };
-  }
-
-  if (!isPreview && firstMissingSceneNumber !== null) {
-    const sceneNumber = firstMissingSceneNumber;
-    return {
-      value: "regenerate-missing-scene",
-      label: `Regenerar cena ${sceneNumber}`,
-      details: `A primeira cena faltante detectada e a ${sceneNumber}; reparar essa cena e mais seguro do que refazer tudo.`,
-      urgency: "high"
-    };
-  }
-
-  if (job?.status === "queued") {
-    return {
-      value: "wait-in-queue",
-      label: "Aguardar fila",
-      details: "O job ainda nao iniciou.",
-      urgency: "low"
-    };
-  }
-
-  if (
-    !isPreview &&
-    stepMap.assets?.status === "completed" &&
-    canPrepareAudioForJob(job) &&
-    stepMap.audio?.status !== "completed"
-  ) {
-    return {
-      value: "generate-audio",
-      label: "Gerar audio",
-      details: "As cenas ja existem; o proximo passo correto e reconstruir voz, timings e props sem refazer imagens.",
-      urgency: "high"
-    };
-  }
-
-  if (
-    !isPreview &&
-    stepMap.assets?.status === "completed" &&
-    stepMap.audio?.status === "completed" &&
-    canRenderOnlyForJob(job) &&
-    stepMap.render?.status !== "completed"
-  ) {
-    return {
-      value: "render-only",
-      label: "Renderizar video",
-      details: "Storyboard, cenas e audio ja existem; vale renderizar sem repetir etapas anteriores.",
-      urgency: "high"
-    };
-  }
-
-  if (!isPreview && canValidateOnlyForJob(job) && stepMap.qa?.status !== "completed") {
-    return {
-      value: "validate-only",
-      label: "Validar video",
-      details: "O MP4 ja existe; rode a QA final sem reenfileirar a pipeline inteira.",
-      urgency: "medium"
-    };
-  }
-
-  if (job?.type === "generate" && job?.status === "failed" && hasBasicResumeArtifacts(job)) {
-    return {
-      value: "resume-rebuild",
-      label: "Retomar com artefatos",
-      details: "Storyboard, audio e cenas ja existem; a retomada e mais eficiente do que gerar do zero.",
-      urgency: "high"
-    };
-  }
-
-  if (job?.type === "generate" && job?.status === "failed" && canRetryFailedJobFromStoryboard(job)) {
-    return {
-      value: "retry-from-storyboard",
-      label: "Refazer a partir do storyboard",
-      details: "Existe storyboard reaproveitavel para reenfileirar sem perder o contexto.",
-      urgency: "high"
-    };
-  }
-
-  if (stageInfo.value === "audio") {
-    return {
-      value: "inspect-audio",
-      label: "Revisar voz e TTS",
-      details: "Conferir credenciais, voz selecionada e o passo de voiceover antes de reenfileirar.",
-      urgency: "high"
-    };
-  }
-
-  if (stageInfo.value === "render") {
-    return {
-      value: "inspect-render",
-      label: "Revisar render",
-      details: "Abrir o log do Remotion e validar assets, bitrate e timeout.",
-      urgency: "high"
-    };
-  }
-
-  if (stageInfo.value === "timestamp-extraction") {
-    return {
-      value: "inspect-timestamps",
-      label: "Rever alinhamento de falas",
-      details: "O problema parece estar nos timestamps ou no karaoke; vale inspecionar o texto-base e a segmentacao.",
-      urgency: "medium"
-    };
-  }
-
-  if (stageInfo.value === "qa") {
-    return {
-      value: "inspect-quality",
-      label: "Revisar QA",
-      details: "A etapa final de validacao sinalizou problema; revisar storyboard e saida final.",
-      urgency: "medium"
-    };
-  }
-
-  if (stageInfo.value === "resume") {
-    return {
-      value: "resume-rebuild",
-      label: "Retomar com artefatos",
-      details: "Os artefatos reaproveitaveis parecem presentes; vale retomar em vez de gerar do zero.",
-      urgency: "medium"
-    };
-  }
-
-  const primaryCause = rca.causes[0] || "pipeline";
-  return {
-    value: primaryCause === "missing-artifact" ? "inspect-artifacts" : "inspect-log",
-    label: primaryCause === "missing-artifact" ? "Revisar artefatos ausentes" : "Revisar log e reenfileirar",
-    details: "O RCA sugere que o log ou os artefatos do run precisam ser inspecionados antes de nova tentativa.",
-    urgency: "medium"
-  };
-};
-
-const buildCaseSummary = ({id, kind, title, slug, state, stage, rca, recommendedAction, updatedAt, channel = null, extra = {}}) => ({
-  id,
-  kind,
-  title,
-  slug,
-  channel,
-  state,
-  stage,
-  rca,
-  recommendedAction,
-  updatedAt,
-  extra
-});
-
-const buildJobsSummary = (jobsList) => {
-  const byState = {};
-  const byStage = {};
-  const byType = {};
-
-  for (const job of jobsList) {
-    const stateKey = job?.state?.value || String(job?.status || "unknown");
-    const stageKey = job?.stage?.value || "unknown";
-    const typeKey = String(job?.type || "unknown");
-
-    byState[stateKey] = (byState[stateKey] || 0) + 1;
-    byStage[stageKey] = (byStage[stageKey] || 0) + 1;
-    byType[typeKey] = (byType[typeKey] || 0) + 1;
-  }
-
-  return {
-    total: jobsList.length,
-    queued: byState.queued || 0,
-    running: byState.running || 0,
-    completed: byState.completed || 0,
-    failed: byState.failed || 0,
-    byState,
-    byStage,
-    byType
-  };
-};
-
-const getVideoStateInfo = (video) => {
-  const status = video?.publishStatus === "published"
-    || Boolean(video?.publishedAt)
-    ? "published"
-    : video?.publishStatus === "scheduled"
-      ? "scheduled"
-      : video?.isDraft
-        ? "draft"
-        : "ready";
-  const labels = {
-    published: {label: "Publicado", severity: "success"},
-    scheduled: {label: "Agendado", severity: "info"},
-    draft: {label: "Rascunho", severity: "neutral"},
-    ready: {label: "Pronto", severity: "neutral"}
-  };
-  const meta = labels[status] || labels.ready;
-
-  return {
-    value: status,
-    label: meta.label,
-    severity: meta.severity,
-    terminal: status === "published"
-  };
-};
-
-const getVideoStageInfo = (video) => {
-  const value = video?.publishStatus === "published"
-    || Boolean(video?.publishedAt)
-    ? "video-published"
-    : video?.isDraft
-      ? "video-draft"
-      : "video-ready";
-
-  return {
-    value,
-    label: getStageLabel(value),
-    source: "video-metadata",
-    confidence: "medium"
-  };
-};
-
-const getVideoRca = (video, stateInfo = getVideoStateInfo(video)) => {
-  if (stateInfo.value === "published") {
-    return {
-      summary: "Video publicado com sucesso.",
-      causes: [],
-      evidence: [video.publishedAt || video.updatedAt || ""].filter(Boolean),
-      confidence: "high"
-    };
-  }
-
-  if (stateInfo.value === "scheduled") {
-    return {
-      summary: "Video agendado aguardando janela de publicacao.",
-      causes: ["scheduled"],
-      evidence: [video.publishAt || ""].filter(Boolean),
-      confidence: "high"
-    };
-  }
-
-  if (stateInfo.value === "draft") {
-    return {
-      summary: "Video mantido como rascunho antes da publicacao.",
-      causes: ["draft"],
-      evidence: [video.storyboardUrl || "", video.thumbnailUrl || ""].filter(Boolean),
-      confidence: "medium"
-    };
-  }
-
-  return {
-    summary: "Video pronto para revisão ou publicacao.",
-    causes: ["ready"],
-    evidence: [video.storyboardUrl || "", video.thumbnailUrl || ""].filter(Boolean),
-    confidence: "medium"
-  };
-};
-
-const getVideoRecommendedAction = (video, stateInfo = getVideoStateInfo(video)) => {
-  if (stateInfo.value === "published") {
-    return {
-      value: "monitor-performance",
-      label: "Acompanhar performance",
-      details: "O item ja foi publicado; a proxima acao e observar resultados e reaproveitar aprendizados.",
-      urgency: "low"
-    };
-  }
-
-  if (stateInfo.value === "scheduled") {
-    return {
-      value: "wait-for-publish",
-      label: "Aguardar publicacao",
-      details: "O video ja esta agendado.",
-      urgency: "low"
-    };
-  }
-
-  if (stateInfo.value === "draft") {
-    return {
-      value: "publish-or-edit",
-      label: "Revisar e publicar",
-      details: "O rascunho ainda pode receber ajustes antes de ser enviado para publicacao.",
-      urgency: "medium"
-    };
-  }
-
-  return {
-    value: "publish",
-    label: "Publicar",
-    details: "O video parece pronto para a proxima etapa de publicacao.",
-    urgency: "medium"
-  };
-};
-
-const buildVideoCaseSummary = (video) => {
-  const state = getVideoStateInfo(video);
-  const stage = getVideoStageInfo(video);
-  const rca = getVideoRca(video, state);
-  const recommendedAction = getVideoRecommendedAction(video, state);
-
-  return buildCaseSummary({
-    id: video.id,
-    kind: "video",
-    title: video.title,
-    slug: video.slug,
-    state,
-    stage,
-    rca,
-    recommendedAction,
-    updatedAt: video.updatedAt,
-    channel: video.channel,
-    extra: {
-      publishStatus: video.publishStatus || "",
-      publishedAt: video.publishedAt || null,
-      storyboardUrl: video.storyboardUrl || null,
-      thumbnailUrl: video.thumbnailUrl || null
-    }
-  });
-};
-
-const buildVideosSummary = (videos, failedJobs) => {
-  const published = videos.filter((video) => video.publishStatus === "published" || Boolean(video.publishedAt)).length;
-  const scheduled = videos.filter((video) => video.publishStatus === "scheduled").length;
-  const drafts = videos.filter((video) => video.isDraft === true).length;
-
-  return {
-    total: videos.length,
-    published,
-    scheduled,
-    drafts,
-    failedJobs: failedJobs.length,
-    retryableFailedJobs: failedJobs.filter((job) => job.retryFromStoryboardAvailable).length,
-    readyCases: videos.filter((video) => video.publishStatus !== "published").length + failedJobs.length
-  };
-};
-
 const rootEnvConfig = await parseEnvFile(rootEnvPath);
-const configuredVideoEngineRoot = resolvePathFrom(projectRoot, rootEnvConfig.VIDEOS_ENVATO_ROOT, defaultVideoEngineRoot);
+const configuredVideoEngineRoot = resolvePathFrom(
+  projectRoot,
+  rootEnvConfig.VIDEO_ENGINE_ROOT || rootEnvConfig.VIDEOS_ENVATO_ROOT,
+  defaultVideoEngineRoot
+);
+initJobState({getRunPaths, getJobs: () => jobs, canRetryFailedJobFromStoryboard});
 const videoEnvConfig = await parseEnvFile(path.join(configuredVideoEngineRoot, ".env"));
 const postarRoot = resolvePathFrom(projectRoot, process.env.POSTAR_ROOT || rootEnvConfig.POSTAR_ROOT, defaultPostarRoot);
 const secretsModulePath = path.join(configuredVideoEngineRoot, "scripts", "lib", "secrets.mjs");
@@ -1888,17 +545,30 @@ if (existsSync(secretsModulePath)) {
   ({loadSecretsIntoEnv} = await import(secretsModulePath));
 }
 
+await Promise.all([
+  mkdir(localSystemTempDir, {recursive: true}),
+  mkdir(localXdgCacheDir, {recursive: true}),
+  mkdir(localPuppeteerCacheDir, {recursive: true})
+]);
+
+process.env.TMPDIR = process.env.TMPDIR || localSystemTempDir;
+process.env.TMP = process.env.TMP || process.env.TMPDIR;
+process.env.TEMP = process.env.TEMP || process.env.TMPDIR;
+process.env.XDG_CACHE_HOME = process.env.XDG_CACHE_HOME || localXdgCacheDir;
+process.env.PUPPETEER_CACHE_DIR = process.env.PUPPETEER_CACHE_DIR || localPuppeteerCacheDir;
+process.env.REMOTION_CONCURRENCY = process.env.REMOTION_CONCURRENCY || "1";
+
 const baseChildEnv = {
   ...rootEnvConfig,
   ...videoEnvConfig,
+  TMPDIR: process.env.TMPDIR,
+  TMP: process.env.TMP,
+  TEMP: process.env.TEMP,
+  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
+  PUPPETEER_CACHE_DIR: process.env.PUPPETEER_CACHE_DIR,
+  REMOTION_CONCURRENCY: process.env.REMOTION_CONCURRENCY,
   ...process.env
 };
-AGENDADOR_API_BASE = normalizeAgendadorApiBase(
-  baseChildEnv.AGENDADOR_ONLINE_URL ||
-    baseChildEnv.AGENDADOR_URL ||
-    process.env.AGENDADOR_ONLINE_URL ||
-    DEFAULT_AGENDADOR_SITE_URL
-);
 let videoMetadata = (await readJsonFile(videosFile)) || {};
 
 const getChannelConfig = (value) =>
@@ -1951,59 +621,6 @@ const resolveEffectiveScriptGuidance = ({
 };
 
 const getChannelExportDir = (channelValue) => path.join(postarRoot, getChannelConfig(channelValue).folder);
-const resolveFirstUsableEnvValue = (...keys) => {
-  for (const key of keys.flat()) {
-    const value = String(baseChildEnv[key] || process.env[key] || "").trim();
-    if (value) {
-      return {key, value};
-    }
-  }
-
-  return null;
-};
-
-const resolveAgendadorChannelProfile = (channelValue) => {
-  const channel = getChannelConfig(channelValue);
-  const channelKey = channel.value.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
-  const specificProfile = channelPublishProfiles[channel.value] || channelPublishProfiles.foiumaideia;
-  const identifier = resolveFirstUsableEnvValue(
-    specificProfile.identifierKeys,
-    `AGENDADOR_ONLINE_${channelKey}_EMAIL`,
-    `AGENDADOR_ONLINE_${channelKey}_USERNAME`,
-    `AGENDADOR_${channelKey}_EMAIL`,
-    `AGENDADOR_${channelKey}_USERNAME`
-  );
-  const password = resolveFirstUsableEnvValue(
-    specificProfile.passwordKeys,
-    `AGENDADOR_ONLINE_${channelKey}_PASSWORD`,
-    "AGENDADOR_ONLINE_PASSWORD",
-    "AGENDADOR_PASSWORD"
-  );
-  const publicUrl = resolveFirstUsableEnvValue(
-    specificProfile.publicUrlKeys || [],
-    `AGENDADOR_ONLINE_${channelKey}_URL`,
-    `${channelKey}_URL`
-  );
-
-  return {
-    channel: channel.value,
-    label: channel.label,
-    handle: channel.handle,
-    identifier: identifier?.value || "",
-    identifierSource: identifier?.key || "",
-    password: password?.value || "",
-    passwordSource: password?.key || "",
-    publicUrl: publicUrl?.value || "",
-    profileUrlSource: publicUrl?.key || "",
-    apiBase: AGENDADOR_API_BASE,
-    siteUrl: normalizeAgendadorSiteUrl(baseChildEnv.AGENDADOR_ONLINE_URL || baseChildEnv.AGENDADOR_URL || DEFAULT_AGENDADOR_SITE_URL)
-  };
-};
-
-const hasAgendadorCredentialsForChannel = (channelValue) => {
-  const profile = resolveAgendadorChannelProfile(channelValue);
-  return Boolean(profile.identifier && profile.password);
-};
 
 const getDurationOptions = (profileValue) => getDurationOptionsForProfile(profileValue);
 const outputProfileOptions = listOutputProfileOptions();
@@ -2027,6 +644,13 @@ const serializeImageModelOption = (option) => ({
   costDetail: option.costDetail || ""
 });
 
+const serializeGenerationModeOption = (option) => ({
+  value: option.value,
+  label: option.label,
+  badge: option.badge || "",
+  description: option.description || ""
+});
+
 const serializeVoiceOption = (option) => ({
   label: option.label,
   value: option.value,
@@ -2040,22 +664,34 @@ const resolveImageModel = (value, fallback = DEFAULT_IMAGE_MODEL) => {
   return imageModelOptions.some((option) => option.value === normalized) ? normalized : fallback;
 };
 
+const resolveGenerationMode = (value, fallback = DEFAULT_GENERATION_MODE) => {
+  const normalized = String(value || "").trim();
+  return generationModeOptions.some((option) => option.value === normalized) ? normalized : fallback;
+};
+
 const sanitizeJob = (job) => {
   const stepChecklist = getJobStepChecklist(job);
+  const stepMap = Object.fromEntries(
+    (Array.isArray(stepChecklist.steps) ? stepChecklist.steps : []).map((step) => [step.key, step])
+  );
   const firstMissingSceneNumber = normalizePositiveInt(stepChecklist.firstMissingSceneNumber);
   const resumeAvailable = hasBasicResumeArtifacts(job);
   const state = getJobStateInfo(job);
   const stage = getJobStageInfo(job);
   const rca = getJobRca(job);
+  const failureTaxonomy = getJobFailureTaxonomy({...job, rca});
   const recommendedAction = getJobRecommendedAction(job);
   const recoverySourceJob = getRecoverySourceJob(job);
   const isPreview = Boolean(recoverySourceJob?.input?.previewOnly || job.input?.previewOnly);
+  const effectiveStoryboardPath = findExistingStoryboardPath(job);
 
   return {
     id: job.id,
     type: job.type,
     title: job.title,
     slug: job.slug,
+    caseId: job.caseId || null,
+    attempt: job.attempt || null,
     queueLane: job.queueLane || null,
     status: job.status,
     createdAt: job.createdAt,
@@ -2063,6 +699,11 @@ const sanitizeJob = (job) => {
     heartbeatAt: job.heartbeatAt || null,
     startedAt: job.startedAt || null,
     completedAt: job.completedAt || null,
+    artifactEpochAt: job.artifactEpochAt || null,
+    stageValue: job.stageValue || null,
+    stageSource: job.stageSource || null,
+    stageConfidence: job.stageConfidence || null,
+    stageUpdatedAt: job.stageUpdatedAt || null,
     queuePosition: job.queuePosition ?? null,
     input: {
       ...job.input,
@@ -2070,24 +711,27 @@ const sanitizeJob = (job) => {
     },
     outputPath: job.outputPath || null,
     outputUrl: job.outputPath ? createFileUrl(job.outputPath) : null,
-    storyboardPath: job.storyboardPath || null,
-    storyboardUrl: job.storyboardPath ? createFileUrl(job.storyboardPath) : null,
+    storyboardPath: effectiveStoryboardPath || null,
+    storyboardUrl: effectiveStoryboardPath ? createFileUrl(effectiveStoryboardPath) : null,
+    followUpJobId: job.followUpJobId || null,
     logTail: job.logTail,
     exitCode: typeof job.exitCode === "number" ? job.exitCode : null,
     error: job.error || null,
     failureStage: getFailureStage(job),
     failureSummary: getFailureSummary(job),
     resumeAvailable,
+    retryFromStoryboardAvailable: !isPreview && canRetryFailedJobFromStoryboard(job),
     forceFailAvailable: ["queued", "running"].includes(String(job.status || "").trim().toLowerCase()),
-    sceneRegenerateAvailable: !isPreview && job.status !== "completed" && firstMissingSceneNumber !== null,
-    audioPrepAvailable: !isPreview && canPrepareAudioForJob(job) && getJobStepChecklist(job).steps.find((step) => step.key === "audio")?.status !== "completed",
-    renderOnlyAvailable: !isPreview && canRenderOnlyForJob(job) && getJobStepChecklist(job).steps.find((step) => step.key === "render")?.status !== "completed",
-    validateOnlyAvailable: !isPreview && canValidateOnlyForJob(job) && getJobStepChecklist(job).steps.find((step) => step.key === "qa")?.status !== "completed",
+    sceneRegenerateAvailable: !isPreview && job.status === "failed" && firstMissingSceneNumber !== null,
+    audioPrepAvailable: !isPreview && canPrepareAudioForJob(job) && stepMap.audio?.status !== "completed",
+    renderOnlyAvailable: !isPreview && canRenderOnlyForJob(job) && stepMap.render?.status !== "completed",
+    validateOnlyAvailable: !isPreview && canValidateOnlyForJob(job) && stepMap.qa?.status !== "completed",
     nextMissingSceneNumber: job.status === "completed" ? null : firstMissingSceneNumber,
     stepChecklist: stepChecklist.steps,
     state,
     stage,
     rca,
+    failureTaxonomy,
     recommendedAction,
     caseSummary: buildCaseSummary({
       id: job.id,
@@ -2111,415 +755,91 @@ const sanitizeJob = (job) => {
   };
 };
 
-const persistVideoMetadata = async () => {
-  await mkdir(dataDir, {recursive: true});
-  await writeJsonFile(videosFile, videoMetadata);
-};
-
-const getVideoMetadataKey = ({channel, slug}) => `${String(channel || "foiumaideia").trim()}:${slugify(slug)}`;
-
-const getVideoMetadataEntry = ({channel, slug}) => {
-  const key = getVideoMetadataKey({channel, slug});
-  return videoMetadata[key] || {};
-};
-
-const saveVideoMetadataEntry = async ({channel, slug}, updates) => {
-  const key = getVideoMetadataKey({channel, slug});
-  const current = videoMetadata[key] || {};
-  videoMetadata = {
-    ...videoMetadata,
-    [key]: {
-      ...current,
-      ...updates,
-      channel,
-      slug: slugify(slug),
-      updatedAt: new Date().toISOString()
-    }
-  };
-  await persistVideoMetadata();
-  return videoMetadata[key];
-};
-
-const removeVideoMetadataEntry = async ({channel, slug}) => {
-  const key = getVideoMetadataKey({channel, slug});
-  if (!(key in videoMetadata)) {
-    return;
-  }
-
-  const nextMetadata = {...videoMetadata};
-  delete nextMetadata[key];
-  videoMetadata = nextMetadata;
-  await persistVideoMetadata();
-};
-
-const findLatestJobForSlug = ({slug, channel}) =>
-  Array.from(jobs.values())
-    .filter((job) => job.slug === slug && (!channel || job.input?.channel === channel))
-    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0] || null;
-
-const formatFallbackTitleFromSlug = (slug) =>
-  String(slug || "")
-    .replace(/^\d{4}-\d{2}-\d{2}-/, "")
-    .replace(/-/g, " ")
-    .trim();
-
-const getVideoDurationSeconds = (targetPath) => {
-  try {
-    return roundSeconds(ffprobeDurationSeconds(targetPath));
-  } catch {
-    return null;
-  }
-};
-
-const normalizePlatforms = (value) => {
-  const list = Array.isArray(value) ? value : String(value || "").split(",");
-  const normalized = list
-    .map((item) => String(item || "").trim().toUpperCase())
-    .filter((item) => AGENDADOR_DEFAULT_PLATFORMS.includes(item));
-  return normalized.length > 0 ? [...new Set(normalized)] : [...AGENDADOR_DEFAULT_PLATFORMS];
-};
-
-const normalizePublishAt = (value) => {
-  const raw = String(value || "").trim();
-  if (!raw) {
-    return "";
-  }
-
-  const date = new Date(raw);
-  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
-};
-
-const createVideoRecord = async ({channel, fileName, filePath}) => {
-  const details = await stat(filePath);
-  const slug = path.basename(fileName, path.extname(fileName));
-  const runPaths = getRunPaths(slug);
-  const storyboard = await readJsonFile(runPaths.storyboardPath);
-  const latestJob = findLatestJobForSlug({slug, channel: channel.value});
-  const persistedMetadata = await readVideoMeta(slug).catch(() => null);
-  const metadata = {
-    ...getVideoMetadataEntry({channel: channel.value, slug}),
-    ...(persistedMetadata || {})
-  };
-  const creationParams = latestJob?.input
-    ? {
-        language: latestJob.input.language || null,
-        outputProfile: latestJob.input.outputProfile || null,
-        targetSeconds: Number(latestJob.input.targetSeconds || 0) || null,
-        imageModel: latestJob.input.imageModel || null,
-        imageStyle: latestJob.input.imageStyle || null,
-        tone: latestJob.input.tone || null,
-        voice: latestJob.input.voice || null,
-        channel: latestJob.input.channel || channel.value,
-        channelHandle: latestJob.input.channelHandle || channel.handle,
-        noMusic: latestJob.input.noMusic === true,
-        force: latestJob.input.force === true,
-        previewOnly: latestJob.input.previewOnly === true
-      }
-    : null;
-  const title =
-    String(metadata.title || "").trim() ||
-    String(storyboard?.videoTitle || "").trim() ||
-    String(latestJob?.title || "").trim() ||
-    formatFallbackTitleFromSlug(slug);
-  const caption = String(
-    metadata.caption ??
-    storyboard?.postCaption ??
-    ""
-  ).trim();
-  const publishAt = normalizePublishAt(metadata.publishAt);
-  const platforms = normalizePlatforms(metadata.platforms);
-
+const serializeJobForPersistence = (job) => {
+  const nowIso = toIsoNow();
   return {
-    id: getVideoMetadataKey({channel: channel.value, slug}),
-    slug,
-    name: fileName,
-    title,
-    caption,
-    hook: String(storyboard?.hook || "").trim(),
-    channel: channel.value,
-    channelHandle: channel.handle,
-    channelLabel: channel.label,
-    filePath,
-    url: createFileUrl(filePath),
-    storyboardPath: (await fileExists(runPaths.storyboardPath)) ? runPaths.storyboardPath : "",
-    storyboardUrl: (await fileExists(runPaths.storyboardPath)) ? createFileUrl(runPaths.storyboardPath) : "",
-    updatedAt: details.mtime.toISOString(),
-    sizeBytes: details.size,
-    durationSeconds: getVideoDurationSeconds(filePath),
-    platforms,
-    publishAt,
-    isDraft: metadata.isDraft === true,
-    notes: String(metadata.notes || "").trim(),
-    thumbnailPath: String(metadata.thumbnailPath || "").trim() || null,
-    thumbnailUrl: String(metadata.thumbnailUrl || "").trim() || null,
-    coverUrl: String(metadata.coverUrl || "").trim() || null,
-    lastPostId: metadata.lastPostId ?? null,
-    lastPublishedAt: metadata.lastPublishedAt || null,
-    publishStatus: metadata.publishStatus || "",
-    publishError: metadata.publishError || "",
-    publishedProfile: metadata.publishedProfile || "",
-    jobId: latestJob?.id || null,
-    creationParams,
-    canRedo: Boolean(latestJob || existsSync(runPaths.storyboardPath)),
-    canDelete: true,
-    canPublish: true
+    ...job,
+    queueLane: job.queueLane || getJobQueueLane(job),
+    logTail: Array.isArray(job.logTail) ? job.logTail : [],
+    heartbeatAt: job.heartbeatAt || job.updatedAt || job.createdAt || nowIso,
+    artifactEpochAt: job.artifactEpochAt || job.createdAt || nowIso,
+    stageValue: job.stageValue || inferJobStageValue(job),
+    stageSource: job.stageSource || "system",
+    stageConfidence: job.stageConfidence || "medium",
+    stageUpdatedAt: job.stageUpdatedAt || job.updatedAt || nowIso
   };
-};
-
-const listAllExports = async () => {
-  const videos = [];
-
-  for (const channel of channelOptions) {
-    const exportDir = getChannelExportDir(channel.value);
-    const entries = await readdir(exportDir).catch(() => []);
-
-    for (const entry of entries.filter((item) => item.endsWith(".mp4")).sort()) {
-      const filePath = path.join(exportDir, entry);
-
-      try {
-        videos.push(await createVideoRecord({channel, fileName: entry, filePath}));
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  return videos.sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
 };
 
 const persistJobs = async () => {
-  await mkdir(dataDir, {recursive: true});
-  await writeFile(
-    jobsFile,
-    JSON.stringify(
-      Array.from(jobs.values())
-        .map((job) => sanitizeJob(job))
-        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()),
-      null,
-      2
-    )
+  await ensureManagedDir(dataDir);
+  const payload = JSON.stringify(
+    Array.from(jobs.values())
+      .map((job) => serializeJobForPersistence(job))
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()),
+    null,
+    2
+  );
+  const tempJobsFile = path.join(dataDir, `jobs.json.${process.pid}.${Date.now()}.tmp`);
+  await writeManagedFile(tempJobsFile, payload);
+  await rename(tempJobsFile, jobsFile);
+};
+
+const persistJobsSync = () => {
+  mkdirSync(dataDir, {recursive: true, mode: 0o755});
+  const payload = JSON.stringify(
+    Array.from(jobs.values())
+      .map((job) => serializeJobForPersistence(job))
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()),
+    null,
+    2
+  );
+  const tempJobsFile = path.join(dataDir, `jobs.json.${process.pid}.${Date.now()}.tmp`);
+  writeFileSync(tempJobsFile, payload);
+  renameSync(tempJobsFile, jobsFile);
+};
+
+const slugHasMaterializedArtifacts = (slug) => {
+  const paths = getRunPaths(slug);
+  return (
+    existsSync(paths.runDir) ||
+    existsSync(paths.assetDir) ||
+    existsSync(paths.outPath)
   );
 };
 
-const slugToCaption = (source) => {
-  const base = path.basename(String(source || ""), path.extname(String(source || "")));
-  const withoutDate = base.replace(/^\d{4}-\d{2}-\d{2}-/, "");
-  const text = withoutDate.replace(/-/g, " ").trim();
-  return text ? text.charAt(0).toUpperCase() + text.slice(1) : base;
-};
+const buildUniqueGenerateSlug = (title) => {
+  const slugBase = slugify(title) || "video";
+  const datePrefix = new Date().toISOString().slice(0, 10);
+  const rootSlug = `${datePrefix}-${slugBase}`;
+  let candidate = rootSlug;
+  let suffix = 2;
 
-const getVideoMetaPath = (slug) => path.join(videoLibraryDir, `${slugify(slug) || "video"}.json`);
-
-const readVideoMeta = async (slug) => readJsonFile(getVideoMetaPath(slug));
-
-const writeVideoMeta = async (slug, payload) => {
-  await mkdir(videoLibraryDir, {recursive: true});
-  const normalizedSlug = slugify(slug);
-  const channel = String(payload?.channel || "foiumaideia").trim() || "foiumaideia";
-  const key = getVideoMetadataKey({channel, slug: normalizedSlug});
-  const nextPayload = {
-    ...(videoMetadata[key] || {}),
-    ...payload,
-    channel,
-    slug: normalizedSlug,
-    updatedAt: String(payload?.updatedAt || new Date().toISOString())
-  };
-  videoMetadata = {
-    ...videoMetadata,
-    [key]: nextPayload
-  };
-  await writeFile(getVideoMetaPath(normalizedSlug), JSON.stringify(nextPayload, null, 2));
-};
-
-const findJobForVideoPath = (targetPath) =>
-  Array.from(jobs.values())
-    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
-    .find((job) => {
-      if (!job.outputPath) {
-        return false;
-      }
-
-      const normalizedOutput = path.resolve(job.outputPath);
-      const normalizedTarget = path.resolve(targetPath);
-      return normalizedOutput === normalizedTarget || path.basename(normalizedOutput) === path.basename(normalizedTarget);
-    }) || null;
-
-const inferChannelValueFromPath = (targetPath) =>
-  channelOptions.find((channel) => path.dirname(targetPath) === getChannelExportDir(channel.value))?.value || "";
-
-const inferVideoSlug = (targetPath) => {
-  const matchedJob = findJobForVideoPath(targetPath);
-
-  if (matchedJob?.slug) {
-    return matchedJob.slug;
+  while (
+    Array.from(jobs.values()).some((job) => String(job?.slug || "").trim() === candidate) ||
+    slugHasMaterializedArtifacts(candidate)
+  ) {
+    candidate = `${rootSlug}-${suffix}`;
+    suffix += 1;
   }
 
-  return slugify(path.basename(targetPath, path.extname(targetPath)));
+  return candidate;
 };
 
-const parsePostText = (rawText) => {
-  const parts = String(rawText || "")
-    .split(/\n{2,}/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+const getNextAttemptForCase = (caseId) => {
+  if (!caseId) {
+    return 1;
+  }
 
-  const caption = parts[0] || "";
-  const hashtags = (parts[1] || "")
-    .split(/\s+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+  let maxAttempt = 0;
+  for (const job of jobs.values()) {
+    if (job.caseId === caseId && typeof job.attempt === "number") {
+      maxAttempt = Math.max(maxAttempt, job.attempt);
+    }
+  }
 
-  return {caption, hashtags};
+  return maxAttempt + 1;
 };
 
-const getTikTokDraftPath = (draftId) => path.join(tiktokDraftsDir, `${slugify(draftId) || "draft"}.json`);
-
-const readTikTokDraft = async (draftId) => readJsonFile(getTikTokDraftPath(draftId));
-
-const writeTikTokDraft = async (draftId, payload) => {
-  await mkdir(tiktokDraftsDir, {recursive: true});
-  await writeFile(getTikTokDraftPath(draftId), JSON.stringify(payload, null, 2));
-};
-
-const escapeHtml = (value) =>
-  String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-
-const buildTikTokHelperHtml = (draft) => {
-  const helperTitle = draft.title || draft.slug || "TikTok helper";
-  const captionJson = JSON.stringify(String(draft.caption || ""));
-  const downloadName = escapeHtml(draft.downloadName || `${draft.slug || "video"}.mp4`);
-  const thumbDownloadName = escapeHtml(draft.thumbnailDownloadName || `${draft.slug || "thumbnail"}.png`);
-  const videoLink = escapeHtml(draft.videoUrl || "#");
-  const thumbLink = escapeHtml(draft.thumbnailUrl || "");
-  const uploadUrl = "https://www.tiktok.com/upload";
-
-  return `<!doctype html>
-<html lang="pt-BR">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${escapeHtml(helperTitle)} • TikTok helper</title>
-    <style>
-      :root {
-        --bg: #f4efe6;
-        --ink: #14221e;
-        --muted: #5e6d67;
-        --card: rgba(255,252,246,.92);
-        --line: rgba(20,34,30,.14);
-        --primary: #0f7b6c;
-        --shadow: 0 24px 60px rgba(20,34,30,.12);
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        background:
-          radial-gradient(circle at top left, rgba(215,239,233,.9), transparent 38%),
-          radial-gradient(circle at bottom right, rgba(241,198,160,.34), transparent 24%),
-          var(--bg);
-        color: var(--ink);
-        font-family: "Avenir Next", "Segoe UI Variable", sans-serif;
-      }
-      main { max-width: 1180px; margin: 0 auto; padding: 28px; display: grid; gap: 18px; }
-      .hero, .card {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 24px;
-        box-shadow: var(--shadow);
-      }
-      .hero { padding: 24px; display: grid; gap: 10px; }
-      .eyebrow { margin: 0; color: var(--primary); font-size: .78rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
-      h1 { margin: 0; font-size: clamp(2rem, 4vw, 3.2rem); line-height: .95; }
-      .lede { margin: 0; color: var(--muted); line-height: 1.6; max-width: 820px; }
-      .layout { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 18px; }
-      .card { padding: 18px; display: grid; gap: 14px; align-content: start; }
-      .preview-video, .preview-thumb { width: 100%; border-radius: 18px; border: 1px solid var(--line); background: #0f1412; }
-      .preview-video { aspect-ratio: 9/16; object-fit: contain; }
-      .preview-thumb { aspect-ratio: 9/16; object-fit: cover; }
-      .meta { color: var(--muted); line-height: 1.55; }
-      .actions { display: flex; flex-wrap: wrap; gap: 12px; }
-      .button {
-        border: 0;
-        border-radius: 999px;
-        cursor: pointer;
-        font: inherit;
-        font-weight: 800;
-        padding: 13px 18px;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-      }
-      .button.primary { background: var(--primary); color: white; }
-      .button.secondary { background: transparent; border: 1px solid var(--line); color: var(--ink); }
-      .caption-box {
-        margin: 0;
-        min-height: 280px;
-        border-radius: 20px;
-        background: #151a18;
-        color: #f7f2e8;
-        font: .92rem/1.6 ui-monospace, Menlo, monospace;
-        padding: 18px;
-        white-space: pre-wrap;
-      }
-      .hint { color: var(--muted); font-size: .92rem; line-height: 1.5; }
-      @media (max-width: 980px) {
-        .layout { grid-template-columns: 1fr; }
-        main { padding: 18px; }
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <section class="hero">
-        <p class="eyebrow">TikTok Helper</p>
-        <h1>${escapeHtml(helperTitle)}</h1>
-        <p class="lede">No browser do usuário, não dá para pré-carregar automaticamente o MP4 dentro do TikTok por segurança do navegador. Este helper deixa tudo pronto: abrir o TikTok, copiar a legenda e baixar o vídeo e a thumbnail com um clique.</p>
-      </section>
-
-      <section class="layout">
-        <article class="card">
-          <video class="preview-video" controls playsinline preload="metadata" src="${videoLink}"></video>
-          <p class="meta">${escapeHtml(draft.channelHandle || draft.channel || "")} • ${escapeHtml(downloadName)}</p>
-          <div class="actions">
-            <a class="button primary" href="${uploadUrl}" target="_blank" rel="noreferrer">Abrir upload do TikTok</a>
-            <a class="button secondary" href="${videoLink}" download="${downloadName}">Baixar MP4</a>
-            ${thumbLink ? `<a class="button secondary" href="${thumbLink}" download="${thumbDownloadName}">Baixar thumbnail</a>` : ""}
-          </div>
-          <p class="hint">Fluxo sugerido: 1. abrir upload do TikTok, 2. baixar/soltar o MP4, 3. copiar a legenda, 4. usar a thumbnail como referência visual da capa.</p>
-        </article>
-
-        <article class="card">
-          ${thumbLink ? `<img class="preview-thumb" src="${thumbLink}" alt="Thumbnail do vídeo">` : ""}
-          <div class="actions">
-            <button class="button primary" id="copyCaptionButton" type="button">Copiar descrição</button>
-            ${draft.storyboardUrl ? `<a class="button secondary" href="${escapeHtml(draft.storyboardUrl)}" target="_blank" rel="noreferrer">Abrir storyboard</a>` : ""}
-          </div>
-          <pre class="caption-box" id="captionBox">${escapeHtml(draft.caption || "")}</pre>
-        </article>
-      </section>
-    </main>
-
-    <script>
-      const captionText = ${captionJson};
-      const copyButton = document.getElementById("copyCaptionButton");
-      copyButton?.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(captionText);
-          copyButton.textContent = "Descrição copiada";
-          setTimeout(() => { copyButton.textContent = "Copiar descrição"; }, 1800);
-        } catch (error) {
-          window.alert("Falha ao copiar a descrição.");
-        }
-      });
-    </script>
-  </body>
-</html>`;
-};
 
 const resolveChannelValue = (value, fallback = "foiumaideia") => {
   const normalized = String(value || "").trim();
@@ -2555,7 +875,8 @@ const resolveStoredThumbnailArtifacts = async ({slug, meta = {}}) => {
   ].filter(Boolean);
 
   const thumbnailPath = localThumbnailCandidates.find((candidate) => existsSync(candidate)) || "";
-  const localThumbnailUrl = thumbnailPath ? createFileUrl(thumbnailPath) : "";
+  const thumbnailDetails = thumbnailPath ? await stat(thumbnailPath).catch(() => null) : null;
+  const localThumbnailUrl = thumbnailPath ? createFileUrl(thumbnailPath, thumbnailDetails ? Math.trunc(thumbnailDetails.mtimeMs) : null) : "";
   const remoteThumbnailUrl = String(meta?.thumbnailUrl || "").trim();
   const remoteCoverUrl = String(meta?.coverUrl || "").trim();
   const thumbnailUrl = localThumbnailUrl || remoteThumbnailUrl;
@@ -2571,294 +892,6 @@ const resolveStoredThumbnailArtifacts = async ({slug, meta = {}}) => {
     coverUrl: coverUrl || null,
     thumbnailLabel: thumbnailLabel || null
   };
-};
-
-const buildVideoRecord = async ({targetPath, channelValue}) => {
-  const details = await stat(targetPath);
-  const matchedJob = findJobForVideoPath(targetPath);
-  const slug = inferVideoSlug(targetPath);
-  const paths = getRunPaths(slug);
-  const storyboardPath = matchedJob?.storyboardPath || (existsSync(paths.storyboardPath) ? paths.storyboardPath : "");
-  const storyboard = storyboardPath ? await readJsonFile(storyboardPath) : null;
-  const postText = existsSync(paths.postPath) ? await readTextFile(paths.postPath) : "";
-  const postMeta = parsePostText(postText);
-  const persistedMeta = await readVideoMeta(slug).catch(() => null);
-  const channel = getChannelConfig(
-    resolveChannelValue(persistedMeta?.channel || channelValue || matchedJob?.input?.channel || inferChannelValueFromPath(targetPath))
-  );
-  const meta = {
-    ...getVideoMetadataEntry({channel: channel.value, slug}),
-    ...(persistedMeta || {})
-  };
-  const thumbnail = await resolveStoredThumbnailArtifacts({slug, meta});
-  const title =
-    String(meta?.title || "").trim() ||
-    String(storyboard?.videoTitle || "").trim() ||
-    String(matchedJob?.title || "").trim() ||
-    slugToCaption(targetPath);
-  const caption =
-    String(meta?.caption || "").trim() ||
-    String(postMeta.caption || "").trim() ||
-    "";
-  const hashtags = Array.isArray(meta?.hashtags) && meta.hashtags.length > 0
-    ? meta.hashtags
-    : postMeta.hashtags;
-  const platforms = Array.isArray(meta?.platforms) && meta.platforms.length > 0
-    ? meta.platforms
-    : ["FB", "IG", "YT"];
-  const creationParams = matchedJob?.input
-    ? {
-        language: matchedJob.input.language || null,
-        outputProfile: matchedJob.input.outputProfile || null,
-        targetSeconds: Number(matchedJob.input.targetSeconds || 0) || null,
-        imageModel: matchedJob.input.imageModel || null,
-        imageStyle: matchedJob.input.imageStyle || null,
-        tone: matchedJob.input.tone || null,
-        voice: matchedJob.input.voice || null,
-        channel: matchedJob.input.channel || channel.value,
-        channelHandle: matchedJob.input.channelHandle || channel.handle,
-        noMusic: matchedJob.input.noMusic === true,
-        force: matchedJob.input.force === true,
-        previewOnly: matchedJob.input.previewOnly === true
-      }
-    : null;
-
-  return {
-    id: `${slug}:${path.basename(targetPath)}`,
-    name: path.basename(targetPath),
-    path: targetPath,
-    url: createFileUrl(targetPath),
-    updatedAt: details.mtime.toISOString(),
-    sizeBytes: details.size,
-    durationSeconds: getVideoDurationSeconds(targetPath),
-    slug,
-    title,
-    caption,
-    hashtags,
-    channel: channel.value,
-    channelHandle: channel.handle,
-    storyboardPath: storyboardPath || null,
-    storyboardUrl: storyboardPath ? createFileUrl(storyboardPath) : null,
-    canRefazer: Boolean(storyboardPath),
-    canDelete: true,
-    canPublish: true,
-    scheduleAt: String(meta?.scheduleAt || "").trim(),
-    platforms,
-    isDraft: meta?.isDraft === true,
-    thumbnailPath: thumbnail.thumbnailPath,
-    thumbnailUrl: thumbnail.thumbnailUrl,
-    coverUrl: thumbnail.coverUrl,
-    thumbnailLabel: thumbnail.thumbnailLabel,
-    publishedAt: meta?.publishedAt || null,
-    publishedPostId: meta?.publishedPostId || null,
-    lastPublishPlatforms: Array.isArray(meta?.lastPublishPlatforms) ? meta.lastPublishPlatforms : [],
-    lastPublishStatus: meta?.lastPublishStatus || null,
-    publishedProfile: meta?.publishedProfile || null,
-    creationParams,
-    state: getVideoStateInfo({
-      publishStatus: meta?.publishStatus || "",
-      isDraft: meta?.isDraft === true,
-      publishedAt: meta?.publishedAt || null
-    }),
-    stage: getVideoStageInfo({
-      publishStatus: meta?.publishStatus || "",
-      isDraft: meta?.isDraft === true,
-      publishedAt: meta?.publishedAt || null
-    }),
-    rca: getVideoRca({
-      publishStatus: meta?.publishStatus || "",
-      isDraft: meta?.isDraft === true,
-      publishedAt: meta?.publishedAt || null,
-      updatedAt: details.mtime.toISOString(),
-      scheduleAt: String(meta?.scheduleAt || "").trim()
-    }),
-    recommendedAction: getVideoRecommendedAction({
-      publishStatus: meta?.publishStatus || "",
-      isDraft: meta?.isDraft === true,
-      publishedAt: meta?.publishedAt || null
-    }),
-    caseSummary: buildVideoCaseSummary({
-      id: `${slug}:${path.basename(targetPath)}`,
-      slug,
-      title,
-      channel: channel.value,
-      updatedAt: details.mtime.toISOString(),
-      publishStatus: meta?.publishStatus || "",
-      isDraft: meta?.isDraft === true,
-      publishedAt: meta?.publishedAt || null,
-      storyboardUrl: storyboardPath ? createFileUrl(storyboardPath) : null,
-      thumbnailUrl: thumbnail.thumbnailUrl || null
-    })
-  };
-};
-
-const listExportVideos = async ({limit = null} = {}) => {
-  const videos = [];
-
-  for (const channel of channelOptions) {
-    const exportDir = getChannelExportDir(channel.value);
-    const entries = await readdir(exportDir).catch(() => []);
-
-    for (const entry of entries.filter((item) => item.endsWith(".mp4"))) {
-      const targetPath = path.join(exportDir, entry);
-
-      try {
-        videos.push(await buildVideoRecord({targetPath, channelValue: channel.value}));
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  const sorted = videos.sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
-  return Number.isInteger(limit) ? sorted.slice(0, Math.max(0, limit)) : sorted;
-};
-
-const getRetryStoryboardPathForJob = (job) => {
-  const directPath = String(job?.storyboardPath || "").trim();
-
-  if (directPath && existsSync(directPath)) {
-    return directPath;
-  }
-
-  if (!job?.slug) {
-    return "";
-  }
-
-  const fallbackPath = getRunPaths(job.slug).storyboardPath;
-  return existsSync(fallbackPath) ? fallbackPath : "";
-};
-
-const canRetryFailedJobFromStoryboard = (job) =>
-  job?.type === "generate" &&
-  job?.status === "failed" &&
-  job?.input?.previewOnly !== true &&
-  Boolean(getRetryStoryboardPathForJob(job));
-
-const listFailedLibraryJobs = async () => {
-  return Array.from(jobs.values())
-    .filter((job) => job.type === "generate" && job.status === "failed" && job.input?.previewOnly !== true)
-    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
-    .map((job) => {
-      const storyboardPath = getRetryStoryboardPathForJob(job);
-      const channel = getChannelConfig(job.input?.channel);
-      const state = getJobStateInfo(job);
-      const stage = getJobStageInfo(job);
-      const rca = getJobRca(job, stage);
-      const recommendedAction = getJobRecommendedAction(job, stage, rca);
-
-      return {
-        id: job.id,
-        title: job.title,
-        slug: job.slug,
-        channel: channel.value,
-        channelHandle: channel.handle,
-        createdAt: job.createdAt,
-        updatedAt: job.updatedAt,
-        failureStage: getFailureStage(job),
-        failureSummary: getFailureSummary(job),
-        error: job.error || "",
-        storyboardPath: storyboardPath || "",
-        storyboardUrl: storyboardPath ? createFileUrl(storyboardPath) : "",
-        retryFromStoryboardAvailable: canRetryFailedJobFromStoryboard(job),
-        previewOnly: Boolean(job.input?.previewOnly),
-        targetSeconds: Number(job.input?.targetSeconds || 0) || null,
-        outputProfile: job.input?.outputProfile || null,
-        state,
-        stage,
-        rca,
-        recommendedAction,
-        caseSummary: buildCaseSummary({
-          id: job.id,
-          kind: "job",
-          title: job.title,
-          slug: job.slug,
-          state,
-          stage,
-          rca,
-          recommendedAction,
-          updatedAt: job.updatedAt,
-          channel: channel.value,
-          extra: {
-            retryFromStoryboardAvailable: canRetryFailedJobFromStoryboard(job),
-            previewOnly: Boolean(job.input?.previewOnly),
-            outputProfile: job.input?.outputProfile || null
-          }
-        })
-      };
-    });
-};
-
-const resolveVideoTarget = async ({slug, filePath}) => {
-  const resolvedPath = filePath ? ensureAllowedFilePath(filePath) : "";
-
-  if (resolvedPath) {
-    return {
-      slug: slugify(slug || inferVideoSlug(resolvedPath)),
-      path: resolvedPath
-    };
-  }
-
-  const normalizedSlug = slugify(slug);
-
-  if (!normalizedSlug) {
-    throw new Error("Informe o slug ou o caminho do video.");
-  }
-
-  const videos = await listExportVideos();
-  const matched = videos.find((video) => video.slug === normalizedSlug);
-
-  if (!matched) {
-    throw new Error("Video nao encontrado.");
-  }
-
-  return {
-    slug: normalizedSlug,
-    path: matched.path
-  };
-};
-
-const ensureAgendadorSecrets = async () => {
-  const secretsModulePath = path.join(configuredVideoEngineRoot, "scripts", "lib", "secrets.mjs");
-  const {loadSecretsIntoEnv} = await import(secretsModulePath);
-  loadSecretsIntoEnv([
-    "AGENDADOR_ONLINE_URL",
-    "AGENDADOR_ONLINE_PASSWORD",
-    "AGENDADOR_PASSWORD",
-    "AGENDADOR_EMAIL",
-    "AGENDADOR_USERNAME",
-    "AGENDADOR_ONLINE_FOIUMAIDEIA_EMAIL",
-    "AGENDADOR_ONLINE_FOIUMAIDEIA_USERNAME",
-    "AGENDADOR_ONLINE_QUIET2MIN_EMAIL",
-    "AGENDADOR_ONLINE_QUIET2MIN_USERNAME",
-    "AGENDADOR_ONLINE_ATE2MIN_EMAIL",
-    "AGENDADOR_ONLINE_ATE2MIN_USERNAME",
-    "FOIUMAIDEIA_URL",
-    "FOIUMAIDEIA_USER"
-  ]);
-};
-
-const agendadorFetch = async (endpoint, {method = "GET", token = "", body, form} = {}) => {
-  const response = await fetch(`${AGENDADOR_API_BASE}${endpoint}`, {
-    method,
-    headers: {
-      ...(token ? {Authorization: `Bearer ${token}`} : {}),
-      ...(body ? {"Content-Type": "application/json"} : {})
-    },
-    body: form ?? (body ? JSON.stringify(body) : undefined)
-  });
-
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
-
-  if (!response.ok) {
-    const error = new Error(payload?.error || `${method} ${endpoint} falhou com ${response.status}.`);
-    error.status = response.status;
-    error.payload = payload;
-    throw error;
-  }
-
-  return payload;
 };
 
 const runFfmpeg = (args) =>
@@ -2880,123 +913,21 @@ const runFfmpeg = (args) =>
     });
   });
 
-const ensureUploadableForAgendador = async (inputPath) => {
-  const maxBytes = AGENDADOR_MAX_UPLOAD_MB * 1024 * 1024;
-  const current = await stat(inputPath);
-
-  if (current.size <= maxBytes) {
-    return {
-      filePath: inputPath,
-      compressed: false,
-      size: current.size
-    };
-  }
-
-  await mkdir(videoLibraryDir, {recursive: true});
-  const outputPath = path.join(videoLibraryDir, `compressed-${path.basename(inputPath)}`);
-  const attempts = [
-    {videoBitrate: "1000k", audioBitrate: "96k"},
-    {videoBitrate: "800k", audioBitrate: "80k"},
-    {videoBitrate: "650k", audioBitrate: "64k"}
-  ];
-
-  for (const attempt of attempts) {
-    await unlink(outputPath).catch(() => {});
-
-    await runFfmpeg([
-      "-i",
-      inputPath,
-      "-vf",
-      "scale='min(720,iw)':-2:force_original_aspect_ratio=decrease",
-      "-r",
-      "30",
-      "-c:v",
-      "libx264",
-      "-preset",
-      "veryfast",
-      "-pix_fmt",
-      "yuv420p",
-      "-b:v",
-      attempt.videoBitrate,
-      "-maxrate",
-      attempt.videoBitrate,
-      "-bufsize",
-      "2M",
-      "-c:a",
-      "aac",
-      "-b:a",
-      attempt.audioBitrate,
-      "-movflags",
-      "+faststart",
-      outputPath
-    ]);
-
-    const compressed = await stat(outputPath);
-    if (compressed.size <= maxBytes) {
-      return {
-        filePath: outputPath,
-        compressed: true,
-        size: compressed.size
-      };
-    }
-  }
-
-  throw new Error(`Nao consegui comprimir o video abaixo de ${AGENDADOR_MAX_UPLOAD_MB} MB para publicar.`);
-};
-
-const getAgendadorToken = async (channelValue) => {
-  await ensureAgendadorSecrets();
-  const profile = resolveAgendadorChannelProfile(channelValue);
-
-  if (!profile.identifier || !profile.password) {
-    throw new Error(`Faltam credenciais do agendador para ${profile.label}.`);
-  }
-
-  const auth = await agendadorFetch("/auth/login", {
-    method: "POST",
-    body: {
-      identifier: profile.identifier,
-      email: profile.identifier,
-      password: profile.password
-    }
-  });
-  const token = auth?.token;
-
-  if (!token) {
-    throw new Error("A autenticacao do agendador nao devolveu token.");
-  }
-
-  return token;
-};
-
-const uploadMediaToAgendador = async (token, filePath, mimeType) => {
-  const prepared = await ensureUploadableForAgendador(filePath);
-  const buffer = await readFile(prepared.filePath);
-  const form = new FormData();
-  form.set("file", new Blob([buffer], {type: mimeType}), path.basename(prepared.filePath));
-  const payload = await agendadorFetch("/upload", {
-    method: "POST",
-    token,
-    form
-  });
-  return payload?.url || "";
-};
-
-const uploadVideoToAgendador = async (token, filePath) => uploadMediaToAgendador(token, filePath, "video/mp4");
-
-const getThumbnailMimeType = (filePath) => {
-  const extension = path.extname(String(filePath || "")).toLowerCase();
-  if (extension === ".png") {
-    return "image/png";
-  }
-  if (extension === ".webp") {
-    return "image/webp";
-  }
-  return "image/jpeg";
-};
+initAgendador({
+  baseChildEnv,
+  configuredVideoEngineRoot,
+  videoLibraryDir,
+  getChannelConfig,
+  channelPublishProfiles,
+  ensureManagedDir,
+  getDesiredOwnerForPath,
+  syncPathOwnership,
+  syncPathMode,
+  runFfmpeg
+});
 
 const resolvePreferredThumbnailSource = async (targetPath, slug) => {
-  const meta = await readVideoMeta(slug).catch(() => null);
+  const meta = await readVideoMeta(slug).catch(() => null); /* expected: meta file may not exist yet */
   const stored = await resolveStoredThumbnailArtifacts({slug, meta: meta || {}});
 
   if (stored.thumbnailPath && existsSync(stored.thumbnailPath)) {
@@ -3013,12 +944,13 @@ const ensurePublishThumbnail = async (targetPath, slug) => {
     return preferredThumbnailPath;
   }
 
-  await mkdir(videoLibraryDir, {recursive: true});
+  await ensureManagedDir(videoLibraryDir);
   const thumbnailDir = path.join(videoLibraryDir, "thumbnails");
-  await mkdir(thumbnailDir, {recursive: true});
+  await ensureManagedDir(thumbnailDir);
   const thumbnailPath = path.join(thumbnailDir, `${slugify(slug)}.jpg`);
+  const desiredThumbnailOwner = await getDesiredOwnerForPath(thumbnailPath);
   const sourceStat = await stat(targetPath);
-  const thumbnailStat = existsSync(thumbnailPath) ? await stat(thumbnailPath).catch(() => null) : null;
+  const thumbnailStat = existsSync(thumbnailPath) ? await stat(thumbnailPath).catch(() => null) : null; /* expected: race with unlink */
 
   if (thumbnailStat && thumbnailStat.mtimeMs >= sourceStat.mtimeMs) {
     return thumbnailPath;
@@ -3029,7 +961,7 @@ const ensurePublishThumbnail = async (targetPath, slug) => {
     ? Math.max(1.5, Math.min(8, durationSeconds * 0.12))
     : 2;
 
-  await unlink(thumbnailPath).catch(() => {});
+  await unlink(thumbnailPath).catch(() => {}); /* best-effort: old thumbnail may not exist */
   await runFfmpeg([
     "-ss",
     seekSeconds.toFixed(2),
@@ -3043,53 +975,27 @@ const ensurePublishThumbnail = async (targetPath, slug) => {
     "2",
     thumbnailPath
   ]);
+  await syncPathOwnership(thumbnailPath, desiredThumbnailOwner);
+  await syncPathMode(thumbnailPath, 0o644);
 
   return thumbnailPath;
 };
 
-const uploadThumbnailToAgendador = async (token, filePath) => {
-  if (!existsSync(filePath)) {
-    return "";
+const schedulePersist = ({immediate = false} = {}) => {
+  if (immediate) {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+
+    try {
+      persistJobsSync();
+    } catch (error) {
+      process.stderr.write(`Falha ao persistir jobs: ${error.message}\n`);
+    }
+    return;
   }
 
-  return uploadMediaToAgendador(token, filePath, getThumbnailMimeType(filePath));
-};
-
-const isAccountPublishReady = (account) => {
-  if (!account?.connected) {
-    return false;
-  }
-
-  if (account?.publish_ready === false) {
-    return false;
-  }
-
-  const status = String(account?.status || "").trim().toUpperCase();
-  return !["NEEDS_RECONNECT", "RECONNECT", "DISCONNECTED", "FAILED"].includes(status);
-};
-
-const describeAccountPublishIssue = (account, provider) => {
-  if (!account) {
-    return `${provider} sem vinculo no agendador`;
-  }
-
-  if (!account.connected) {
-    return `${provider} nao esta conectada`;
-  }
-
-  if (account.publish_ready === false) {
-    return account.last_refresh_error || `${provider} nao esta pronta para publicar`;
-  }
-
-  const status = String(account.status || "").trim();
-  if (status && !["CONNECTED", "READY", "PUBLISH_READY"].includes(status.toUpperCase())) {
-    return account.last_refresh_error || `${provider} com status ${status}`;
-  }
-
-  return `${provider} nao esta pronta para publicar`;
-};
-
-const schedulePersist = () => {
   if (persistTimer) {
     clearTimeout(persistTimer);
   }
@@ -3102,79 +1008,12 @@ const schedulePersist = () => {
   }, 150);
 };
 
-const getJobQueueLane = (job) =>
-  job?.type === "generate" && job?.input?.previewOnly ? PREVIEW_QUEUE_LANE : HEAVY_QUEUE_LANE;
-
-const getQueueForLane = (lane) => (lane === PREVIEW_QUEUE_LANE ? previewQueue : heavyQueue);
-
-const getActiveJobIdForLane = (lane) => (lane === PREVIEW_QUEUE_LANE ? activePreviewJobId : activeHeavyJobId);
-
-const setActiveJobIdForLane = (lane, jobId) => {
-  if (lane === PREVIEW_QUEUE_LANE) {
-    activePreviewJobId = jobId;
-    return;
-  }
-
-  activeHeavyJobId = jobId;
-};
-
-const getQueueLengths = () => ({
-  previewQueueLength: previewQueue.length,
-  heavyQueueLength: heavyQueue.length,
-  queueLength: previewQueue.length + heavyQueue.length
-});
-
-const removeJobFromQueues = (jobId) => {
-  const previewIndex = previewQueue.indexOf(jobId);
-  if (previewIndex >= 0) {
-    previewQueue.splice(previewIndex, 1);
-  }
-
-  const heavyIndex = heavyQueue.indexOf(jobId);
-  if (heavyIndex >= 0) {
-    heavyQueue.splice(heavyIndex, 1);
-  }
-};
-
-const failJobAndReleaseQueue = (job, errorMessage) => {
-  const lane = job.queueLane || getJobQueueLane(job);
-  const nowIso = toIsoNow();
-
-  removeJobFromQueues(job.id);
-  if (getActiveJobIdForLane(lane) === job.id) {
-    setActiveJobIdForLane(lane, null);
-  }
-
-  job.status = "failed";
-  job.error = errorMessage;
-  job.completedAt = nowIso;
-  job.updatedAt = nowIso;
-  job.heartbeatAt = nowIso;
-  job.queuePosition = null;
-  job.stageValue = getFailureStage(job) || job.stageValue || "pipeline";
-  job.stageSource = "system";
-  job.stageConfidence = "high";
-  job.stageUpdatedAt = nowIso;
-
-  if (typeof job.exitCode !== "number") {
-    job.exitCode = 1;
-  }
-
-  clearJobProcess(job);
-  appendLog(job, errorMessage, "stderr");
-  refreshQueuePositions();
-  schedulePersist();
-  startQueueWorker(lane).catch((error) => {
-    process.stderr.write(`Falha ao reiniciar fila ${lane} apos liberar job ${job.id}: ${error.message}\n`);
-  });
-};
-
 const sendEvent = (response, event, payload) => {
   response.write(`event: ${event}\n`);
   response.write(`data: ${JSON.stringify(payload)}\n\n`);
 };
 
-const broadcastJob = (job) => {
+const broadcastJob = (job, {skipPersist = false} = {}) => {
   const payload = sanitizeJob(job);
   const subscribers = streams.get(job.id);
 
@@ -3188,7 +1027,9 @@ const broadcastJob = (job) => {
     }
   }
 
-  schedulePersist();
+  if (!skipPersist) {
+    schedulePersist();
+  }
 };
 
 const updateJobHeartbeat = (job) => {
@@ -3217,107 +1058,7 @@ const setJobStage = (job, stageValue, source = "system", confidence = "high") =>
   }
 };
 
-const registerJobProcess = (job, child) => {
-  if (!child?.pid) {
-    return;
-  }
 
-  jobProcesses.set(job.id, child);
-  job.processId = child.pid;
-  job.processStartedAt = toIsoNow();
-  updateJobHeartbeat(job);
-};
-
-const clearJobProcess = (job) => {
-  jobProcesses.delete(job.id);
-  job.processId = null;
-};
-
-const collectDescendantPids = (pid, seen = new Set()) => {
-  if (!pid || seen.has(pid)) {
-    return [];
-  }
-
-  seen.add(pid);
-  const result = spawnSync("pgrep", ["-P", String(pid)], {encoding: "utf8"});
-  const childPids = String(result.stdout || "")
-    .split(/\s+/)
-    .map((value) => Number.parseInt(value, 10))
-    .filter((value) => Number.isInteger(value) && value > 0);
-
-  const descendants = [];
-  for (const childPid of childPids) {
-    descendants.push(childPid, ...collectDescendantPids(childPid, seen));
-  }
-
-  return descendants;
-};
-
-const isPidAlive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const terminateJobProcessTree = async (job) => {
-  const pid = Number(job?.processId || 0);
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
-  }
-
-  const pids = [...new Set([...collectDescendantPids(pid), pid])].filter((value) => value > 0).reverse();
-  if (pids.length === 0) {
-    return false;
-  }
-
-  for (const targetPid of pids) {
-    try {
-      process.kill(targetPid, "SIGTERM");
-    } catch {}
-  }
-
-  await wait(800);
-
-  for (const targetPid of pids) {
-    if (!isPidAlive(targetPid)) {
-      continue;
-    }
-
-    try {
-      process.kill(targetPid, "SIGKILL");
-    } catch {}
-  }
-
-  clearJobProcess(job);
-  return true;
-};
-
-const refreshQueuePositions = () => {
-  const queuedPreviewIds = previewQueue.filter((jobId) => jobs.get(jobId)?.status === "queued");
-  const queuedHeavyIds = heavyQueue.filter((jobId) => jobs.get(jobId)?.status === "queued");
-
-  for (const job of jobs.values()) {
-    const lane = job.queueLane || getJobQueueLane(job);
-    job.queueLane = lane;
-
-    if (job.status !== "queued") {
-      job.queuePosition = null;
-      continue;
-    }
-
-    const queuedIds = lane === PREVIEW_QUEUE_LANE ? queuedPreviewIds : queuedHeavyIds;
-    job.queuePosition = queuedIds.indexOf(job.id) + 1;
-  }
-
-  for (const job of jobs.values()) {
-    broadcastJob(job);
-  }
-};
 
 const appendLog = (job, chunk, source) => {
   const prefix = source === "stderr" ? "[stderr] " : "";
@@ -3349,11 +1090,25 @@ const appendLog = (job, chunk, source) => {
   broadcastJob(job);
 };
 
+initJobQueue({
+  jobs,
+  broadcastJob,
+  schedulePersist,
+  sanitizeJob,
+  toIsoNow,
+  appendLog,
+  getFailureStage,
+  clearJobProcess
+});
+
 const updateJob = (job, updates) => {
   const nowIso = toIsoNow();
   Object.assign(job, updates, {updatedAt: nowIso});
   job.heartbeatAt = nowIso;
-  broadcastJob(job);
+  const nextStatus = String(updates?.status || "").trim().toLowerCase();
+  const persistImmediately = nextStatus === "completed" || nextStatus === "failed";
+  broadcastJob(job, {skipPersist: true});
+  schedulePersist({immediate: persistImmediately});
 };
 
 const combineStylePrompt = ({language, tone, customStylePrompt}) => {
@@ -3361,6 +1116,12 @@ const combineStylePrompt = ({language, tone, customStylePrompt}) => {
   const fallbackLanguage = String(language || "pt-BR").startsWith("en") ? "en-US" : "pt-BR";
   const basePrompt = preset.voiceStyles[fallbackLanguage];
   const customPrompt = String(customStylePrompt || "").trim();
+  const normalizePrompt = (value) =>
+    String(value || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/[.,;:!?]+$/g, "")
+      .toLowerCase();
 
   if (!customPrompt) {
     return basePrompt;
@@ -3368,6 +1129,29 @@ const combineStylePrompt = ({language, tone, customStylePrompt}) => {
 
   if (!basePrompt) {
     return customPrompt;
+  }
+
+  const normalizedBase = normalizePrompt(basePrompt);
+  const normalizedCustom = normalizePrompt(customPrompt);
+
+  if (!normalizedBase) {
+    return customPrompt;
+  }
+
+  if (!normalizedCustom) {
+    return basePrompt;
+  }
+
+  if (normalizedBase === normalizedCustom) {
+    return basePrompt;
+  }
+
+  if (normalizedCustom.startsWith(`${normalizedBase} `) || normalizedCustom.startsWith(`${normalizedBase},`)) {
+    return customPrompt;
+  }
+
+  if (normalizedBase.startsWith(`${normalizedCustom} `) || normalizedBase.startsWith(`${normalizedCustom},`)) {
+    return basePrompt;
   }
 
   return `${basePrompt}, ${customPrompt}`;
@@ -3426,223 +1210,21 @@ const getProfileTargetSeconds = (profileValue, requestedTargetSeconds) => {
   return profile.defaultTargetSeconds;
 };
 
-const createGenerateJobCommand = (job) => {
-  const exportDir = getChannelExportDir(job.input.channel);
-  const profile = resolveOutputProfileConfig(job.input.outputProfile);
-  const args = [
-    path.join(projectRoot, "scripts", "foiumaideia.mjs"),
-    "--title",
-    job.title,
-    "--slug",
-    job.slug,
-    "--output-profile",
-    profile.id,
-    "--target-seconds",
-    String(job.input.targetSeconds),
-    "--project-root",
-    configuredVideoEngineRoot,
-    "--export-dir",
-    exportDir,
-    "--language",
-    job.input.language,
-    "--voice",
-    job.input.voice,
-    "--image-style",
-    job.input.imageStyle,
-    "--style-prompt",
-    job.input.stylePrompt,
-    "--script-guidance",
-    job.input.scriptGuidance,
-    "--no-open"
-  ];
 
-  if (job.input.previewOnly) {
-    args.push("--preview-only");
-  }
 
-  if (job.input.force) {
-    args.push("--force");
-  }
 
-  if (job.input.channelHandle) {
-    args.push("--channel-handle", job.input.channelHandle);
-  }
 
-  if (job.input.sourceTextFile) {
-    args.push("--source-text-file", job.input.sourceTextFile);
-  }
 
-  if (job.input.storyboardFile) {
-    args.push("--storyboard-file", job.input.storyboardFile);
-  }
 
-  if (job.input.noMusic) {
-    args.push("--no-music");
-  }
 
-  return {
-    command: "node",
-    args,
-    cwd: projectRoot,
-    env: {
-      ...baseChildEnv,
-      ...buildProfileRuntimeEnv(profile.id, job.input.targetSeconds),
-      IMAGE_MODEL: job.input.imageModel || DEFAULT_IMAGE_MODEL,
-      GOOGLE_IMAGE_MODEL: job.input.imageModel || DEFAULT_IMAGE_MODEL,
-      AZURE_TTS_VOICE: job.input.voice,
-      GOOGLE_TTS_VOICE: job.input.voice,
-      DEFAULT_OPEN: "false"
-    }
-  };
-};
 
-const createRerenderJobCommand = (job) => {
-  // Legacy path kept for compatibility, though rerender is not exposed in the current UI.
-  const profile = resolveOutputProfileConfig(job.input.outputProfile);
 
-  return {
-    command: "node",
-    args: [
-      path.join(configuredVideoEngineRoot, "scripts", "rerender-voice.mjs"),
-      "--slug",
-      job.slug,
-      "--output-profile",
-      profile.id,
-      "--voice",
-      job.input.voice,
-      "--style-prompt",
-      job.input.stylePrompt
-    ],
-    cwd: configuredVideoEngineRoot,
-    env: {
-      ...baseChildEnv,
-      ...buildProfileRuntimeEnv(profile.id, profile.defaultTargetSeconds),
-      VIDEO_LANGUAGE: job.input.language,
-      AZURE_TTS_VOICE: job.input.voice,
-      GOOGLE_TTS_VOICE: job.input.voice,
-      GOOGLE_TTS_STYLE_PROMPT: job.input.stylePrompt,
-      DEFAULT_OPEN: "false"
-    }
-  };
-};
 
-const createAudioPrepJobCommand = (job) => {
-  const profile = resolveOutputProfileConfig(job.input.outputProfile || DEFAULT_OUTPUT_PROFILE);
 
-  return {
-    command: "node",
-    args: [
-      path.join(configuredVideoEngineRoot, "scripts", "rerender-voice.mjs"),
-      "--slug",
-      job.slug,
-      "--output-profile",
-      profile.id,
-      "--voice",
-      job.input.voice,
-      "--style-prompt",
-      job.input.stylePrompt,
-      "--no-render"
-    ],
-    cwd: configuredVideoEngineRoot,
-    env: {
-      ...baseChildEnv,
-      ...buildProfileRuntimeEnv(profile.id, job.input.targetSeconds || profile.defaultTargetSeconds),
-      VIDEO_LANGUAGE: job.input.language,
-      AZURE_TTS_VOICE: job.input.voice,
-      GOOGLE_TTS_VOICE: job.input.voice,
-      GOOGLE_TTS_STYLE_PROMPT: job.input.stylePrompt,
-      DEFAULT_OPEN: "false"
-    }
-  };
-};
-
-const createRenderOnlyJobCommand = (job) => {
-  const profile = resolveOutputProfileConfig(job.input.outputProfile || DEFAULT_OUTPUT_PROFILE);
-
-  return {
-    command: "node",
-    args: [
-      path.join(configuredVideoEngineRoot, "scripts", "rerender-voice.mjs"),
-      "--slug",
-      job.slug,
-      "--output-profile",
-      profile.id,
-      "--voice",
-      job.input.voice,
-      "--style-prompt",
-      job.input.stylePrompt,
-      "--reuse-existing-audio"
-    ],
-    cwd: configuredVideoEngineRoot,
-    env: {
-      ...baseChildEnv,
-      ...buildProfileRuntimeEnv(profile.id, job.input.targetSeconds || profile.defaultTargetSeconds),
-      VIDEO_LANGUAGE: job.input.language,
-      AZURE_TTS_VOICE: job.input.voice,
-      GOOGLE_TTS_VOICE: job.input.voice,
-      GOOGLE_TTS_STYLE_PROMPT: job.input.stylePrompt,
-      DEFAULT_OPEN: "false"
-    }
-  };
-};
-
-const createValidateOnlyJobCommand = (job) => {
-  const args = [
-    path.join(configuredVideoEngineRoot, "scripts", "validate-run.mjs"),
-    "--slug",
-    job.slug
-  ];
-  const targetSeconds = Number(job.input.targetSeconds);
-  if (Number.isFinite(targetSeconds) && targetSeconds > 0) {
-    args.push("--target-seconds", String(targetSeconds));
-  }
-
-  return {
-    command: "node",
-    args,
-    cwd: configuredVideoEngineRoot,
-    env: {
-      ...baseChildEnv,
-      DEFAULT_OPEN: "false"
-    }
-  };
-};
-
-const createSceneRegenerateJobCommand = (job) => {
-  const profile = resolveOutputProfileConfig(job.input.outputProfile || DEFAULT_OUTPUT_PROFILE);
-  const sceneNumber = Number(job.input.sceneNumber);
-
-  return {
-    command: "node",
-    args: [
-      path.join(projectRoot, "scripts", "generate-flux2-assets.mjs"),
-      "--storyboard-file",
-      job.input.storyboardFile,
-      "--slug",
-      job.slug,
-      "--style-preset",
-      job.input.imageStyle || DEFAULT_VISUAL_STYLE_PRESET,
-      "--scene-number",
-      String(sceneNumber),
-      "--force"
-    ],
-    cwd: projectRoot,
-    env: {
-      ...baseChildEnv,
-      ...buildProfileRuntimeEnv(profile.id, job.input.targetSeconds),
-      IMAGE_MODEL: job.input.imageModel || DEFAULT_IMAGE_MODEL,
-      GOOGLE_IMAGE_MODEL: job.input.imageModel || DEFAULT_IMAGE_MODEL,
-      OUTPUT_PROFILE: profile.id,
-      DEFAULT_OPEN: "false"
-    }
-  };
-};
 
 const finalizeGenerateJob = async (job) => {
   const exportDir = getChannelExportDir(job.input.channel);
-  const storyboardPath = job.input.storyboardFile
-    ? path.resolve(job.input.storyboardFile)
-    : path.join(configuredVideoEngineRoot, "runs", job.slug, "storyboard.json");
+  const storyboardPath = resolveEffectiveStoryboardPath(job);
 
   if (job.input.previewOnly) {
     job.storyboardPath = storyboardPath;
@@ -3662,7 +1244,7 @@ const finalizeGenerateJob = async (job) => {
 const finalizeRerenderJob = async (job) => {
   const outPath = path.join(configuredVideoEngineRoot, "out", `${job.slug}.mp4`);
   const exportDir = getChannelExportDir(job.input.channel);
-  const storyboardPath = path.join(configuredVideoEngineRoot, "runs", job.slug, "storyboard.json");
+  const storyboardPath = resolveEffectiveStoryboardPath(job);
   const finalPath = await resolveLocalizedExportPath({
     exportDir,
     slug: job.slug,
@@ -3670,22 +1252,39 @@ const finalizeRerenderJob = async (job) => {
     storyboardPath
   });
 
-  await mkdir(exportDir, {recursive: true});
-  await copyFile(outPath, finalPath);
+  await ensureManagedDir(exportDir);
+  await copyManagedFile(outPath, finalPath);
   job.outputPath = finalPath;
   job.storyboardPath = storyboardPath;
 };
 
 const finalizeAudioPrepJob = async (job) => {
   const paths = getRunPaths(job.slug);
-  job.storyboardPath = paths.storyboardPath;
+  job.storyboardPath = resolveEffectiveStoryboardPath(job);
   job.outputPath = isFreshArtifactForJob(paths.publicAudioPath, job) ? paths.publicAudioPath : paths.voiceoverPath;
 };
 
 const finalizeValidateOnlyJob = async (job) => {
   const paths = getRunPaths(job.slug);
-  job.storyboardPath = paths.storyboardPath;
+  job.storyboardPath = resolveEffectiveStoryboardPath(job);
   job.outputPath = isFreshArtifactForJob(paths.outPath, job) ? paths.outPath : null;
+};
+
+const invalidateSceneRepairCaches = async ({slug, sceneNumber}) => {
+  const paths = getRunPaths(slug);
+  const sceneNum = String(sceneNumber).padStart(2, "0");
+  const targets = [
+    path.join(paths.publicVideoDir, `scene-${sceneNum}.mp4`),
+    paths.outPath,
+    paths.agentReportPath,
+    paths.orchestrationReportPath
+  ];
+
+  await Promise.all(
+    targets.map((targetPath) =>
+      unlink(targetPath).catch(() => {}) /* best-effort cleanup: file may already be gone */
+    )
+  );
 };
 
 const finalizeSceneRegenerateJob = async (job) => {
@@ -3695,12 +1294,10 @@ const finalizeSceneRegenerateJob = async (job) => {
   job.storyboardPath = resolveEffectiveStoryboardPath(job);
   job.outputPath = path.join(paths.assetDir, `scene-${sceneNum}.mp4`);
   const shouldAutoContinue = job.input?.autoContinueAfterSceneRepair !== false;
+  await invalidateSceneRepairCaches({slug: job.slug, sceneNumber});
+  appendLog(job, `[scene-repair] cache invalido para scene-${sceneNum} e saidas finais do run\n`);
 
-  const sourceLikeJob = getRecoverySourceJob(job) || {
-    ...job,
-    type: "generate",
-    status: "failed"
-  };
+  const sourceLikeJob = getRecoverySourceJob(job) || job;
   const missingAfterRepair = getFirstMissingSceneNumber(sourceLikeJob);
 
   if (shouldAutoContinue && missingAfterRepair !== null) {
@@ -3709,6 +1306,8 @@ const finalizeSceneRegenerateJob = async (job) => {
       type: "scene-regenerate",
       title: job.title,
       slug: job.slug,
+      caseId: job.caseId || null,
+      attempt: job.attempt || null,
       status: "queued",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -3719,12 +1318,12 @@ const finalizeSceneRegenerateJob = async (job) => {
       },
       outputPath: null,
       storyboardPath: paths.storyboardPath,
-      artifactEpochAt: job.artifactEpochAt || job.createdAt,
+      artifactEpochAt: getRecoveryArtifactEpochAt(job),
       exitCode: null,
       error: null
     };
-    const enqueued = enqueueJob(chainedSceneJob);
-    job.followUpJobId = enqueued.id;
+    const enqueued = enqueueAndStart(chainedSceneJob);
+    updateJob(job, {followUpJobId: enqueued.id});
     appendLog(job, `[scene-repair] cena ${sceneNumber} concluida; proxima cena faltante ${missingAfterRepair}. follow-up ${enqueued.id}\n`);
     return;
   }
@@ -3739,18 +1338,18 @@ const finalizeSceneRegenerateJob = async (job) => {
   let followUpJob = null;
 
   if (shouldAutoContinue && canPrepareAudioForJob(sourceLikeJob) && stepMap.audio?.status !== "completed") {
-    followUpJob = buildAudioPrepJob(sourceLikeJob, {autoContinueRecovery: true});
+    followUpJob = buildAudioPrepJob(job, {autoContinueRecovery: true});
     appendLog(job, "[scene-repair] todas as cenas prontas; proximo passo: gerar audio\n");
   } else if (shouldAutoContinue && canRenderOnlyForJob(sourceLikeJob) && stepMap.render?.status !== "completed") {
-    followUpJob = buildRenderOnlyJob(sourceLikeJob, {autoContinueRecovery: true});
+    followUpJob = buildRenderOnlyJob(job, {autoContinueRecovery: true});
     appendLog(job, "[scene-repair] todas as cenas prontas; proximo passo: renderizar\n");
   } else if (shouldAutoContinue && canValidateOnlyForJob(sourceLikeJob) && stepMap.qa?.status !== "completed") {
-    followUpJob = buildValidateOnlyJob(sourceLikeJob);
+    followUpJob = buildValidateOnlyJob(job);
     appendLog(job, "[scene-repair] video ja existe; proximo passo: validar QA\n");
   } else if (shouldAutoContinue && hasBasicResumeArtifacts(sourceLikeJob)) {
     followUpJob = buildResumedGenerateJob(sourceLikeJob);
     appendLog(job, "[scene-repair] todas as cenas prontas; retomando com artefatos existentes\n");
-  } else if (shouldAutoContinue && existsSync(paths.storyboardPath)) {
+  } else if (shouldAutoContinue && getRetryStoryboardPathForJob(sourceLikeJob)) {
     followUpJob = await buildRetryFromStoryboardGenerateJob(sourceLikeJob);
     appendLog(job, "[scene-repair] fallback: reenfileirando a partir do storyboard\n");
   }
@@ -3760,8 +1359,8 @@ const finalizeSceneRegenerateJob = async (job) => {
     return;
   }
 
-  const enqueued = enqueueJob(followUpJob);
-  job.followUpJobId = enqueued.id;
+  const enqueued = enqueueAndStart(followUpJob);
+  updateJob(job, {followUpJobId: enqueued.id});
   appendLog(job, `[scene-repair] follow-up job ${enqueued.id} criado\n`);
 };
 
@@ -3783,6 +1382,7 @@ const writeResumeArtifacts = async ({job, storyboard, voiceover, assetPlan, rend
   await mkdir(paths.runDir, {recursive: true});
   await mkdir(paths.publicAudioDir, {recursive: true});
   await mkdir(paths.publicVideoDir, {recursive: true});
+  await writeFile(paths.storyboardPath, JSON.stringify(storyboard, null, 2));
   await writeFile(paths.assetPlanPath, JSON.stringify(assetPlan, null, 2));
   await writeFile(paths.voiceoverPath, JSON.stringify(voiceoverPayload, null, 2));
   await writeFile(paths.renderPropsPath, JSON.stringify(renderProps, null, 2));
@@ -3808,12 +1408,14 @@ const runResumedGenerateJob = async (job) => {
   appendLog(job, `[resume] run=${job.slug} profile=${outputProfile.id} channel=${job.input.channel || "unknown"}\n`);
 
   try {
-    const storyboard = await readJsonFile(paths.storyboardPath);
+    const storyboardSourcePath = getRetryStoryboardPathForJob(job) || resolveEffectiveStoryboardPath(job);
+    const storyboard = await readJsonFile(storyboardSourcePath);
     if (!storyboard || !Array.isArray(storyboard.scenes) || storyboard.scenes.length === 0) {
-      throw new Error(`Storyboard ausente ou invalido em ${paths.storyboardPath}`);
+      throw new Error(`Storyboard ausente ou invalido em ${storyboardSourcePath}`);
     }
 
     const voiceover = await readJsonFile(paths.voiceoverPath);
+    const existingRenderProps = await readJsonFile(paths.renderPropsPath);
     if (!voiceover) {
       throw new Error(`voiceover.json ausente em ${paths.voiceoverPath}`);
     }
@@ -3852,7 +1454,8 @@ const runResumedGenerateJob = async (job) => {
       assetPlan,
       timedWords,
       audioDurationSeconds,
-      outputProfile
+      outputProfile,
+      existingRenderProps
     });
 
     await writeResumeArtifacts({
@@ -3885,7 +1488,7 @@ const runResumedGenerateJob = async (job) => {
         `--props=${JSON.stringify(renderProps)}`,
         `--timeout=${process.env.REMOTION_TIMEOUT_MS || "1800000"}`,
         `--concurrency=${process.env.REMOTION_CONCURRENCY || "2"}`,
-        `--scale=${process.env.REMOTION_SCALE || "0.75"}`,
+        `--scale=${process.env.REMOTION_SCALE || "1"}`,
         `--video-bitrate=${process.env.REMOTION_VIDEO_BITRATE || "9M"}`,
         `--audio-bitrate=${process.env.REMOTION_AUDIO_BITRATE || "256k"}`,
         `--x264-preset=${process.env.REMOTION_X264_PRESET || "medium"}`
@@ -3934,7 +1537,7 @@ const runResumedGenerateJob = async (job) => {
     if (exitCode !== 0) {
       updateJob(job, {
         status: "failed",
-        error: job.logTail.at(-1) || `Retomada terminou com codigo ${exitCode}`
+        error: getProcessFailureMessage(job, `Retomada terminou com codigo ${exitCode}`)
       });
       return;
     }
@@ -3947,8 +1550,8 @@ const runResumedGenerateJob = async (job) => {
       storyboardPath: paths.storyboardPath
     });
 
-    await mkdir(exportDir, {recursive: true});
-    await copyFile(paths.outPath, finalPath);
+    await ensureManagedDir(exportDir);
+    await copyManagedFile(paths.outPath, finalPath);
     updateJob(job, {
       status: "completed",
       outputPath: finalPath,
@@ -3969,118 +1572,55 @@ const runResumedGenerateJob = async (job) => {
   }
 };
 
-const executeChildProcess = async (job, processConfig) => {
-  updateJob(job, {
-    status: "running",
-    startedAt: new Date().toISOString(),
-    error: null
-  });
-  setJobStage(
-    job,
-    job.type === "audio-prep"
-      ? "audio"
-      : job.type === "render-only"
-        ? "render"
-        : job.type === "validate-only"
-          ? "qa"
-          : job.type === "scene-regenerate"
-            ? "pipeline"
-            : "pipeline"
-  );
 
-  return new Promise((resolve) => {
-    const child = spawn(processConfig.command, processConfig.args, {
-      cwd: processConfig.cwd,
-      env: processConfig.env,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
 
-    registerJobProcess(job, child);
-
-    child.stdout.on("data", (chunk) => appendLog(job, chunk, "stdout"));
-    child.stderr.on("data", (chunk) => appendLog(job, chunk, "stderr"));
-
-    child.on("error", (error) => {
-      clearJobProcess(job);
-      updateJob(job, {
-        status: "failed",
-        completedAt: new Date().toISOString(),
-        error: error.message
-      });
-      resolve();
-    });
-
-    child.on("close", async (code) => {
-      job.exitCode = typeof code === "number" ? code : null;
-      job.completedAt = new Date().toISOString();
-      clearJobProcess(job);
-
-      if (code === 0) {
-        try {
-          if (job.type === "generate") {
-            await finalizeGenerateJob(job);
-          } else if (job.type === "scene-regenerate") {
-            await finalizeSceneRegenerateJob(job);
-          } else if (job.type === "audio-prep") {
-            await finalizeAudioPrepJob(job);
-          } else if (job.type === "render-only") {
-            await finalizeRerenderJob(job);
-          } else if (job.type === "validate-only") {
-            await finalizeValidateOnlyJob(job);
-          } else {
-            await finalizeRerenderJob(job);
-          }
-
-          updateJob(job, {status: "completed"});
-          setJobStage(job, "completed");
-
-          if (job.input?.autoContinueRecovery === true) {
-            const sourceJob = getRecoverySourceJob(job) || job;
-            let followUpJob = null;
-
-            if (job.type === "audio-prep" && canRenderOnlyForJob(sourceJob) && !isFreshArtifactForJob(getRunPaths(sourceJob.slug).outPath, sourceJob)) {
-              followUpJob = buildRenderOnlyJob(sourceJob, {autoContinueRecovery: true});
-            } else if (job.type === "render-only" && canValidateOnlyForJob(sourceJob) && !isQaPassedForSlug(sourceJob.slug)) {
-              followUpJob = buildValidateOnlyJob(sourceJob);
-            }
-
-            if (followUpJob) {
-              const enqueued = enqueueJob(followUpJob);
-              job.followUpJobId = enqueued.id;
-              appendLog(job, `[recovery] follow-up enfileirado: ${enqueued.id}\n`);
-            }
-          }
-        } catch (error) {
-          updateJob(job, {
-            status: "failed",
-            error: error instanceof Error ? error.message : String(error)
-          });
-        }
-      } else {
-        updateJob(job, {
-          status: "failed",
-          error: job.logTail.at(-1) || `Processo terminou com codigo ${code}`
-        });
-      }
-
-      resolve();
-    });
-  });
+const finalizeJob = async (job) => {
+  if (job.type === "generate") await finalizeGenerateJob(job);
+  else if (job.type === "scene-regenerate") await finalizeSceneRegenerateJob(job);
+  else if (job.type === "audio-prep") await finalizeAudioPrepJob(job);
+  else if (job.type === "render-only") await finalizeRerenderJob(job);
+  else if (job.type === "validate-only") await finalizeValidateOnlyJob(job);
+  else await finalizeRerenderJob(job);
 };
 
-let isProcessingPreviewQueue = false;
-let isProcessingHeavyQueue = false;
+const handleAutoContinue = async (job) => {
+  if (job.input?.autoContinueRecovery !== true) return;
+  const sourceJob = getRecoverySourceJob(job) || job;
+  let followUpJob = null;
 
-const isLaneProcessing = (lane) => (lane === PREVIEW_QUEUE_LANE ? isProcessingPreviewQueue : isProcessingHeavyQueue);
-
-const setLaneProcessing = (lane, processing) => {
-  if (lane === PREVIEW_QUEUE_LANE) {
-    isProcessingPreviewQueue = processing;
-    return;
+  if (job.type === "audio-prep" && canRenderOnlyForJob(job) && !isFreshArtifactForJob(getRunPaths(sourceJob.slug).outPath, job)) {
+    followUpJob = buildRenderOnlyJob(job, {autoContinueRecovery: true});
+  } else if (job.type === "render-only" && canValidateOnlyForJob(job) && !isQaPassedForJob(job)) {
+    followUpJob = buildValidateOnlyJob(job);
   }
 
-  isProcessingHeavyQueue = processing;
+  if (followUpJob) {
+    const enqueued = enqueueAndStart(followUpJob);
+    updateJob(job, {followUpJobId: enqueued.id});
+    appendLog(job, `[recovery] follow-up enfileirado: ${enqueued.id}\n`);
+  }
 };
+
+initJobExecution({
+  projectRoot,
+  configuredVideoEngineRoot,
+  baseChildEnv,
+  resolveOutputProfileConfig,
+  buildProfileRuntimeEnv,
+  getChannelExportDir,
+  DEFAULT_IMAGE_MODEL,
+  DEFAULT_GENERATION_MODE,
+  DEFAULT_OUTPUT_PROFILE,
+  DEFAULT_VISUAL_STYLE_PRESET,
+  toIsoNow,
+  updateJobHeartbeat,
+  updateJob,
+  setJobStage,
+  appendLog,
+  getProcessFailureMessage,
+  finalizeJob,
+  handleAutoContinue
+});
 
 const startQueueWorker = async (lane) => {
   const queue = getQueueForLane(lane);
@@ -4136,26 +1676,11 @@ const startQueueWorker = async (lane) => {
   }
 };
 
-const enqueueJob = (job) => {
-  const nowIso = toIsoNow();
-  job.queueLane = getJobQueueLane(job);
-  job.createdAt = job.createdAt || nowIso;
-  job.updatedAt = nowIso;
-  job.heartbeatAt = job.heartbeatAt || nowIso;
-  job.artifactEpochAt = job.artifactEpochAt || job.createdAt || nowIso;
-  job.stageValue = job.stageValue || "queue";
-  job.stageSource = job.stageSource || "system";
-  job.stageConfidence = job.stageConfidence || "high";
-  job.stageUpdatedAt = job.stageUpdatedAt || nowIso;
-  jobs.set(job.id, job);
-  getQueueForLane(job.queueLane).push(job.id);
-  refreshQueuePositions();
-  schedulePersist();
-  startQueueWorker(job.queueLane).catch((error) => {
-    process.stderr.write(`Falha ao iniciar job ${job.id}: ${error.message}\n`);
-  });
-  return sanitizeJob(job);
-};
+/** @param {object} job */
+const enqueueAndStart = (job) => enqueueJob(job, startQueueWorker);
+
+/** @param {object} job @param {string} errorMessage */
+const failAndRelease = (job, errorMessage) => failJobAndReleaseQueue(job, errorMessage, startQueueWorker);
 
 const listRecentExports = async () => listExportVideos({limit: 3});
 
@@ -4197,6 +1722,33 @@ const ensureAllowedFilePath = (rawPath) => {
 
   return resolved;
 };
+
+initVideoLibrary({
+  getRunPaths,
+  findExistingStoryboardPath,
+  getChannelConfig,
+  getChannelExportDir,
+  isQaPassedForSlug,
+  getJobStateInfo,
+  getJobStageInfo,
+  getJobRca,
+  getJobRecommendedAction,
+  buildCaseSummary,
+  getStageLabel,
+  getFailureStage,
+  getFailureSummary,
+  ensureAllowedFilePath,
+  resolveStoredThumbnailArtifacts,
+  resolveChannelValue,
+  getJobs: () => jobs,
+  getVideoMetadata: () => videoMetadata,
+  setVideoMetadata: (v) => { videoMetadata = v; },
+  getChannelOptions: () => channelOptions,
+  projectRoot,
+  dataDir,
+  videoLibraryDir,
+  videosFile
+});
 
 const parseRangeHeader = (rangeHeader, fileSize) => {
   const match = String(rangeHeader || "").match(/^bytes=(\d*)-(\d*)$/i);
@@ -4339,6 +1891,7 @@ const handleGenerateRequest = async (request, response) => {
   const channel = getChannelConfig(String(body.channel || "foiumaideia"));
   const channelPreset = getChannelPreset(channel.value);
   const imageModel = resolveImageModel(body.imageModel, resolveImageModel(baseChildEnv.GOOGLE_IMAGE_MODEL || baseChildEnv.IMAGE_MODEL));
+  const generationMode = resolveGenerationMode(body.generationMode, resolveGenerationMode(baseChildEnv.GENERATION_MODE));
   const voice = resolveRequestedVoice({
     selectedVoice,
     customVoice,
@@ -4352,12 +1905,13 @@ const handleGenerateRequest = async (request, response) => {
   }
 
   const targetSeconds = getProfileTargetSeconds(outputProfile.id, Number(body.targetSeconds));
-  const slug = `${new Date().toISOString().slice(0, 10)}-${slugify(title)}`;
+  const slug = buildUniqueGenerateSlug(title);
+  const caseId = createId();
   const sourceTextFile = sourceText ? path.join(inputsDir, `${createId()}-source.txt`) : "";
 
   if (sourceTextFile) {
-    await mkdir(inputsDir, {recursive: true});
-    await writeFile(sourceTextFile, sourceText);
+    await ensureManagedDir(inputsDir);
+    await writeManagedFile(sourceTextFile, sourceText);
   }
 
   const tonePreset = tonePresets[tone] || tonePresets.natural_clean;
@@ -4368,6 +1922,8 @@ const handleGenerateRequest = async (request, response) => {
     type: "generate",
     title,
     slug,
+    caseId,
+    attempt: 1,
     status: "queued",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -4383,6 +1939,7 @@ const handleGenerateRequest = async (request, response) => {
       language,
       targetSeconds,
       imageModel,
+      generationMode,
       imageStyle: imageStyleOptions.some((option) => option.value === body.imageStyle)
         ? String(body.imageStyle)
         : DEFAULT_VISUAL_STYLE_PRESET,
@@ -4411,7 +1968,59 @@ const handleGenerateRequest = async (request, response) => {
     error: null
   };
 
-  sendJson(response, 201, {job: enqueueJob(job)});
+  sendJson(response, 201, {job: enqueueAndStart(job)});
+};
+
+const isPlainObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const normalizeStoryboardText = (value, fallback = "", maxLength = 0) => {
+  const normalized = String(value ?? "").replace(/\r\n/g, "\n").trim();
+  const safeFallback = String(fallback ?? "").replace(/\r\n/g, "\n").trim();
+  const chosen = normalized || safeFallback;
+  return maxLength > 0 ? chosen.slice(0, maxLength) : chosen;
+};
+
+const buildApprovedStoryboardFromPreview = (previewStoryboard, editedStoryboard) => {
+  if (!isPlainObject(previewStoryboard)) {
+    return null;
+  }
+
+  if (editedStoryboard && !isPlainObject(editedStoryboard)) {
+    throw new Error("Storyboard editado invalido.");
+  }
+
+  const previewScenes = Array.isArray(previewStoryboard.scenes) ? previewStoryboard.scenes : [];
+  const editedScenes = Array.isArray(editedStoryboard?.scenes) ? editedStoryboard.scenes : previewScenes;
+
+  if (editedStoryboard && editedStoryboard.scenes && editedScenes.length !== previewScenes.length) {
+    throw new Error("O storyboard editado precisa manter a mesma quantidade de cenas do preview.");
+  }
+
+  const approvedStoryboard = {
+    ...previewStoryboard,
+    videoTitle: normalizeStoryboardText(editedStoryboard?.videoTitle, previewStoryboard.videoTitle, 200),
+    hook: normalizeStoryboardText(editedStoryboard?.hook, previewStoryboard.hook, 280),
+    postCaption: normalizeStoryboardText(editedStoryboard?.postCaption, previewStoryboard.postCaption, 5000),
+    styleNotes: normalizeStoryboardText(editedStoryboard?.styleNotes, previewStoryboard.styleNotes, 2000),
+    cta: normalizeStoryboardText(editedStoryboard?.cta, previewStoryboard.cta, 240),
+    scenes: previewScenes.map((scene, index) => {
+      const editedScene = isPlainObject(editedScenes[index]) ? editedScenes[index] : {};
+      return {
+        ...scene,
+        title: normalizeStoryboardText(editedScene.title, scene.title, 160),
+        narration: normalizeStoryboardText(editedScene.narration, scene.narration, 2000),
+        overlay: normalizeStoryboardText(editedScene.overlay, scene.overlay, 120),
+        searchQuery: normalizeStoryboardText(editedScene.searchQuery, scene.searchQuery, 500),
+        visualGoal: normalizeStoryboardText(editedScene.visualGoal, scene.visualGoal, 2000)
+      };
+    })
+  };
+
+  if (Array.isArray(previewStoryboard.hashtags)) {
+    approvedStoryboard.hashtags = [...previewStoryboard.hashtags];
+  }
+
+  return approvedStoryboard;
 };
 
 const handleApprovePreviewRequest = async (request, response) => {
@@ -4434,7 +2043,14 @@ const handleApprovePreviewRequest = async (request, response) => {
     return;
   }
 
-  const approvedStoryboard = await readJsonFile(previewJob.storyboardPath);
+  const previewStoryboard = await readJsonFile(previewJob.storyboardPath);
+  const approvedStoryboard = buildApprovedStoryboardFromPreview(previewStoryboard, body.storyboard);
+
+  if (!approvedStoryboard) {
+    sendJson(response, 400, {error: "Nao consegui carregar o storyboard aprovado."});
+    return;
+  }
+
   const previewValidation = getPreviewStoryboardIssues({
     storyboard: approvedStoryboard,
     targetSeconds: previewJob.input?.targetSeconds,
@@ -4455,11 +2071,15 @@ const handleApprovePreviewRequest = async (request, response) => {
     return;
   }
 
+  await writeFile(previewJob.storyboardPath, `${JSON.stringify(approvedStoryboard, null, 2)}\n`);
+
   const approvedJob = {
     id: createId(),
     type: "generate",
     title: previewJob.title,
     slug: previewJob.slug,
+    caseId: previewJob.caseId || createId(),
+    attempt: 1,
     status: "queued",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -4479,7 +2099,7 @@ const handleApprovePreviewRequest = async (request, response) => {
     error: null
   };
 
-  sendJson(response, 201, {job: enqueueJob(approvedJob)});
+  sendJson(response, 201, {job: enqueueAndStart(approvedJob)});
 };
 
 const handleRerenderRequest = async (request, response) => {
@@ -4546,7 +2166,7 @@ const handleRerenderRequest = async (request, response) => {
     error: null
   };
 
-  sendJson(response, 201, {job: enqueueJob(job)});
+  sendJson(response, 201, {job: enqueueAndStart(job)});
 };
 
 const buildResumedGenerateJob = (sourceJob) => ({
@@ -4554,6 +2174,8 @@ const buildResumedGenerateJob = (sourceJob) => ({
   type: "generate",
   title: sourceJob.title,
   slug: sourceJob.slug,
+  caseId: sourceJob.caseId || null,
+  attempt: sourceJob.attempt || null,
   status: "queued",
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
@@ -4564,12 +2186,13 @@ const buildResumedGenerateJob = (sourceJob) => ({
   ],
   input: {
     ...sourceJob.input,
+    generationMode: resolveGenerationMode(sourceJob.input?.generationMode, resolveGenerationMode(baseChildEnv.GENERATION_MODE)),
     previewOnly: false,
     force: true,
     resumeFromJobId: sourceJob.id
   },
   outputPath: null,
-  storyboardPath: null,
+  storyboardPath: findExistingStoryboardPath(sourceJob) || null,
   artifactEpochAt: sourceJob.artifactEpochAt || sourceJob.createdAt,
   exitCode: null,
   error: null
@@ -4577,11 +2200,14 @@ const buildResumedGenerateJob = (sourceJob) => ({
 
 const buildAudioPrepJob = (sourceJob, options = {}) => {
   const recoveryJob = getRecoverySourceJob(sourceJob) || sourceJob;
+  const recoveryReferenceJob = sourceJob && typeof sourceJob === "object" ? sourceJob : recoveryJob;
   return {
     id: createId(),
     type: "audio-prep",
     title: recoveryJob.title,
     slug: recoveryJob.slug,
+    caseId: recoveryJob.caseId || sourceJob.caseId || null,
+    attempt: recoveryJob.attempt || sourceJob.attempt || null,
     status: "queued",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -4590,12 +2216,12 @@ const buildAudioPrepJob = (sourceJob, options = {}) => {
       ...recoveryJob.input,
       previewOnly: false,
       force: false,
-      sourceJobId: recoveryJob.id,
+      sourceJobId: recoveryReferenceJob?.id || recoveryJob.id,
       autoContinueRecovery: options.autoContinueRecovery === true
     },
     outputPath: null,
-    storyboardPath: getRunPaths(recoveryJob.slug).storyboardPath,
-    artifactEpochAt: recoveryJob.artifactEpochAt || recoveryJob.createdAt,
+    storyboardPath: resolveEffectiveStoryboardPath(recoveryJob),
+    artifactEpochAt: getRecoveryArtifactEpochAt(recoveryReferenceJob || recoveryJob),
     exitCode: null,
     error: null
   };
@@ -4603,11 +2229,14 @@ const buildAudioPrepJob = (sourceJob, options = {}) => {
 
 const buildRenderOnlyJob = (sourceJob, options = {}) => {
   const recoveryJob = getRecoverySourceJob(sourceJob) || sourceJob;
+  const recoveryReferenceJob = sourceJob && typeof sourceJob === "object" ? sourceJob : recoveryJob;
   return {
     id: createId(),
     type: "render-only",
     title: recoveryJob.title,
     slug: recoveryJob.slug,
+    caseId: recoveryJob.caseId || sourceJob.caseId || null,
+    attempt: recoveryJob.attempt || sourceJob.attempt || null,
     status: "queued",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -4616,12 +2245,12 @@ const buildRenderOnlyJob = (sourceJob, options = {}) => {
       ...recoveryJob.input,
       previewOnly: false,
       force: false,
-      sourceJobId: recoveryJob.id,
+      sourceJobId: recoveryReferenceJob?.id || recoveryJob.id,
       autoContinueRecovery: options.autoContinueRecovery === true
     },
     outputPath: null,
-    storyboardPath: getRunPaths(recoveryJob.slug).storyboardPath,
-    artifactEpochAt: recoveryJob.artifactEpochAt || recoveryJob.createdAt,
+    storyboardPath: resolveEffectiveStoryboardPath(recoveryJob),
+    artifactEpochAt: getRecoveryArtifactEpochAt(recoveryReferenceJob || recoveryJob),
     exitCode: null,
     error: null
   };
@@ -4629,11 +2258,29 @@ const buildRenderOnlyJob = (sourceJob, options = {}) => {
 
 const buildValidateOnlyJob = (sourceJob) => {
   const recoveryJob = getRecoverySourceJob(sourceJob) || sourceJob;
+  const artifactEpochAt =
+    sourceJob?.type === "render-only"
+      ? (
+          sourceJob?.completedAt ||
+          sourceJob?.updatedAt ||
+          sourceJob?.artifactEpochAt ||
+          sourceJob?.createdAt ||
+          toIsoNow()
+        )
+      : (
+          sourceJob?.artifactEpochAt ||
+          sourceJob?.createdAt ||
+          recoveryJob?.artifactEpochAt ||
+          recoveryJob?.createdAt ||
+          toIsoNow()
+        );
   return {
     id: createId(),
     type: "validate-only",
     title: recoveryJob.title,
     slug: recoveryJob.slug,
+    caseId: recoveryJob.caseId || sourceJob.caseId || null,
+    attempt: recoveryJob.attempt || sourceJob.attempt || null,
     status: "queued",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -4645,8 +2292,8 @@ const buildValidateOnlyJob = (sourceJob) => {
       sourceJobId: recoveryJob.id
     },
     outputPath: null,
-    storyboardPath: getRunPaths(recoveryJob.slug).storyboardPath,
-    artifactEpochAt: recoveryJob.artifactEpochAt || recoveryJob.createdAt,
+    storyboardPath: resolveEffectiveStoryboardPath(recoveryJob),
+    artifactEpochAt,
     exitCode: null,
     error: null
   };
@@ -4654,7 +2301,8 @@ const buildValidateOnlyJob = (sourceJob) => {
 
 const buildAutoRerenderJob = (sourceJob) => {
   const paths = getRunPaths(sourceJob.slug);
-  const storyboard = readJsonSyncIfExists(paths.storyboardPath);
+  const effectiveStoryboardPath = resolveEffectiveStoryboardPath(sourceJob);
+  const storyboard = readJsonSyncIfExists(effectiveStoryboardPath);
   const renderProps = readJsonSyncIfExists(paths.renderPropsPath);
   const language = VALID_LANGUAGES.includes(sourceJob.input?.language) ? sourceJob.input.language : "pt-BR";
   const tone = VALID_TONES.includes(sourceJob.input?.tone) ? sourceJob.input.tone : "natural_clean";
@@ -4687,7 +2335,7 @@ const buildAutoRerenderJob = (sourceJob) => {
       scriptGuidance: String(sourceJob.input?.scriptGuidance || "").trim()
     },
     outputPath: null,
-    storyboardPath: paths.storyboardPath,
+    storyboardPath: effectiveStoryboardPath || paths.storyboardPath,
     exitCode: null,
     error: null
   };
@@ -4709,19 +2357,28 @@ const buildRetryFromStoryboardGenerateJob = async (sourceJob) => {
   const tone = VALID_TONES.includes(sourceJob.input?.tone) ? sourceJob.input.tone : (channelPreset.tone || "natural_clean");
   const selectedVoice = String(sourceJob.input?.voice || DEFAULT_VOICE).trim();
   const voice = VALID_VOICES.includes(selectedVoice) ? selectedVoice : DEFAULT_VOICE;
+  const generationMode = resolveGenerationMode(
+    sourceJob.input?.generationMode,
+    resolveGenerationMode(baseChildEnv.GENERATION_MODE)
+  );
   const tonePreset = tonePresets[tone] || tonePresets.natural_clean;
   const channelCustomStylePrompt = resolveChannelCustomStylePrompt({channelPreset, language});
   const title = String(storyboard.videoTitle || sourceJob.title || slugToCaption(sourceJob.slug)).trim();
+  const caseId = sourceJob.caseId || createId();
+  const attempt = getNextAttemptForCase(caseId);
+  const retrySlug = buildUniqueGenerateSlug(title);
 
   return {
     id: createId(),
     type: "generate",
     title,
-    slug: sourceJob.slug,
+    slug: retrySlug,
+    caseId,
+    attempt,
     status: "queued",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    logTail: [`[failed-job] refazendo a partir do storyboard do job ${sourceJob.id}`],
+    logTail: [`[failed-job] refazendo a partir do storyboard do job ${sourceJob.id} (tentativa ${attempt})`],
     input: {
       ...sourceJob.input,
       title,
@@ -4735,6 +2392,7 @@ const buildRetryFromStoryboardGenerateJob = async (sourceJob) => {
       targetSeconds,
       voice,
       tone,
+      generationMode,
       stylePrompt:
         sourceJob.input?.stylePrompt ||
         combineStylePrompt({language, tone, customStylePrompt: channelCustomStylePrompt}),
@@ -4777,11 +2435,12 @@ const handleResumeRequest = async (request, response) => {
   }
 
   const paths = getRunPaths(sourceJob.slug);
-  const storyboard = await readJsonFile(paths.storyboardPath);
+  const storyboardPath = getRetryStoryboardPathForJob(sourceJob) || resolveEffectiveStoryboardPath(sourceJob);
+  const storyboard = await readJsonFile(storyboardPath);
   const voiceover = await readJsonFile(paths.voiceoverPath);
 
   if (!storyboard || !Array.isArray(storyboard.scenes) || storyboard.scenes.length === 0) {
-    sendJson(response, 409, {error: `Nao encontrei storyboard em ${paths.storyboardPath}.`});
+    sendJson(response, 409, {error: `Nao encontrei storyboard em ${storyboardPath}.`});
     return;
   }
 
@@ -4790,26 +2449,26 @@ const handleResumeRequest = async (request, response) => {
     return;
   }
 
-  if (!existsSync(paths.publicAudioPath)) {
+  if (!isFreshArtifactForJob(paths.publicAudioPath, sourceJob)) {
     sendJson(response, 409, {error: `Nao encontrei voiceover.mp3 em ${paths.publicAudioPath}.`});
     return;
   }
 
   const missingScene = storyboard.scenes.findIndex((scene, index) => {
     const fileName = `scene-${String(index + 1).padStart(2, "0")}.mp4`;
-    return !existsSync(path.join(paths.assetDir, fileName));
+    return !isReadySceneClipForJob(path.join(paths.assetDir, fileName), sourceJob);
   });
 
   if (missingScene !== -1) {
     sendJson(response, 409, {
-      error: `Falta o asset scene-${String(missingScene + 1).padStart(2, "0")}.mp4 em assets/envato/${sourceJob.slug}.`
+      error: `Falta o asset scene-${String(missingScene + 1).padStart(2, "0")}.mp4 em assets/${sourceJob.slug}.`
     });
     return;
   }
 
   const resumedJob = buildResumedGenerateJob(sourceJob);
 
-  sendJson(response, 201, {job: enqueueJob(resumedJob)});
+  sendJson(response, 201, {job: enqueueAndStart(resumedJob)});
 };
 
 const handleVideosRequest = async (response) => {
@@ -4835,8 +2494,8 @@ const handleVideosRequest = async (response) => {
     agendador: {
       configured: agendadorProfiles.some((item) => item.configured),
       keychainBacked: HAS_SECURITY_CLI,
-      siteUrl: normalizeAgendadorSiteUrl(baseChildEnv.AGENDADOR_ONLINE_URL || baseChildEnv.AGENDADOR_URL || DEFAULT_AGENDADOR_SITE_URL),
-      apiBase: AGENDADOR_API_BASE,
+      siteUrl: getAgendadorSiteUrl(),
+      apiBase: getAgendadorApiBase(),
       profiles: agendadorProfiles
     }
   });
@@ -4885,7 +2544,8 @@ const handleVideoRefazerRequest = async (request, response) => {
     filePath: body.path
   });
   const paths = getRunPaths(target.slug);
-  const storyboard = await readJsonFile(paths.storyboardPath);
+  const storyboardPath = resolveEffectiveStoryboardPath(target.slug);
+  const storyboard = await readJsonFile(storyboardPath);
 
   if (!storyboard?.scenes?.length) {
     sendJson(response, 409, {error: "Nao achei storyboard para refazer este video."});
@@ -4910,6 +2570,10 @@ const handleVideoRefazerRequest = async (request, response) => {
     body.imageModel || previousJob?.input?.imageModel,
     resolveImageModel(baseChildEnv.GOOGLE_IMAGE_MODEL || baseChildEnv.IMAGE_MODEL)
   );
+  const generationMode = resolveGenerationMode(
+    body.generationMode || previousJob?.input?.generationMode,
+    resolveGenerationMode(baseChildEnv.GENERATION_MODE)
+  );
   const tonePreset = tonePresets[tone] || tonePresets.natural_clean;
   const explicitCustomStylePrompt = String(body.customStylePrompt || "").slice(0, MAX_STYLE_PROMPT_LENGTH).trim();
   const channelCustomStylePrompt = resolveChannelCustomStylePrompt({channelPreset, language});
@@ -4928,12 +2592,13 @@ const handleVideoRefazerRequest = async (request, response) => {
       hasSourceText: false,
       sourceTextCharacters: 0,
       sourceTextFile: "",
-      storyboardFile: paths.storyboardPath,
+      storyboardFile: storyboardPath,
       channel: channel.value,
       outputProfile: outputProfile.id,
       language,
       targetSeconds,
       imageModel,
+      generationMode,
       imageStyle: previousJob?.input?.imageStyle || DEFAULT_VISUAL_STYLE_PRESET,
       voice,
       tone,
@@ -4958,12 +2623,12 @@ const handleVideoRefazerRequest = async (request, response) => {
       approvedFromJobId: previousJob?.id || null
     },
     outputPath: null,
-    storyboardPath: paths.storyboardPath,
+    storyboardPath,
     exitCode: null,
     error: null
   };
 
-  sendJson(response, 201, {job: enqueueJob(job)});
+  sendJson(response, 201, {job: enqueueAndStart(job)});
 };
 
 const handleRetryFailedJobRequest = async (request, response) => {
@@ -4983,19 +2648,25 @@ const handleRetryFailedJobRequest = async (request, response) => {
 
   const retriedJob = await buildRetryFromStoryboardGenerateJob(sourceJob);
 
-  sendJson(response, 201, {job: enqueueJob(retriedJob)});
+  sendJson(response, 201, {job: enqueueAndStart(retriedJob)});
 };
 
 const handleRegenerateMissingSceneRequest = async (request, response) => {
   const body = await readRequestBody(request);
   const sourceJobId = String(body.jobId || "").trim() || String(request.url?.split("/")[3] || "").trim();
-  const sourceJob = jobs.get(sourceJobId);
+  const selectedJob = jobs.get(sourceJobId);
 
-  if (!sourceJob) {
+  if (!selectedJob) {
     sendJson(response, 404, {error: "Job nao encontrado."});
     return;
   }
 
+  if (selectedJob.status !== "failed") {
+    sendJson(response, 409, {error: "A regeneracao manual de cena so fica disponivel para jobs falhados."});
+    return;
+  }
+
+  const sourceJob = getRecoverySourceJob(selectedJob) || selectedJob;
   const storyboardPath = getRetryStoryboardPathForJob(sourceJob) || getRunPaths(sourceJob.slug).storyboardPath;
   const storyboard = await readJsonFile(storyboardPath);
   if (!storyboard?.scenes?.length) {
@@ -5004,9 +2675,7 @@ const handleRegenerateMissingSceneRequest = async (request, response) => {
   }
 
   const requestedSceneNumber = normalizePositiveInt(body.sceneNumber);
-  const detectedMissingSceneNumber = sourceJob.type === "generate"
-    ? normalizePositiveInt(getFirstMissingSceneNumber(sourceJob))
-    : null;
+  const detectedMissingSceneNumber = normalizePositiveInt(getFirstMissingSceneNumber(sourceJob));
   const sceneNumber = detectedMissingSceneNumber || requestedSceneNumber;
 
   if (!Number.isInteger(sceneNumber) || sceneNumber < 1 || sceneNumber > storyboard.scenes.length) {
@@ -5027,6 +2696,8 @@ const handleRegenerateMissingSceneRequest = async (request, response) => {
     type: "scene-regenerate",
     title: sourceJob.title,
     slug: sourceJob.slug,
+    caseId: sourceJob.caseId || null,
+    attempt: sourceJob.attempt || null,
     status: "queued",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -5045,12 +2716,12 @@ const handleRegenerateMissingSceneRequest = async (request, response) => {
     },
     outputPath: null,
     storyboardPath,
-    artifactEpochAt: sourceJob.artifactEpochAt || sourceJob.createdAt,
+    artifactEpochAt: getRecoveryArtifactEpochAt(sourceJob),
     exitCode: null,
     error: null
   };
 
-  sendJson(response, 201, {job: enqueueJob(sceneJob)});
+  sendJson(response, 201, {job: enqueueAndStart(sceneJob)});
 };
 
 const handleGenerateAudioRequest = async (request, response) => {
@@ -5070,7 +2741,7 @@ const handleGenerateAudioRequest = async (request, response) => {
   }
 
   const job = buildAudioPrepJob(sourceJob);
-  sendJson(response, 201, {job: enqueueJob(job)});
+  sendJson(response, 201, {job: enqueueAndStart(job)});
 };
 
 const handleRenderOnlyRequest = async (request, response) => {
@@ -5090,7 +2761,7 @@ const handleRenderOnlyRequest = async (request, response) => {
   }
 
   const job = buildRenderOnlyJob(sourceJob);
-  sendJson(response, 201, {job: enqueueJob(job)});
+  sendJson(response, 201, {job: enqueueAndStart(job)});
 };
 
 const handleValidateOnlyRequest = async (request, response) => {
@@ -5110,7 +2781,7 @@ const handleValidateOnlyRequest = async (request, response) => {
   }
 
   const job = buildValidateOnlyJob(sourceJob);
-  sendJson(response, 201, {job: enqueueJob(job)});
+  sendJson(response, 201, {job: enqueueAndStart(job)});
 };
 
 const handleForceFailJobRequest = async (request, response) => {
@@ -5133,7 +2804,7 @@ const handleForceFailJobRequest = async (request, response) => {
     await terminateJobProcessTree(job);
   }
 
-  failJobAndReleaseQueue(job, "Job marcado manualmente como travado para liberar a fila.");
+  failAndRelease(job, "Job marcado manualmente como travado para liberar a fila.");
   sendJson(response, 200, {job: sanitizeJob(job)});
 };
 
@@ -5150,7 +2821,7 @@ const handleVideoDeleteRequest = async (request, response) => {
   await safeUnlink(target.path);
   await safeUnlink(paths.outPath);
   await safeUnlink(getVideoMetaPath(target.slug));
-  await removeVideoMetadataEntry({channel: channel.value, slug: target.slug}).catch(() => {});
+  await removeVideoMetadataEntry({channel: channel.value, slug: target.slug}).catch((err) => { console.error(`removeVideoMetadataEntry failed for ${target.slug}:`, err.message); });
 
   sendJson(response, 200, {
     ok: true,
@@ -5284,7 +2955,7 @@ const handleVideoTikTokHelperRequest = async (request, response) => {
     filePath: body.path
   });
   const video = await buildVideoRecord({targetPath: target.path});
-  const meta = await readVideoMeta(target.slug).catch(() => null);
+  const meta = await readVideoMeta(target.slug).catch(() => null); /* expected: meta file may not exist */
   const hashtags = Array.isArray(body.hashtags)
     ? body.hashtags.map((item) => String(item || "").trim()).filter(Boolean)
     : Array.isArray(meta?.hashtags) && meta.hashtags.length > 0
@@ -5308,7 +2979,7 @@ const handleVideoTikTokHelperRequest = async (request, response) => {
     createdAt: new Date().toISOString()
   };
 
-  await writeTikTokDraft(draftId, draft);
+  await writeTikTokDraft(tiktokDraftsDir, draftId, draft);
 
   sendJson(response, 200, {
     ok: true,
@@ -5325,6 +2996,7 @@ const handleConfigRequest = async (response) => {
       targetSeconds: 60,
       outputProfile: DEFAULT_OUTPUT_PROFILE,
       imageModel: resolveImageModel(baseChildEnv.GOOGLE_IMAGE_MODEL || baseChildEnv.IMAGE_MODEL),
+      generationMode: resolveGenerationMode(baseChildEnv.GENERATION_MODE),
       imageStyle: DEFAULT_VISUAL_STYLE_PRESET,
       tone: "shortform_native",
       voice: DEFAULT_VOICE,
@@ -5340,6 +3012,7 @@ const handleConfigRequest = async (response) => {
     channelPresets,
     outputProfiles: outputProfileOptions,
     imageModels: imageModelOptions.map(serializeImageModelOption),
+    generationModes: generationModeOptions.map(serializeGenerationModeOption),
     imageStyles: imageStyleOptions.map(serializeImageStyleOption),
     tones: Object.entries(tonePresets).map(([value, config]) => ({
       value,
@@ -5351,8 +3024,8 @@ const handleConfigRequest = async (response) => {
       outputProfileOptions.map((profile) => [profile.value, profile.durations])
     ),
     agendador: {
-      siteUrl: normalizeAgendadorSiteUrl(baseChildEnv.AGENDADOR_ONLINE_URL || baseChildEnv.AGENDADOR_URL || DEFAULT_AGENDADOR_SITE_URL),
-      apiBase: AGENDADOR_API_BASE,
+      siteUrl: getAgendadorSiteUrl(),
+      apiBase: getAgendadorApiBase(),
       profiles: channelOptions.map((channel) => {
         const profile = resolveAgendadorChannelProfile(channel.value);
         return {
@@ -5437,12 +3110,14 @@ const validateStartup = () => {
 
 validateStartup();
 
-await mkdir(dataDir, {recursive: true});
-await mkdir(inputsDir, {recursive: true});
-await mkdir(videoLibraryDir, {recursive: true});
-await mkdir(tiktokDraftsDir, {recursive: true});
-await mkdir(postarRoot, {recursive: true});
-await Promise.all(channelOptions.map((channel) => mkdir(getChannelExportDir(channel.value), {recursive: true})));
+await ensureManagedDir(dataDir);
+await ensureManagedDir(inputsDir);
+await ensureManagedDir(videoLibraryDir);
+await ensureManagedDir(tiktokDraftsDir);
+await ensureManagedDir(postarRoot);
+await Promise.all(channelOptions.map((channel) => ensureManagedDir(getChannelExportDir(channel.value))));
+await normalizeManagedTree(dataDir, {maxDepth: 2});
+await Promise.all(channelOptions.map((channel) => normalizeManagedTree(getChannelExportDir(channel.value), {maxDepth: 1})));
 
 const persistedJobs = await readJsonFile(jobsFile);
 
@@ -5451,8 +3126,17 @@ if (Array.isArray(persistedJobs)) {
     const nowIso = toIsoNow();
 
     if (persistedJob.status === "running" || persistedJob.status === "queued") {
+      const restartMessage = "Servidor reiniciado antes da conclusao deste job.";
+      const failureContext = String(
+        persistedJob.error ||
+        getProcessFailureMessage(persistedJob, "") ||
+        ""
+      ).trim();
+
       persistedJob.status = "failed";
-      persistedJob.error = "Servidor reiniciado antes da conclusao deste job.";
+      persistedJob.error = failureContext && failureContext !== restartMessage
+        ? `${failureContext} | ${restartMessage}`
+        : restartMessage;
       persistedJob.completedAt = persistedJob.completedAt || nowIso;
       persistedJob.updatedAt = nowIso;
       persistedJob.heartbeatAt = nowIso;
@@ -5476,223 +3160,154 @@ if (Array.isArray(persistedJobs)) {
   }
 }
 
+if (Array.isArray(persistedJobs)) {
+  await persistJobs();
+}
+
+const BASIC_AUTH_PASSWORD = process.env.VIDEO_STUDIO_PASSWORD || "007007";
+const BASIC_AUTH_REALM = "Video Studio";
+
+const checkBasicAuth = (request) => {
+  const header = request.headers.authorization || "";
+  if (!header.startsWith("Basic ")) {
+    return false;
+  }
+
+  const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+  const separatorIndex = decoded.indexOf(":");
+  const password = separatorIndex >= 0 ? decoded.slice(separatorIndex + 1) : decoded;
+  return password === BASIC_AUTH_PASSWORD;
+};
+
+const handleJobsListRequest = async (_req, res) => {
+  const payload = Array.from(jobs.values())
+    .map((job) => sanitizeJob(job))
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const queueLengths = getQueueLengths();
+  sendJson(res, 200, {
+    jobs: payload,
+    cases: payload.map((job) => job.caseSummary),
+    summary: buildJobsSummary(payload),
+    ...getActiveJobIds(),
+    ...queueLengths
+  });
+};
+
+const handleJobStreamRequest = async (req, res, {params}) => {
+  const job = jobs.get(params.id);
+  if (!job) { sendJson(res, 404, {error: "Job nao encontrado."}); return; }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive"
+  });
+  res.write("\n");
+
+  const subscribers = streams.get(params.id) || new Set();
+  subscribers.add(res);
+  streams.set(params.id, subscribers);
+  sendEvent(res, "update", sanitizeJob(job));
+
+  const keepAlive = setInterval(() => {
+    try { res.write(": ping\n\n"); } catch { clearInterval(keepAlive); subscribers.delete(res); }
+  }, 25000);
+
+  const cleanup = () => { clearInterval(keepAlive); subscribers.delete(res); };
+  req.on("close", cleanup);
+  res.on("error", cleanup);
+};
+
+const handleJobDetailRequest = async (_req, res, {params}) => {
+  const job = jobs.get(params.id);
+  if (!job) { sendJson(res, 404, {error: "Job nao encontrado."}); return; }
+  sendJson(res, 200, {job: sanitizeJob(job)});
+};
+
+const handleRunsRequest = async (_req, res) => {
+  sendJson(res, 200, {runs: await listRecentExports()});
+};
+
+const handleFileRequest = async (req, res, {url}) => {
+  const filePath = url.searchParams.get("path");
+  if (!filePath) { sendJson(res, 400, {error: "Parametro path ausente."}); return; }
+  await serveStaticFile(req, res, filePath);
+};
+
+const handleTikTokHelperPageRequest = async (_req, res, {url}) => {
+  const draftId = String(url.searchParams.get("id") || "").trim();
+  if (!draftId) { sendJson(res, 400, {error: "Parametro id ausente."}); return; }
+  const draft = await readTikTokDraft(tiktokDraftsDir, draftId);
+  if (!draft) { sendJson(res, 404, {error: "Draft do TikTok nao encontrado."}); return; }
+  res.writeHead(200, {"Content-Type": "text/html; charset=utf-8"});
+  res.end(buildTikTokHelperHtml(draft));
+};
+
+const handleJobResumeRequest = async (req, res, {params}) => {
+  await handleResumeRequest(req, res, params.id);
+};
+
+// ── Route table ──────────────────────────────────────────────────────────────
+
+addRoute("GET",  "/api/config",                              (_req, res) => handleConfigRequest(res));
+addRoute("GET",  "/api/jobs",                                handleJobsListRequest);
+addRoute("GET",  "/api/jobs/:id/stream",                     handleJobStreamRequest);
+addRoute("GET",  "/api/jobs/:id",                            handleJobDetailRequest);
+addRoute("GET",  "/api/runs",                                handleRunsRequest);
+addRoute("GET",  "/api/videos",                              (_req, res) => handleVideosRequest(res));
+addRoute("GET",  "/api/file",                                handleFileRequest);
+addRoute("GET",  "/tiktok-helper",                           handleTikTokHelperPageRequest);
+addRoute("POST", "/api/generate",                            handleGenerateRequest);
+addRoute("POST", "/api/approve-preview",                     handleApprovePreviewRequest);
+addRoute("POST", "/api/rerender-voice",                      handleRerenderRequest);
+addRoute("POST", "/api/videos/meta",                         handleVideoMetaRequest);
+addRoute("POST", "/api/videos/refazer",                      handleVideoRefazerRequest);
+addRoute("POST", "/api/videos/delete",                       handleVideoDeleteRequest);
+addRoute("POST", "/api/videos/publish",                      handleVideoPublishRequest);
+addRoute("POST", "/api/videos/tiktok-helper",                handleVideoTikTokHelperRequest);
+addRoute("POST", "/api/jobs/:id/retry-from-storyboard",      handleRetryFailedJobRequest);
+addRoute("POST", "/api/jobs/:id/regenerate-missing-scene",   handleRegenerateMissingSceneRequest);
+addRoute("POST", "/api/jobs/:id/generate-audio",             handleGenerateAudioRequest);
+addRoute("POST", "/api/jobs/:id/render-only",                handleRenderOnlyRequest);
+addRoute("POST", "/api/jobs/:id/validate",                   handleValidateOnlyRequest);
+addRoute("POST", "/api/jobs/:id/force-fail",                 handleForceFailJobRequest);
+addRoute("POST", "/api/jobs/:id/resume",                     handleJobResumeRequest);
+
 const server = http.createServer(async (request, response) => {
   const method = request.method || "GET";
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
   const pathname = url.pathname;
 
+  if (!checkBasicAuth(request)) {
+    response.writeHead(401, {
+      "WWW-Authenticate": `Basic realm="${BASIC_AUTH_REALM}"`,
+      "Content-Type": "text/plain"
+    });
+    response.end("Unauthorized");
+    return;
+  }
+
   try {
-    if (method === "GET" && pathname === "/") {
-      await serveStaticFile(request, response, path.join(publicDir, "index.html"));
-      return;
-    }
-
-    if (method === "GET" && ["/app.js", "/styles.css"].includes(pathname)) {
-      await serveStaticFile(request, response, path.join(publicDir, pathname.slice(1)));
-      return;
-    }
-
-    const stylePreviewPath = resolveStylePreviewPath(pathname);
-    if (method === "GET" && stylePreviewPath) {
-      await serveStaticFile(request, response, stylePreviewPath);
-      return;
-    }
-
-    const publicStaticPath = resolvePublicStaticPath(pathname);
-    if (method === "GET" && publicStaticPath) {
-      await serveStaticFile(request, response, publicStaticPath);
-      return;
-    }
-
-    if (method === "GET" && pathname === "/api/config") {
-      await handleConfigRequest(response);
-      return;
-    }
-
-    if (method === "GET" && pathname === "/api/jobs") {
-      const payload = Array.from(jobs.values())
-        .map((job) => sanitizeJob(job))
-        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
-      const queueLengths = getQueueLengths();
-      sendJson(response, 200, {
-        jobs: payload,
-        cases: payload.map((job) => job.caseSummary),
-        summary: buildJobsSummary(payload),
-        activeJobId: activeHeavyJobId || activePreviewJobId || null,
-        activePreviewJobId,
-        activeHeavyJobId,
-        ...queueLengths
-      });
-      return;
-    }
-
-    if (method === "GET" && pathname.startsWith("/api/jobs/") && pathname.endsWith("/stream")) {
-      const jobId = pathname.split("/")[3];
-      const job = jobs.get(jobId);
-
-      if (!job) {
-        sendJson(response, 404, {error: "Job nao encontrado."});
+    // ── Static files ───────────────────────────────────────────────────────
+    if (method === "GET") {
+      if (pathname === "/") {
+        await serveStaticFile(request, response, path.join(publicDir, "index.html"));
         return;
       }
-
-      response.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive"
-      });
-      response.write("\n");
-
-      const subscribers = streams.get(jobId) || new Set();
-      subscribers.add(response);
-      streams.set(jobId, subscribers);
-      sendEvent(response, "update", sanitizeJob(job));
-
-      const keepAlive = setInterval(() => {
-        try {
-          response.write(": ping\n\n");
-        } catch {
-          clearInterval(keepAlive);
-          subscribers.delete(response);
-        }
-      }, 25000);
-
-      const cleanup = () => {
-        clearInterval(keepAlive);
-        subscribers.delete(response);
-      };
-
-      request.on("close", cleanup);
-      response.on("error", cleanup);
-
-      return;
-    }
-
-    if (method === "GET" && pathname.startsWith("/api/jobs/")) {
-      const jobId = pathname.split("/")[3];
-      const job = jobs.get(jobId);
-
-      if (!job) {
-        sendJson(response, 404, {error: "Job nao encontrado."});
+      if (["/app.js", "/styles.css"].includes(pathname)) {
+        await serveStaticFile(request, response, path.join(publicDir, pathname.slice(1)));
         return;
       }
-
-      sendJson(response, 200, {job: sanitizeJob(job)});
-      return;
+      const stylePreviewPath = resolveStylePreviewPath(pathname);
+      if (stylePreviewPath) { await serveStaticFile(request, response, stylePreviewPath); return; }
+      const publicStaticPath = resolvePublicStaticPath(pathname);
+      if (publicStaticPath) { await serveStaticFile(request, response, publicStaticPath); return; }
     }
 
-    if (method === "GET" && pathname === "/api/runs") {
-      sendJson(response, 200, {runs: await listRecentExports()});
-      return;
-    }
-
-    if (method === "GET" && pathname === "/api/videos") {
-      await handleVideosRequest(response);
-      return;
-    }
-
-    if (method === "GET" && pathname === "/api/file") {
-      const filePath = url.searchParams.get("path");
-
-      if (!filePath) {
-        sendJson(response, 400, {error: "Parametro path ausente."});
-        return;
-      }
-
-      await serveStaticFile(request, response, filePath);
-      return;
-    }
-
-    if (method === "GET" && pathname === "/tiktok-helper") {
-      const draftId = String(url.searchParams.get("id") || "").trim();
-      if (!draftId) {
-        sendJson(response, 400, {error: "Parametro id ausente."});
-        return;
-      }
-
-      const draft = await readTikTokDraft(draftId);
-      if (!draft) {
-        sendJson(response, 404, {error: "Draft do TikTok nao encontrado."});
-        return;
-      }
-
-      response.writeHead(200, {"Content-Type": "text/html; charset=utf-8"});
-      response.end(buildTikTokHelperHtml(draft));
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/generate") {
-      await handleGenerateRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/approve-preview") {
-      await handleApprovePreviewRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/rerender-voice") {
-      await handleRerenderRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/videos/meta") {
-      await handleVideoMetaRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/videos/refazer") {
-      await handleVideoRefazerRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/videos/delete") {
-      await handleVideoDeleteRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/videos/publish") {
-      await handleVideoPublishRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname === "/api/videos/tiktok-helper") {
-      await handleVideoTikTokHelperRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname.startsWith("/api/jobs/") && pathname.endsWith("/retry-from-storyboard")) {
-      await handleRetryFailedJobRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname.startsWith("/api/jobs/") && pathname.endsWith("/regenerate-missing-scene")) {
-      await handleRegenerateMissingSceneRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname.startsWith("/api/jobs/") && pathname.endsWith("/generate-audio")) {
-      await handleGenerateAudioRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname.startsWith("/api/jobs/") && pathname.endsWith("/render-only")) {
-      await handleRenderOnlyRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname.startsWith("/api/jobs/") && pathname.endsWith("/validate")) {
-      await handleValidateOnlyRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname.startsWith("/api/jobs/") && pathname.endsWith("/force-fail")) {
-      await handleForceFailJobRequest(request, response);
-      return;
-    }
-
-    if (method === "POST" && pathname.startsWith("/api/jobs/") && pathname.endsWith("/resume")) {
-      const jobId = pathname.split("/")[3];
-      await handleResumeRequest(request, response, jobId);
+    // ── Route table ────────────────────────────────────────────────────────
+    const matched = matchRoute(method, pathname);
+    if (matched) {
+      await matched.handler(request, response, {url, pathname, params: matched.params});
       return;
     }
 
@@ -5723,10 +3338,10 @@ const gracefulShutdown = async () => {
   await Promise.all(
     Array.from(jobs.values())
       .filter((job) => Number.isInteger(Number(job?.processId || 0)) && Number(job.processId) > 0)
-      .map((job) => terminateJobProcessTree(job).catch(() => false))
-  ).catch(() => {});
+      .map((job) => terminateJobProcessTree(job).catch(() => false)) /* best-effort: process may already be gone */
+  ).catch((err) => { console.error('shutdown: failed to terminate job processes:', err.message); });
 
-  persistJobs().catch(() => {}).finally(() => {
+  persistJobs().catch((err) => { console.error('shutdown: failed to persist jobs:', err.message); }).finally(() => {
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 5000);
   });

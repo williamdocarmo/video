@@ -7,6 +7,12 @@ const countWords = (text) => {
     .filter(Boolean).length;
 };
 
+/**
+ * Redistribute frame counts so they sum to totalFrames (min 45 per scene).
+ * @param {number[]} frames - Raw frame counts per scene.
+ * @param {number} totalFrames - Desired total.
+ * @returns {number[]} Normalized frame counts.
+ */
 const normalizeFrames = (frames, totalFrames) => {
   const safeFrames = frames.map((frame) => Math.max(45, frame));
   const currentTotal = safeFrames.reduce((sum, value) => sum + value, 0);
@@ -182,16 +188,26 @@ const shouldFlushChunk = ({currentChunk, nextWord, chunkSize, chunkTooLong, sour
 
 const isFiniteCharOffset = (value) => Number.isFinite(Number(value));
 
+const isEmptySceneSpan = (span) =>
+  Boolean(span?.empty === true) ||
+  !isFiniteCharOffset(span?.startChar) ||
+  !isFiniteCharOffset(span?.endChar) ||
+  Number(span.endChar) < Number(span.startChar);
+
 const buildSceneTimedSlicesByCharOffset = ({sceneSpans, timedWords}) => {
-  return sceneSpans.map((span) =>
-    timedWords.filter(
+  return sceneSpans.map((span) => {
+    if (isEmptySceneSpan(span)) {
+      return [];
+    }
+
+    return timedWords.filter(
       (word) =>
         isFiniteCharOffset(word.startChar) &&
         isFiniteCharOffset(word.endChar) &&
         Number(word.startChar) >= Number(span.startChar) &&
         Number(word.startChar) <= Number(span.endChar)
-    )
-  );
+    );
+  });
 };
 
 const charOffsetAlignmentLooksPlausible = ({scenes, timedWords, sceneSpans}) => {
@@ -199,8 +215,13 @@ const charOffsetAlignmentLooksPlausible = ({scenes, timedWords, sceneSpans}) => 
     return false;
   }
 
-  const firstSceneStart = Math.min(...sceneSpans.map((span) => Number(span.startChar)));
-  const lastSceneEnd = Math.max(...sceneSpans.map((span) => Number(span.endChar)));
+  const usableSceneSpans = sceneSpans.filter((span) => !isEmptySceneSpan(span));
+  if (usableSceneSpans.length === 0) {
+    return false;
+  }
+
+  const firstSceneStart = Math.min(...usableSceneSpans.map((span) => Number(span.startChar)));
+  const lastSceneEnd = Math.max(...usableSceneSpans.map((span) => Number(span.endChar)));
   const inRangeWords = timedWords.filter(
     (word) =>
       isFiniteCharOffset(word.startChar) &&
@@ -559,7 +580,8 @@ const assignTimedWordsToScenes = ({scenes, timedWords, audioDurationSeconds, sce
       (span) =>
         Number.isInteger(span?.sceneIndex) &&
         Number.isFinite(Number(span?.startChar)) &&
-        Number.isFinite(Number(span?.endChar))
+        Number.isFinite(Number(span?.endChar)) &&
+        !isEmptySceneSpan(span)
     );
 
   if (hasCharOffsets && hasSceneSpans && charOffsetAlignmentLooksPlausible({scenes, timedWords: normalizedTimedWords, sceneSpans})) {
@@ -684,6 +706,15 @@ const median = (values) => {
   return (sorted[midpoint - 1] + sorted[midpoint]) / 2;
 };
 
+/**
+ * Analyze speech pacing per scene and flag rushed scenes.
+ * @param {object} params
+ * @param {{narration: string, id?: string, title?: string}[]} params.scenes
+ * @param {{startSeconds: number, endSeconds: number, startChar?: number, endChar?: number}[]} [params.timedWords=[]]
+ * @param {number} [params.audioDurationSeconds=0]
+ * @param {{sceneIndex: number, startChar: number, endChar: number}[]} [params.sceneSpans=[]]
+ * @returns {{sceneStats: object[], medianWordsPerSecond: number|null, maxWordsPerSecond: number, rushedScenes: object[]}}
+ */
 export const analyzeSceneSpeechPacing = ({scenes, timedWords = [], audioDurationSeconds = 0, sceneSpans = []}) => {
   if (!Array.isArray(scenes) || scenes.length === 0 || timedWords.length === 0) {
     return {
@@ -756,6 +787,18 @@ export const analyzeSceneSpeechPacing = ({scenes, timedWords = [], audioDuration
   };
 };
 
+/**
+ * Build karaoke caption chunks for a single scene from timed words.
+ * Groups words into display chunks with per-word highlight frame ranges.
+ * @param {object} params
+ * @param {{text: string, startSeconds: number, endSeconds: number}[]} params.sceneWords - Timed words for this scene.
+ * @param {number} params.fps - Frames per second.
+ * @param {number} params.chunkSize - Target words per caption chunk.
+ * @param {number} params.sceneStartFrame
+ * @param {number} params.sceneEndFrame
+ * @param {string} [params.sourceText=""] - Original narration text (for display normalization).
+ * @returns {{text: string, startFrame: number, endFrame: number, words: {text: string, startFrame: number, endFrame: number}[]}[]}
+ */
 const buildTimedCaptions = ({sceneWords, fps, chunkSize, sceneStartFrame, sceneEndFrame, sourceText = ""}) => {
   const captions = [];
   const minCaptionFrames = Math.max(
@@ -967,6 +1010,17 @@ const buildAlignedTimeline = ({scenes, audioDurationSeconds, fps, timedWords, sc
   };
 };
 
+/**
+ * Build the full video timeline: scene frame ranges and karaoke captions.
+ * Uses timed-word alignment when available, otherwise falls back to proportional word-count distribution.
+ * @param {object} params
+ * @param {{narration: string, id?: string}[]} params.scenes - Storyboard scenes.
+ * @param {number} params.audioDurationSeconds - Total voiceover duration.
+ * @param {number} params.fps - Frames per second (typically 30).
+ * @param {{startSeconds: number, endSeconds: number, startChar?: number, endChar?: number}[]} [params.timedWords=[]] - Word-level timestamps from STT.
+ * @param {{sceneIndex: number, startChar: number, endChar: number}[]} [params.sceneSpans=[]] - Character-offset spans mapping narration to scenes.
+ * @returns {{durationInFrames: number, scenes: object[], captions: {text: string, startFrame: number, endFrame: number, words: object[]}[]}}
+ */
 export const buildTimeline = ({scenes, audioDurationSeconds, fps, timedWords = [], sceneSpans = []}) => {
   const normalizedTimedWords = sanitizeTimedWordsForAudio({
     timedWords,

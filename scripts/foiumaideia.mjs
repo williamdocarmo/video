@@ -6,42 +6,11 @@ import {existsSync} from "node:fs";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {DEFAULT_OUTPUT_PROFILE, resolveOutputProfileConfig} from "../config/output-profiles.mjs";
+import {slugify, parseEnvFile} from "../shared/utils.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const wrapperRoot = path.resolve(path.dirname(scriptPath), "..");
 const defaultConfigPath = path.join(wrapperRoot, ".env");
-
-const parseEnvFile = async (envPath) => {
-  if (!existsSync(envPath)) {
-    return {};
-  }
-
-  const content = await readFile(envPath, "utf8");
-  const result = {};
-
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-
-    if (!line || line.startsWith("#")) {
-      continue;
-    }
-
-    const separatorIndex = line.indexOf("=");
-
-    if (separatorIndex === -1) {
-      continue;
-    }
-
-    const key = line.slice(0, separatorIndex).trim();
-    const value = line.slice(separatorIndex + 1).trim();
-
-    if (key) {
-      result[key] = value;
-    }
-  }
-
-  return result;
-};
 
 const resolvePathFrom = (baseDir, value, fallback = "") => {
   const raw = String(value || fallback || "").trim();
@@ -171,6 +140,12 @@ const parseArgs = (argv) => {
       continue;
     }
 
+    if (item === "--generation-mode") {
+      parsed.generationMode = argv[index + 1];
+      index += 1;
+      continue;
+    }
+
     if (item === "--image-style") {
       parsed.imageStyle = argv[index + 1];
       index += 1;
@@ -223,7 +198,22 @@ const removeArgPair = (args, flag) => {
   }
 };
 
-const usesVertexImagePipeline = () => true;
+const normalizeGenerationMode = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+
+  if (!normalized || normalized === "image" || normalized === "image-pipeline" || normalized === "img-to-video") {
+    return "image-pipeline";
+  }
+
+  if (normalized === "text-to-video" || normalized === "text_video" || normalized === "t2v") {
+    return "text-to-video";
+  }
+
+  throw new Error(`generation-mode invalido: ${value}. Use image-pipeline ou text-to-video.`);
+};
+
+const usesStoryboardAssetPipeline = (generationMode) =>
+  generationMode === "image-pipeline" || generationMode === "text-to-video";
 
 const getSceneRangeForProfile = (profile, targetSeconds) => {
   const numericTargetSeconds = Number(targetSeconds);
@@ -244,16 +234,6 @@ const getSceneRangeForProfile = (profile, targetSeconds) => {
   }
 
   return {minScenes, maxScenes};
-};
-
-const slugify = (input) => {
-  return input
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
 };
 
 const deriveTitleFromText = (input) => {
@@ -278,7 +258,7 @@ const deriveTitleFromText = (input) => {
 const findExistingExportForTitle = async ({exportDir, title}) => {
   const titleSlug = slugify(title);
   const suffix = `-${titleSlug}.mp4`;
-  const entries = await readdir(exportDir).catch(() => []);
+  const entries = await readdir(exportDir).catch(() => []); /* expected: export dir may not exist */
   const matches = entries.filter((entry) => entry.endsWith(suffix)).sort();
   const latest = matches.at(-1);
   return latest ? path.join(exportDir, latest) : null;
@@ -330,6 +310,7 @@ const printHelp = () => {
       "  --source-text-file <path>",
       "  --language <pt-BR|en-US>",
       "  --voice <nome>",
+      "  --generation-mode <image-pipeline|text-to-video>",
       "  --image-style <claude|kiro|editorial_clean|realistic_film|cartoon_3d|urban_sketching|ink|editorial_line_green|time_split_bold|punk>",
       "  --style-prompt <texto>",
       "  --script-guidance <texto>",
@@ -391,7 +372,7 @@ const run = async () => {
   const bundledProjectRoot = path.join(wrapperRoot, "video-engine");
   const projectRoot = resolvePathFrom(
     wrapperRoot,
-    args.projectRoot || process.env.VIDEOS_ENVATO_ROOT || fileConfig.VIDEOS_ENVATO_ROOT,
+    args.projectRoot || process.env.VIDEO_ENGINE_ROOT || process.env.VIDEOS_ENVATO_ROOT || fileConfig.VIDEO_ENGINE_ROOT || fileConfig.VIDEOS_ENVATO_ROOT,
     bundledProjectRoot
   );
   const outputProfile = resolveOutputProfileConfig(
@@ -409,6 +390,9 @@ const run = async () => {
     Number.isFinite(requestedTargetSeconds) && requestedTargetSeconds > 0
       ? requestedTargetSeconds
       : outputProfile.defaultTargetSeconds;
+  const generationMode = normalizeGenerationMode(
+    args.generationMode || process.env.GENERATION_MODE || fileConfig.GENERATION_MODE || "image-pipeline"
+  );
   const assetMode = "google-cloud";
   const openVideo = args.noOpen
     ? false
@@ -430,6 +414,8 @@ const run = async () => {
     runtimeEnv.GOOGLE_TTS_VOICE = args.voice;
     runtimeEnv.AZURE_TTS_VOICE = args.voice;
   }
+
+  runtimeEnv.GENERATION_MODE = generationMode;
 
   if (args.imageStyle) {
     runtimeEnv.IMAGE_STYLE_PRESET = args.imageStyle;
@@ -476,6 +462,8 @@ const run = async () => {
     slug,
     "--output-profile",
     outputProfile.id,
+    "--generation-mode",
+    generationMode,
     "--target-seconds",
     String(targetSeconds)
   ];
@@ -490,16 +478,14 @@ const run = async () => {
 
   commandArgs.push("--asset-mode", "no-browser");
 
-  if (usesVertexImagePipeline()) {
-    const localAssetsDir = path.join(projectRoot, "assets", "envato", slug);
-    commandArgs.push("--local-assets-dir", localAssetsDir);
-  }
+  const localAssetsDir = path.join(projectRoot, "assets", "envato", slug);
+  commandArgs.push("--local-assets-dir", localAssetsDir);
 
   if (Number.isFinite(args.envatoMaxScenes) && args.envatoMaxScenes > 0) {
     commandArgs.push("--envato-max-scenes", String(args.envatoMaxScenes));
   }
 
-  if ((args.reusePreview || usesVertexImagePipeline()) && !args.force) {
+  if ((args.reusePreview || usesStoryboardAssetPipeline(generationMode)) && !args.force) {
     commandArgs.push("--reuse-preview");
   }
 
@@ -515,7 +501,7 @@ const run = async () => {
     const dryRunCommandArgs = [...commandArgs];
     const dryRunStoryboard = storyboardFileArg
       ? storyboardFileArg
-      : usesVertexImagePipeline() && existsSync(previewStoryboard)
+      : usesStoryboardAssetPipeline(generationMode) && existsSync(previewStoryboard)
         ? `runs/${previewSlug}/storyboard.json`
         : "";
 
@@ -534,6 +520,8 @@ const run = async () => {
       slug,
       "--output-profile",
       outputProfile.id,
+      "--generation-mode",
+      generationMode,
       "--target-seconds",
       String(targetSeconds),
       "--preview-only"
@@ -559,11 +547,13 @@ const run = async () => {
           sourceOutput,
           exportOutput,
           previewOutput,
+          generationMode,
           assetMode,
           runtimeEnv: {
             VIDEO_LANGUAGE: runtimeEnv.VIDEO_LANGUAGE || null,
             GOOGLE_TTS_VOICE: runtimeEnv.GOOGLE_TTS_VOICE || null,
             IMAGE_STYLE_PRESET: runtimeEnv.IMAGE_STYLE_PRESET || runtimeEnv.FLUX2_STYLE_PRESET || null,
+            GENERATION_MODE: runtimeEnv.GENERATION_MODE || null,
             GOOGLE_TTS_STYLE_PROMPT: runtimeEnv.GOOGLE_TTS_STYLE_PROMPT || null,
             VIDEO_SCRIPT_GUIDANCE: runtimeEnv.VIDEO_SCRIPT_GUIDANCE || null,
             CHANNEL_HANDLE: runtimeEnv.CHANNEL_HANDLE || null,
@@ -594,6 +584,8 @@ const run = async () => {
       slug,
       "--output-profile",
       outputProfile.id,
+      "--generation-mode",
+      generationMode,
       "--target-seconds",
       String(targetSeconds),
       "--preview-only"
@@ -639,8 +631,8 @@ const run = async () => {
 
   await mkdir(exportDir, {recursive: true});
 
-  // --- Vertex image generation step ---
-  if (usesVertexImagePipeline()) {
+  // --- Local scene asset generation step ---
+  if (usesStoryboardAssetPipeline(generationMode)) {
     // Step 1: generate storyboard preview if it doesn't exist
     if (!storyboardFileArg && (!args.reusePreview || !existsSync(previewStoryboard) || args.force)) {
       process.stdout.write("[vertex-assets] generating storyboard preview...\n");
@@ -649,6 +641,7 @@ const run = async () => {
         "--title", title,
         "--slug", previewSlug,
         "--output-profile", outputProfile.id,
+        "--generation-mode", generationMode,
         "--target-seconds", String(targetSeconds),
         "--preview-only"
       ];
@@ -690,30 +683,61 @@ const run = async () => {
     }
 
     if (storyboardFile) {
-      process.stdout.write(`[vertex-assets] generating scene assets from ${storyboardFile}...\n`);
-      const assetArgs = [
-        path.join(wrapperRoot, "scripts", "generate-flux2-assets.mjs"),
-        "--storyboard-file", storyboardFile,
-        "--slug", slug
-      ];
-      assetArgs.push("--provider", "google-cloud");
+      const assetScript =
+        generationMode === "text-to-video"
+          ? path.join(wrapperRoot, "scripts", "generate-text-to-video-assets.mjs")
+          : path.join(wrapperRoot, "scripts", "generate-flux2-assets.mjs");
+      const assetArgs =
+        generationMode === "text-to-video"
+          ? [
+              assetScript,
+              "--storyboard-file",
+              storyboardFile,
+              "--slug",
+              slug,
+              "--asset-dir",
+              path.join(projectRoot, "assets", "envato", slug)
+            ]
+          : [
+              assetScript,
+              "--storyboard-file",
+              storyboardFile,
+              "--slug",
+              slug,
+              "--provider",
+              "google-cloud"
+            ];
+
+      process.stdout.write(
+        generationMode === "text-to-video"
+          ? `[text-to-video] generating scene assets from ${storyboardFile}...\n`
+          : `[vertex-assets] generating scene assets from ${storyboardFile}...\n`
+      );
 
       const assetResult = spawnSync("node", assetArgs, {
         cwd: wrapperRoot,
         stdio: "inherit",
-        env: {...runtimeEnv, VIDEOS_ENVATO_ROOT: projectRoot}
+        env: {...runtimeEnv, VIDEO_ENGINE_ROOT: projectRoot, VIDEOS_ENVATO_ROOT: projectRoot}
       });
 
       if (assetResult.status !== 0) {
-        process.stderr.write("[vertex-assets] asset generation failed\n");
+        process.stderr.write(
+          generationMode === "text-to-video"
+            ? "[text-to-video] asset generation failed\n"
+            : "[vertex-assets] asset generation failed\n"
+        );
         process.exit(assetResult.status ?? 1);
       }
     } else {
-      process.stderr.write("[vertex-assets] could not find storyboard to generate assets\n");
+      process.stderr.write(
+        generationMode === "text-to-video"
+          ? "[text-to-video] could not find storyboard to generate assets\n"
+          : "[vertex-assets] could not find storyboard to generate assets\n"
+      );
       process.exit(1);
     }
   }
-  // --- end Vertex asset step ---
+  // --- end local scene asset generation step ---
   const result = spawnSync("node", commandArgs, {
     cwd: projectRoot,
     stdio: "inherit",

@@ -8,9 +8,16 @@ Type=simple
 WorkingDirectory=/root/repo/videos-flux2
 Environment=WEB_HOST=0.0.0.0
 Environment=WEB_PORT=3210
+Environment=TMPDIR=/root/repo/videos-flux2/.tmp/system
+Environment=TMP=/root/repo/videos-flux2/.tmp/system
+Environment=TEMP=/root/repo/videos-flux2/.tmp/system
+Environment=XDG_CACHE_HOME=/root/repo/videos-flux2/.tmp/xdg-cache
+Environment=PUPPETEER_CACHE_DIR=/root/repo/videos-flux2/.tmp/puppeteer-cache
+Environment=REMOTION_CONCURRENCY=1
 ExecStart=/usr/bin/node web/server.mjs
 Restart=always
 RestartSec=5
+UMask=0022
 User=root
 
 [Install]

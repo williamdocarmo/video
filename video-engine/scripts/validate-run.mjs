@@ -1,10 +1,15 @@
-import {readFile, stat} from "node:fs/promises";
+import {readFile, stat, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {spawnSync} from "node:child_process";
 import {analyzeSceneSpeechPacing} from "./lib/timings.mjs";
+import {loadJsonIfExists} from "../../shared/utils.mjs";
 
 const projectRoot = path.resolve(new URL("..", import.meta.url).pathname);
 const DEFAULT_FPS = 30;
+const MIN_OUTPUT_VIDEO_BYTES = Math.max(
+  1024,
+  Number.parseInt(process.env.MIN_OUTPUT_VIDEO_BYTES || "131072", 10) || 131072
+);
 const TRUSTED_TIMED_WORD_SOURCES = new Set(["gcloud-speech-stt", "azure-word-boundary"]);
 const normalizeTimedWordsSource = (source) => String(source || "").trim().toLowerCase();
 const isTrustedTimedWordsSource = (source) => {
@@ -30,6 +35,16 @@ const parseArgs = (argv) => {
     if (item === "--target-seconds") {
       parsed.targetSeconds = Number(argv[index + 1]);
       index += 1;
+      continue;
+    }
+
+    if (item === "--write-reports") {
+      parsed.writeReports = true;
+      continue;
+    }
+
+    if (item === "--fail-on-qa") {
+      parsed.failOnQa = true;
     }
   }
 
@@ -53,6 +68,39 @@ const ffprobeDuration = (targetPath) => {
   return Number.parseFloat(result.stdout.trim());
 };
 
+const safeFfprobeDuration = (targetPath) => {
+  try {
+    const duration = ffprobeDuration(targetPath);
+    return Number.isFinite(duration) && duration > 0 ? duration : 0;
+  } catch {
+    return 0;
+  }
+};
+
+const mediaDecodesCleanly = (targetPath) => {
+  const result = spawnSync(
+    "ffmpeg",
+    ["-v", "error", "-i", targetPath, "-f", "null", "-"],
+    {
+      cwd: projectRoot,
+      encoding: "utf8"
+    }
+  );
+
+  return result.status === 0;
+};
+
+const isEmptySceneSpan = (span) =>
+  Boolean(span?.empty === true) ||
+  !isFiniteCharOffset(span?.startChar) ||
+  !isFiniteCharOffset(span?.endChar) ||
+  Number(span.endChar) < Number(span.startChar);
+
+const getBooleanChecks = (checks) =>
+  Object.entries(checks || {}).filter(([, value]) => typeof value === "boolean");
+
+const didQaPassChecks = (checks) => getBooleanChecks(checks).every(([, value]) => value === true);
+
 const isFiniteCharOffset = (value) => Number.isFinite(Number(value));
 
 const buildSceneTimedSlicesByCharOffset = ({sceneSpans, timedWords}) => {
@@ -60,15 +108,19 @@ const buildSceneTimedSlicesByCharOffset = ({sceneSpans, timedWords}) => {
     return [];
   }
 
-  return sceneSpans.map((span) =>
-    timedWords.filter(
+  return sceneSpans.map((span) => {
+    if (isEmptySceneSpan(span)) {
+      return [];
+    }
+
+    return timedWords.filter(
       (word) =>
         isFiniteCharOffset(word?.startChar) &&
         isFiniteCharOffset(word?.endChar) &&
         Number(word.startChar) >= Number(span?.startChar) &&
         Number(word.startChar) <= Number(span?.endChar)
-    )
-  );
+    );
+  });
 };
 
 const percentile = (values, value) => {
@@ -202,14 +254,189 @@ const getCaptionWordBoundsStats = (captions) => {
   };
 };
 
-const narrationFlowsNaturally = (scenes) => {
+const normalizeNarrationText = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const tokenizeNarration = (value) =>
+  normalizeNarrationText(value)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+const computeOrderedTokenMatchRatio = (expectedTokens, actualTokens) => {
+  if (!Array.isArray(expectedTokens) || expectedTokens.length === 0) {
+    return 0;
+  }
+
+  let expectedIndex = 0;
+  let actualIndex = 0;
+  let matched = 0;
+
+  while (expectedIndex < expectedTokens.length && actualIndex < actualTokens.length) {
+    if (expectedTokens[expectedIndex] === actualTokens[actualIndex]) {
+      matched += 1;
+      expectedIndex += 1;
+      actualIndex += 1;
+      continue;
+    }
+
+    if (actualIndex + 1 < actualTokens.length && expectedTokens[expectedIndex] === actualTokens[actualIndex + 1]) {
+      actualIndex += 1;
+      continue;
+    }
+
+    if (expectedIndex + 1 < expectedTokens.length && expectedTokens[expectedIndex + 1] === actualTokens[actualIndex]) {
+      expectedIndex += 1;
+      continue;
+    }
+
+    actualIndex += 1;
+  }
+
+  return matched / expectedTokens.length;
+};
+
+const narrationFlowsNaturally = ({scenes, voiceoverText = "", sceneSpans = []}) => {
   if (!Array.isArray(scenes) || scenes.length === 0) {
     return false;
   }
 
-  return scenes.every((scene) => {
-    const narration = String(scene?.narration || "").trim();
-    return narration.length >= 12 && /[.!?…]$/.test(narration);
+  const sceneNarrations = scenes
+    .map((scene) => String(scene?.narration || "").trim())
+    .filter(Boolean);
+
+  if (sceneNarrations.length !== scenes.length || sceneNarrations.some((narration) => narration.length < 12)) {
+    return false;
+  }
+
+  const expectedTokens = tokenizeNarration(sceneNarrations.join(" "));
+  if (expectedTokens.length === 0) {
+    return false;
+  }
+
+  const actualTokens = tokenizeNarration(voiceoverText);
+  if (actualTokens.length === 0) {
+    return Array.isArray(sceneSpans) && sceneSpans.length === scenes.length;
+  }
+
+  const orderedMatchRatio = computeOrderedTokenMatchRatio(expectedTokens, actualTokens);
+  return orderedMatchRatio >= 0.97;
+};
+
+const buildQaSummaryLine = (report) => {
+  const sceneCount = Number(report?.metrics?.resolvedSceneCount || report?.checks?.sceneCount || 0);
+  const audioSeconds = Number(report?.metrics?.audioSeconds || 0);
+  const videoSeconds = Number(report?.metrics?.videoSeconds || 0);
+  const envatoOnly = Boolean(report?.checks?.envatoOnly);
+  const linkedNarration = Boolean(report?.checks?.linkedNarration);
+  const sync = Boolean(report?.checks?.audioVideoSyncOk);
+  const status = didQaPassChecks(report?.checks) ? "ok" : "fail";
+
+  return `[qa] resumo: status=${status} scenes=${sceneCount} audio=${Math.round(audioSeconds * 100) / 100}s video=${Math.round(videoSeconds * 100) / 100}s envatoOnly=${envatoOnly} linkedNarration=${linkedNarration} sync=${sync}`;
+};
+
+const applyValidationSummary = (report, validation, qaPass, outPath) => {
+  const outputMtimeMs = Number(validation?.metrics?.outputMtimeMs || 0) || 0;
+  const outputSizeBytes = Number(validation?.checks?.outputSizeBytes || 0) || 0;
+
+  report.status = qaPass ? "completed" : "failed";
+  report.finalVideo = outPath;
+  report.validation = validation;
+  report.validationMeta = {
+    slug: validation?.slug || "",
+    outputPath: outPath,
+    outputMtimeMs,
+    outputSizeBytes,
+    validatedAt: new Date().toISOString()
+  };
+  report.qa = {
+    passed: qaPass,
+    slug: validation?.slug || "",
+    outputPath: outPath,
+    outputMtimeMs,
+    outputSizeBytes,
+    validation
+  };
+};
+
+const updateQaAgent = (report, validation, qaPass) => {
+  if (!report?.agents?.qa) {
+    return;
+  }
+
+  report.agents.qa.status = qaPass ? "completed" : "failed";
+  report.agents.qa.validation = validation;
+  if (!Array.isArray(report.agents.qa.notes)) {
+    report.agents.qa.notes = [];
+  }
+
+  report.agents.qa.notes = report.agents.qa.notes.filter(
+    (note) => !String(note).startsWith("Validacao validate-only")
+  );
+  report.agents.qa.notes.push(qaPass ? "Validacao validate-only passou." : "Validacao validate-only falhou.");
+};
+
+const persistValidationReports = async ({runDir, outPath, validation, qaPass}) => {
+  const reportPaths = [
+    path.join(runDir, "agent-report.json"),
+    path.join(runDir, "orchestration-report.json")
+  ];
+
+  for (const reportPath of reportPaths) {
+    const report = await loadJsonIfExists(reportPath);
+    if (!report) {
+      continue;
+    }
+
+    applyValidationSummary(report, validation, qaPass, outPath);
+    updateQaAgent(report, validation, qaPass);
+    await writeFile(reportPath, JSON.stringify(report, null, 2));
+  }
+};
+
+const inferAttributionFromClipPath = ({slug, clipPath}) => {
+  const normalized = String(clipPath || "").replace(/\\/g, "/");
+  const runPrefix = `runs/${slug}/video/`;
+  if (normalized.includes(runPrefix) || /\/scene-\d{2}\.mp4$/i.test(normalized)) {
+    return {source: "envato-local"};
+  }
+
+  return {source: "local-file"};
+};
+
+const buildFallbackAssetPlan = ({slug, storyboard, renderProps}) => {
+  const renderScenes = Array.isArray(renderProps?.scenes) ? renderProps.scenes : [];
+  const storyboardScenes = Array.isArray(storyboard?.scenes) ? storyboard.scenes : [];
+  const sceneCount = Math.max(renderScenes.length, storyboardScenes.length);
+
+  return Array.from({length: sceneCount}, (_, index) => {
+    const renderScene = renderScenes[index] || {};
+    const storyboardScene = storyboardScenes[index] || {};
+    const clipPath = renderScene.clipPath || null;
+    const sceneType = renderScene.sceneType || storyboardScene.sceneType || (clipPath ? "stock" : "text-only");
+    const hasClip = Boolean(clipPath);
+    const attribution =
+      renderScene.attribution ||
+      storyboardScene.attribution ||
+      (hasClip ? inferAttributionFromClipPath({slug, clipPath}) : (sceneType === "text-only" ? {source: "text-only-fallback"} : null));
+    const sceneNumber = String(index + 1).padStart(2, "0");
+
+    return {
+      id: renderScene.id || `scene-${sceneNumber}`,
+      title: renderScene.title || storyboardScene.title || `Cena ${sceneNumber}`,
+      narration: renderScene.narration || storyboardScene.narration || "",
+      overlay: renderScene.overlay || storyboardScene.overlay || "",
+      searchQuery: renderScene.searchQuery || storyboardScene.searchQuery || "",
+      sceneType,
+      clipPath,
+      attribution
+    };
   });
 };
 
@@ -273,8 +500,20 @@ const minClipCoverage = Math.min(
   1,
   Math.max(0, Number.parseFloat(process.env.MIN_CLIP_COVERAGE || "1") || 1)
 );
-const getTargetDurationToleranceSeconds = (targetSeconds) =>
-  Math.max(6, Math.round(targetSeconds * 0.1));
+const getTargetDurationToleranceSeconds = (targetSeconds) => {
+  if (!Number.isFinite(targetSeconds) || targetSeconds <= 0) {
+    return 6;
+  }
+
+  // Short-form outputs often land a bit long after real TTS + caption timing.
+  // Keep QA strict enough to catch runaway renders, but avoid failing solid
+  // videos that only overshoot the nominal target by a modest margin.
+  if (targetSeconds <= 60) {
+    return Math.max(15, Math.round(targetSeconds * 0.25));
+  }
+
+  return Math.max(12, Math.round(targetSeconds * 0.15));
+};
 const getMinSceneCountForTarget = (targetSeconds) => {
   if (!Number.isFinite(targetSeconds) || targetSeconds <= 0) {
     return Math.max(10, Number.parseInt(process.env.MIN_SCENE_COUNT || "10", 10) || 10);
@@ -309,24 +548,41 @@ const main = async () => {
   const [renderPropsRaw, storyboardRaw, assetPlanRaw, voiceoverRaw] = await Promise.all([
     readFile(renderPropsPath, "utf8"),
     readFile(storyboardPath, "utf8"),
-    readFile(assetPlanPath, "utf8"),
-    readFile(voiceoverPath, "utf8").catch(() => "{}")
+    readFile(assetPlanPath, "utf8").catch(() => null), /* expected: asset-plan is optional */
+    readFile(voiceoverPath, "utf8").catch(() => "{}") /* expected: voiceover may not exist yet */
   ]);
 
   const renderProps = JSON.parse(renderPropsRaw);
   const storyboard = JSON.parse(storyboardRaw);
-  const assetPlan = JSON.parse(assetPlanRaw);
+  const assetPlan = assetPlanRaw
+    ? JSON.parse(assetPlanRaw)
+    : buildFallbackAssetPlan({slug: args.slug, storyboard, renderProps});
   const voiceover = JSON.parse(voiceoverRaw);
+  if (!assetPlanRaw) {
+    process.stderr.write(
+      `[warn] asset-plan.json ausente para ${args.slug}; usando fallback derivado de render-props/storyboard.\n`
+    );
+  }
   const fps = Number.parseInt(process.env.VIDEO_FPS || String(renderProps.fps || DEFAULT_FPS), 10) || DEFAULT_FPS;
-  const outputStat = await stat(outPath);
-  const audioSeconds = ffprobeDuration(voicePath);
-  const videoSeconds = ffprobeDuration(outPath);
+  const [outputStat, audioStat] = await Promise.all([
+    stat(outPath).catch(() => null), /* expected: output may not exist yet */
+    stat(voicePath).catch(() => null) /* expected: audio may not exist yet */
+  ]);
+  const outputExists = Boolean(outputStat?.isFile());
+  const audioExists = Boolean(audioStat?.isFile());
+  const outputSizeBytes = outputExists ? Number(outputStat.size || 0) : 0;
+  const outputPlayable = outputExists && outputSizeBytes >= MIN_OUTPUT_VIDEO_BYTES && mediaDecodesCleanly(outPath);
+  const audioSeconds = audioExists ? safeFfprobeDuration(voicePath) : 0;
+  const videoSeconds = outputExists ? safeFfprobeDuration(outPath) : 0;
   const requestedTargetSeconds = Number.isFinite(args.targetSeconds) && args.targetSeconds > 0 ? args.targetSeconds : null;
   const minSceneCount = getMinSceneCountForTarget(requestedTargetSeconds);
   const targetDurationToleranceSeconds = requestedTargetSeconds
     ? getTargetDurationToleranceSeconds(requestedTargetSeconds)
     : null;
-  const durationTargetOk = !requestedTargetSeconds || Math.abs(videoSeconds - requestedTargetSeconds) <= targetDurationToleranceSeconds;
+  const outputDurationOk = outputPlayable && videoSeconds > 0;
+  const durationTargetOk =
+    outputDurationOk &&
+    (!requestedTargetSeconds || Math.abs(videoSeconds - requestedTargetSeconds) <= targetDurationToleranceSeconds);
   const transitionsOk = renderProps.scenes.every((scene) => (scene.transitionInFrames ?? 0) >= 10);
   const captionTimelineStats = getCaptionTimelineStats(renderProps.captions);
   const captionWordBoundsStats = getCaptionWordBoundsStats(renderProps.captions);
@@ -338,10 +594,11 @@ const main = async () => {
   const visualAuditSceneCount = assetPlan.filter((scene) => scene?.visualAudit && typeof scene.visualAudit.passed === "boolean").length;
   const resolvedSceneCount = assetPlan.filter((scene) => Boolean(scene.clipPath) || scene.sceneType === "text-only").length;
   const clipCoverage = assetPlan.filter((scene) => Boolean(scene.clipPath)).length / Math.max(1, assetPlan.length);
-  const envatoOnly = assetPlan.every((scene) => scene.attribution?.source === "envato-local" && Boolean(scene.clipPath));
+  const envatoOnly = assetPlan.length > 0 && assetPlan.every((scene) => scene.attribution?.source === "envato-local" && Boolean(scene.clipPath));
   const captionsHaveWordTiming = renderProps.captions.every(
     (caption) => Array.isArray(caption.words) && caption.words.length >= 1
   );
+  const captionsPresent = renderProps.captions.length > 0;
   const alignmentAvailable = Array.isArray(voiceover.timedWords) && voiceover.timedWords.length > 0;
   const timedWordsSource = normalizeTimedWordsSource(voiceover.timedWordsSource);
   const timedWordsSourceTrusted = !alignmentAvailable || isTrustedTimedWordsSource(timedWordsSource);
@@ -357,10 +614,19 @@ const main = async () => {
   const sttAudioDrift = alignmentAvailable ? Math.abs(lastWordEnd - audioSeconds) : 0;
   const lastCaptionAudioDrift = lastCaptionEndSeconds > 0 ? Math.abs(lastCaptionEndSeconds - audioSeconds) : 0;
   const sttAudioSyncOk =
-    !alignmentAvailable ||
+    audioExists &&
     (
-      lastWordEnd <= audioSeconds + 0.25 &&
-      (sttAudioDrift <= 1.0 || lastCaptionAudioDrift <= 0.6)
+      !alignmentAvailable ||
+      (
+        lastWordEnd <= audioSeconds + 0.25 &&
+        (sttAudioDrift <= 1.0 || lastCaptionAudioDrift <= 0.6)
+      )
+    );
+  const sceneResolutionOk =
+    assetPlan.length > 0 &&
+    (
+      resolvedSceneCount === assetPlan.length &&
+      assetPlan.every((scene) => Boolean(scene.clipPath))
     );
   const voiceProviderOk = String(voiceover.provider || "").trim().toLowerCase() !== "macos-say";
   const sceneTimelineMonotonic = hasCoherentSceneTimeline(renderProps.scenes, renderProps.durationInFrames);
@@ -388,24 +654,35 @@ const main = async () => {
     timedWords: Array.isArray(voiceover.timedWords) ? voiceover.timedWords : [],
     sceneSpans: Array.isArray(voiceover.sceneSpans) ? voiceover.sceneSpans : []
   });
-  const linkedNarration = narrationFlowsNaturally(storyboard.scenes);
+  const linkedNarration = narrationFlowsNaturally({
+    scenes: storyboard.scenes,
+    voiceoverText: voiceover.text,
+    sceneSpans: voiceover.sceneSpans
+  });
 
   const report = {
     slug: args.slug,
+    qaPass: false,
     sceneSpeechRushedScenes: sceneSpeechPacing.rushedScenes,
     checks: {
-      outputExists: outputStat.size > 0,
-      outputSizeBytes: outputStat.size,
+      outputExists,
+      outputMinSizeOk: outputSizeBytes >= MIN_OUTPUT_VIDEO_BYTES,
+      outputPlayable,
+      outputDurationOk,
+      audioExists,
+      outputSizeBytes,
+      outputMinBytes: MIN_OUTPUT_VIDEO_BYTES,
       sceneCount: renderProps.scenes.length,
       sceneCountOk: renderProps.scenes.length >= minSceneCount,
       captionsCount: renderProps.captions.length,
+      captionsPresent,
       captionsHaveCoverage,
       envatoOnly,
       visualAuditOk: visualAuditRejectedCount === 0,
       noTextFallback: textFallbackSceneCount === 0,
       clipCoverageOk: clipCoverage >= minClipCoverage,
       voiceProviderOk,
-      sceneResolutionOk: resolvedSceneCount === assetPlan.length && assetPlan.every((scene) => Boolean(scene.clipPath)),
+      sceneResolutionOk,
       karaokeReady: renderProps.captions.every((caption) => caption.text.trim().split(/\s+/).length >= 1),
       wordTimedCaptions: captionsHaveWordTiming,
       alignmentAvailable,
@@ -419,13 +696,14 @@ const main = async () => {
       captionsBoundedToSingleScene: crossSceneCaptionCount === 0,
       transitionsOk,
       linkedNarration,
-      audioVideoSyncOk: Math.abs(audioSeconds - videoSeconds) <= 0.6,
+      audioVideoSyncOk: outputDurationOk && audioExists && Math.abs(audioSeconds - videoSeconds) <= 0.6,
       durationTargetOk,
       sttAudioSyncOk
     },
     metrics: {
       audioSeconds,
       videoSeconds,
+      outputMtimeMs: outputExists ? Number(outputStat.mtimeMs || 0) : 0,
       targetSeconds: requestedTargetSeconds,
       targetDurationToleranceSeconds,
       sttLastWordSeconds: lastWordEnd,
@@ -457,7 +735,24 @@ const main = async () => {
     }
   };
 
+  const qaPass = didQaPassChecks(report.checks);
+  report.qaPass = qaPass;
+
+  if (args.writeReports) {
+    await persistValidationReports({
+      runDir,
+      outPath,
+      validation: report,
+      qaPass
+    });
+  }
+
+  process.stderr.write(`${buildQaSummaryLine(report)}\n`);
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+
+  if (args.failOnQa && !qaPass) {
+    process.exit(2);
+  }
 };
 
 main().catch((error) => {

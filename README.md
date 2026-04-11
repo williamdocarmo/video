@@ -1,248 +1,279 @@
-# video
+# Video Studio
 
-Aplicação de produção para criar, revisar, recuperar e publicar vídeos com UI web local, pipeline Google/Vertex, render local via Remotion e integração assistida com `agendador.online`.
+Sistema local de produção automatizada de vídeos curtos. Transforma um título ou texto em vídeo finalizado com storyboard, imagens geradas por IA, narração com voz sintética, legendas karaoke e render final — tudo via UI web.
 
-URL principal:
-- `http://127.0.0.1:3210`
-- `https://video.vamostestar.online/`
+URL pública: `https://video.vamostestar.online/`
+URL local: `http://127.0.0.1:3210`
+Repo: `https://github.com/williamdocarmo/video.git`
 
-Repo real:
-- [/root/repo/videos-flux2](/root/repo/videos-flux2)
-- alias local: [/home/william/claude-dinamico-test/repo](/home/william/claude-dinamico-test/repo)
+## Arquitetura geral
 
-Remoto Git:
-- `origin = https://github.com/williamdocarmo/video.git`
+```
+Internet
+  │
+  ▼
+Traefik (Docker, :443, Let's Encrypt TLS)
+  │  ├─ redirect HTTP → HTTPS
+  │  └─ secure-headers (HSTS, X-Frame-Options, etc.)
+  │
+  ▼
+Node.js HTTP server (:3210, 0.0.0.0)
+  │
+  ├─ web/server.mjs .............. backend: API, fila, recovery, biblioteca, publicação
+  ├─ web/public/ ................. frontend: app.js, index.html, styles.css
+  │
+  ├─ scripts/
+  │   ├─ foiumaideia.mjs ......... orquestrador principal (preview → assets → pipeline → export)
+  │   ├─ generate-flux2-assets.mjs geração visual (Gemini planner + Vertex Imagen + ffmpeg)
+  │   └─ lib/ .................... scene-spec, scene-failure-taxonomy, etc.
+  │
+  ├─ video-engine/
+  │   ├─ scripts/
+  │   │   ├─ make-plan1-video.mjs  pipeline core (storyboard → voz → render → QA)
+  │   │   ├─ rerender-voice.mjs .. re-render de voz/áudio
+  │   │   ├─ validate-run.mjs .... validação QA (20+ checks)
+  │   │   └─ lib/
+  │   │       ├─ llm-provider.mjs  chamadas LLM (Vertex Gemini, OpenRouter, etc.)
+  │   │       ├─ tts.mjs ......... TTS (Cloud Gemini TTS, Chirp3-HD, Azure, ElevenLabs)
+  │   │       ├─ timings.mjs ..... timeline, pacing, legendas karaoke
+  │   │       ├─ gcp-media.mjs ... Vertex AI image + multimodal
+  │   │       └─ gcp-config.mjs .. config GCP (projeto, location, credenciais)
+  │   ├─ src/
+  │   │   ├─ ShortVideo.tsx ...... composição Remotion principal
+  │   │   ├─ Root.tsx ............ registro de composições
+  │   │   └─ types.ts ............ tipos dos render props
+  │   ├─ runs/{slug}/ ............ storyboard, voiceover, render-props, reports
+  │   ├─ public/runs/{slug}/ ..... áudio, vídeo servidos pelo Remotion
+  │   ├─ assets/envato/{slug}/ ... scene-XX.mp4, _flux2_images/
+  │   └─ out/{slug}.mp4 .......... saída final do Remotion
+  │
+  ├─ config/
+  │   ├─ output-profiles.mjs ..... perfis de saída (vertical-short, horizontal-5m, horizontal-10m)
+  │   └─ visual-style-presets.mjs  10 presets visuais (claude, kiro, ink, punk, etc.)
+  │
+  ├─ .web-ui/ .................... persistência: jobs.json, videos.json, inputs/, drafts
+  └─ /root/postar/{canal}/ ...... export final organizado por canal
+```
 
-## Estado atual
+## Rede e acesso
 
-O app está em produção e já opera:
-- criação de preview e heavy job
-- geração de imagens com Google Vertex
-- voz com Google Cloud Gemini-TTS
-- timestamps / karaoke
-- render final com Remotion
-- biblioteca local de vídeos
-- publicação/agendamento via `agendador.online`
-- helper de upload manual para TikTok Web
-- recovery parcial pela UI
+O domínio `video.vamostestar.online` aponta para o servidor onde roda o app.
 
-O sistema está funcional, mas ainda **não** é um `video_case` canônico por revisão. Em jobs complexos com o mesmo `slug`, ainda pode haver estado stale em recovery/checklist. A UI atual já reduz bastante isso, mas a limitação continua importante.
+| Camada | Porta | Detalhe |
+|--------|-------|---------|
+| Traefik (Docker) | :443 / :80 | Reverse proxy com TLS via Let's Encrypt, redirect HTTP→HTTPS, headers de segurança |
+| Node.js | :3210 | `http.createServer()` puro, sem TLS (TLS termina no Traefik) |
 
-## O que a aplicação faz
+O Traefik encaminha `video.vamostestar.online` para `http://host.docker.internal:3210` com `passHostHeader: true`.
 
-- cria preview de storyboard antes da render final
-- corrige storyboard automaticamente quando a QA reprova algo técnico
-- gera imagens por cena com Vertex
-- audita a imagem localmente e com Gemini Vision
-- sintetiza voz
-- extrai timestamps
-- renderiza MP4 final
-- organiza biblioteca local e jobs falhados
-- permite recovery parcial sem terminal
-- publica/agende no `agendador.online`
+O serviço systemd (`codex-video-ui.service`) faz bind em `0.0.0.0:3210`:
 
-## Arquitetura
+```ini
+[Service]
+WorkingDirectory=/root/repo/videos-flux2
+Environment=WEB_HOST=0.0.0.0
+Environment=WEB_PORT=3210
+Environment=TMPDIR=/root/repo/videos-flux2/.tmp/system
+Environment=REMOTION_CONCURRENCY=1
+ExecStart=/usr/bin/node web/server.mjs
+Restart=always
+RestartSec=5
+User=root
+```
 
-Camadas principais:
-- `web/`
-  - backend Node da UI, fila, recovery, biblioteca, publicação e APIs
-- `scripts/`
-  - wrappers operacionais e geração de assets
-- `video-engine/`
-  - motor de storyboard, voz, timings, render e validação
-- `.web-ui/`
-  - persistência local da UI (`jobs.json`, biblioteca, drafts, metadados)
-- `/root/postar`
-  - export final por canal
+## Google Cloud Platform
 
-Arquivos críticos:
-- [web/server.mjs](/root/repo/videos-flux2/web/server.mjs)
-- [web/public/app.js](/root/repo/videos-flux2/web/public/app.js)
-- [web/public/index.html](/root/repo/videos-flux2/web/public/index.html)
-- [scripts/foiumaideia.mjs](/root/repo/videos-flux2/scripts/foiumaideia.mjs)
-- [scripts/generate-flux2-assets.mjs](/root/repo/videos-flux2/scripts/generate-flux2-assets.mjs)
-- [video-engine/scripts/make-plan1-video.mjs](/root/repo/videos-flux2/video-engine/scripts/make-plan1-video.mjs)
-- [video-engine/scripts/lib/llm-provider.mjs](/root/repo/videos-flux2/video-engine/scripts/lib/llm-provider.mjs)
-- [video-engine/scripts/lib/tts.mjs](/root/repo/videos-flux2/video-engine/scripts/lib/tts.mjs)
+Toda a geração de conteúdo passa pelo GCP:
 
-## Fluxo da pipeline
+| Serviço | Endpoint | Uso |
+|---------|----------|-----|
+| Vertex AI Gemini | `{location}-aiplatform.googleapis.com/.../models/{model}:generateContent` | Storyboard, plano visual, auditoria Vision, repair JSON |
+| Vertex AI Imagen | `{location}-aiplatform.googleapis.com/.../models/{model}:predict` | Geração de imagens (Imagen 4 Fast, Imagen 4, Ultra) |
+| Vertex AI Gemini Image | `{location}-aiplatform.googleapis.com/.../models/{model}:generateContent` | Geração de imagens via Gemini 2.5 Flash Image |
+| Cloud TTS | `texttospeech.googleapis.com/v1/text:synthesize` | Voz (Gemini TTS + Chirp3-HD fallback) |
+| Cloud STT | `speech.googleapis.com/v1/speech:recognize` | Timestamps palavra-a-palavra |
+| Gemini API (público) | `generativelanguage.googleapis.com/v1beta/...` | Fallback LLM, fallback STT, TTS legacy |
 
-1. O utilizador cria um job na UI.
-2. O backend resolve canal, idioma, voz, modelo de imagem, estilo visual e estilo de roteiro.
-3. O preview gera storyboard.
-4. A QA textual valida a estrutura.
-5. O heavy job gera assets visuais.
-6. O motor gera voz e timestamps.
-7. O Remotion renderiza o MP4 final.
-8. O backend copia o output para `/root/postar/<canal>/`.
-9. A biblioteca local atualiza o vídeo para revisão/publicação.
+Configuração:
 
-## Filosofia de QA
+```
+Projeto:    project-79978184-3df0-40b2-b9f
+Location:   us-central1
+Auth:       Service account JSON → google-auth-library → OAuth2 Bearer tokens
+LLM:        gemini-2.5-flash (Vertex)
+TTS:        gemini-2.5-flash-tts (Cloud TTS) → Chirp3-HD fallback
+Imagem:     imagen-4.0-fast-generate-001 (default) com fallbacks configuráveis
+Vision:     gemini-2.5-flash (auditoria semântica de imagens)
+```
 
-O sistema deixou de usar QA editorial como bloqueio forte.
+APIs habilitadas: `aiplatform.googleapis.com`, `texttospeech.googleapis.com`, `speech.googleapis.com`, `cloudbilling.googleapis.com`
 
-Bloqueia:
-- storyboard inválido
-- off-topic claro
-- `searchQuery` ou plano visual incompatível com a narração
-- conteúdo técnico que quebra o pipeline
+## Pipeline de vídeo
 
-Vira aviso:
-- hook fraco
-- final fraco
-- tom educativo demais
-- baixa retenção
-- CTA ruim
-- pouca agressividade editorial
+### Fluxo completo (heavy job)
 
-Regra prática:
-- QA agora tenta agir como `coach`, não como polícia
-- bloqueio só quando o vídeo ficaria quebrado ou claramente errado
+```
+1. UI: POST /api/generate
+   └─ server.mjs cria job, enfileira na lane "heavy"
 
-## Canais e defaults
+2. foiumaideia.mjs (orquestrador)
+   ├─ 2a. Storyboard preview
+   │   └─ make-plan1-video.mjs --preview-only
+   │       └─ Gemini gera storyboard → QA local → repair automático (até 3x)
+   │
+   ├─ 2b. Assets visuais
+   │   └─ generate-flux2-assets.mjs
+   │       ├─ Para cada cena: Gemini planeja 1-8 shots
+   │       ├─ Para cada shot: Vertex Imagen gera PNG
+   │       ├─ Auditoria local + Gemini Vision por imagem
+   │       ├─ Retry com directives progressivas (até 9 tentativas/shot)
+   │       ├─ ffmpeg: PNG → clip estático MP4
+   │       └─ ffmpeg: concat segmentos → scene-XX.mp4 (escrita atômica)
+   │
+   └─ 2c. Pipeline core
+       └─ make-plan1-video.mjs
+           ├─ Carrega storyboard aprovado
+           ├─ Cloud TTS sintetiza narração → voiceover.mp3
+           ├─ Cloud STT extrai timedWords (fallback: Gemini Flash STT → estimativa)
+           ├─ buildTimeline() → frame ranges por cena + legendas karaoke
+           ├─ Remotion renderiza MP4 final (x264, 1400k, 30fps)
+           ├─ validate-run.mjs roda 20+ checks de QA
+           └─ Copia para /root/postar/{canal}/
+```
 
-Canal `@foiumaideia`:
-- idioma: `pt-BR`
-- foco: short-form viral / história / tech / internet
-- voz padrão: `Iapetus` ou outra definida explicitamente no job
+### Fluxo de preview
 
-Canal `@quiet2min`:
-- idioma: `en-US`
-- voz padrão: `Charon`
-- tom: wellness / calm / comforting
+O preview gera apenas o storyboard (sem vídeo). Serve para inspeção e aprovação antes do heavy job.
 
-Canal `@ate2min`:
-- idioma: `pt-BR`
-- voz padrão: `Iapetus`
+### Fila e concorrência
 
-## Estilos de roteiro expostos
+Duas lanes independentes:
+- `preview` — 1 job ativo por vez
+- `heavy` — 1 job ativo por vez
+- 1 preview + 1 heavy podem rodar em paralelo
+- Jobs extras ficam em fila
 
-- `Natural limpo`
-- `Short-form nativo`
-- `Wellness • Calmo reconfortante`
-- `Wellness • Soltar o peso do dia`
+## Render (Remotion)
 
-## Vozes expostas na UI
+Versão: Remotion 4.0.434
 
-Conjunto curado atual:
-- `Iapetus`
-- `Charon`
+| Composição | Dimensões | FPS | Uso |
+|------------|-----------|-----|-----|
+| `CodexShort` | 1080×1920 | 30 | Vertical shorts (9:16) — default |
+| `CodexWide` | 1920×1080 | 30 | Horizontal (16:9) |
+| `CaptionStyleDemo` | 1080×1920 | 30 | Preview de estilos de legenda |
+
+O componente `ShortVideo.tsx` renderiza:
+- Backgrounds por cena (imagem com Ken Burns ou vídeo em loop)
+- Overlay gradiente escuro
+- Título/hook com animação spring
+- Legendas karaoke com highlight palavra-a-palavra (5 estilos: `bold-tiktok-block`, `clean-broadcast`, `soft-karaoke`, `outline-punch`, `caption-strip`)
+- Áudio: narração + música de fundo opcional (8% volume)
+
+Encoding: x264 veryfast, 1400k video, 96k audio, timeout 30 min.
+
+## Perfis de saída
+
+| Perfil | Layout | Resolução | Duração default | Cenas |
+|--------|--------|-----------|-----------------|-------|
+| `vertical-short` | 9:16 | 1080×1920 | 100s | 14-18 |
+| `horizontal-5m` | 16:9 | 1920×1080 | 300s | 20-30 |
+| `horizontal-10m` | 16:9 | 1920×1080 | 600s | 30-42 |
+
+## Estilos visuais
+
+10 presets, cada um com ~15 campos de prompt (characterPrompt, stylePrompt, styleLockPrompt, compositionRules, etc.):
+
+| Preset | Descrição |
+|--------|-----------|
+| `claude` | Stick figure flat, fundo branco, editorial corporativo |
+| `kiro` | Stick figure dark/cinematic, contraste forte |
+| `editorial_clean` | Ilustração editorial limpa |
+| `realistic_film` | Look cinematográfico realista |
+| `cartoon_3d` | Estilo cartoon 3D |
+| `urban_sketching` | Sketch urbano / aquarela |
+| `ink` | Ilustração a tinta |
+| `editorial_line_green` | Line art editorial com acentos verdes |
+| `time_split_bold` | Tratamento visual bold com split temporal |
+| `punk` | Estética poster punk |
+
+## Modelos de imagem
+
+| Modelo | Id | Uso |
+|--------|-----|-----|
+| Imagen 4 Fast | `imagen-4.0-fast-generate-001` | padrão atual |
+| Gemini 2.5 Flash Image | `gemini-2.5-flash-image` | iteração rápida |
+| Imagen 4 | `imagen-4.0-generate-001` | qualidade equilibrada |
+| Imagen 4 Ultra | `imagen-4.0-ultra-generate-001` | qualidade máxima |
+
+## Vozes
+
+Conjunto curado para Cloud TTS (Gemini TTS + Chirp3-HD):
+- `Iapetus` (default pt-BR)
+- `Charon` (default en-US)
 - `Kore`
 - `Puck`
 - `Sulafat`
 
-Observação:
-- o app usa Google Cloud TTS com modelo Gemini-TTS
-- a UI já reduz o conjunto para vozes que fazem sentido para o fluxo atual
+## Canais
 
-## Modelos de imagem expostos
+| Canal | Idioma | Foco |
+|-------|--------|------|
+| `@foiumaideia` | pt-BR | internet / short-form / tech |
+| `@quiet2min` | en-US | wellness / calm |
+| `@ate2min` | pt-BR | geral |
 
-A UI hoje mostra **só os modelos que já validaram acesso no projeto atual**:
+## UI (Video Studio)
 
-| Modelo | Id | Preço de referência | Uso recomendado |
-|---|---|---:|---|
-| Imagen 4 Fast | `imagen-4.0-fast-generate-001` | `US$ 0,02 / imagem` | padrão atual, melhor custo/benefício |
-| Gemini 2.5 Flash Image | `gemini-2.5-flash-image` | `~US$ 0,039 / imagem` | iteração/conversacional |
-| Imagen 4 | `imagen-4.0-generate-001` | `US$ 0,04 / imagem` | qualidade equilibrada |
-| Imagen 4 Ultra | `imagen-4.0-ultra-generate-001` | `US$ 0,06 / imagem` | qualidade máxima, mais caro |
+4 abas:
 
-Notas:
-- `Imagen 4 Fast` virou o default da UI/backend
-- os previews `Gemini 3.* image` não estão expostos porque o projeto atual não tem acesso
-- o custo acima é referência operacional, não fatura oficial
-
-## Resolução de geração
-
-Geração base atual:
-- vertical: `1080x1920`
-- horizontal: `1920x1080`
-
-Isso já foi elevado no gerador de assets para evitar nascer em `576x1024` e só depois upscale no render.
-
-Arquivo:
-- [scripts/generate-flux2-assets.mjs](/root/repo/videos-flux2/scripts/generate-flux2-assets.mjs)
-
-## Música
-
-Comportamento atual:
-- se `Sem música de fundo` estiver marcado: sem trilha
-- se estiver desmarcado e não houver `--music-file`: o pipeline sorteia uma faixa de
-  - [/root/Documents/scripts/envato/music](/root/Documents/scripts/envato/music)
-
-Notas importantes:
-- a trilha é escolhida aleatoriamente
-- isso hoje ainda não está 100% pinado por revisão do job
-- para reprodutibilidade perfeita, o ideal futuro é persistir a música escolhida no metadata do run
-
-## UI / abas
-
-`Criar`
-- formulário de criação
-- preview
-- status atual do job
-- checklist
-- ação recomendada
-
-`Vídeos`
-- biblioteca dos MP4 finais
-- jobs falhados
-- publicação/agendamento
-- helper TikTok
-
-`Layout`
-- galeria real de estilos visuais
-- comparação de modelos de imagem
-- custo e comportamento visual por modelo
-
-`Logs`
-- acompanhamento tipo `tail -f`
-- suporte operacional, não cockpit principal
+- **Criar** — formulário de criação, job atual, preview, checklist, ações de recovery
+- **Pipeline** — lista de jobs com filtro/busca, log detalhado em tempo real (SSE)
+- **Biblioteca** — grid de vídeos finais, metadados editáveis, publicação/agendamento, helper TikTok
+- **Estilos** — galeria de estilos visuais, comparação de modelos
 
 ## Recovery pela UI
 
-A UI suporta recovery parcial. Ordem desejada:
+O backend analisa o estado em disco de cada job e oferece ações granulares:
 
-1. `Regenerar cena X`
-2. `Gerar áudio`
-3. `Renderizar vídeo`
-4. `Validar vídeo`
+| Ação | Quando usar |
+|------|-------------|
+| `Regenerar cena X` | Cena faltante ou corrompida |
+| `Gerar áudio` | Todas as cenas OK, falta voz/timestamps |
+| `Renderizar vídeo` | Áudio + render-props existem, falta MP4 |
+| `Validar vídeo` | MP4 existe, falta QA |
+| `Retomar a partir do ponto salvo` | Storyboard + cenas + áudio existem |
+| `Refazer a partir do storyboard` | Storyboard reaproveitável, estado inconsistente |
+| `Marcar como travado` | Processo preso, liberar fila |
 
-Outras ações:
-- `Retomar a partir do ponto salvo`
-- `Marcar como travado e liberar fila`
-- `Refazer a partir do storyboard`
+Auto-continue: `Regenerar cena X` encadeia automaticamente → próxima cena faltante → áudio → render → QA.
 
-Regra operacional:
-- a UI deve mostrar **só a próxima ação necessária**
-- ela não deve empilhar botões desnecessários
-- `force-fail` não deve virar fallback silencioso
+Ordem preferida: Regenerar cena → Gerar áudio → Renderizar → Validar.
 
-### Recovery atual já corrigido
+## Filosofia de QA
 
-O que já foi tratado:
-- jobs falhados de assets agora podem expor `Regenerar cena X` correto
-- `generate` falhado deixa de herdar o preview como `sourceJob`
-- `Regenerar cena` passa a confiar no backend para decidir a cena alvo, em vez de um número stale vindo da UI
-- `scene-regenerate` respeita `autoContinueAfterSceneRepair`
+Bloqueia: storyboard inválido, incoerência estrutural, off-topic, falha técnica.
+Aviso (não bloqueia): hook fraco, final fraco, CTA ruim, tom editorial fraco.
 
-## Fila e concorrência
+Gemini Vision Audit (`GEMINI_VISION_AUDIT=true` em produção):
+- Bloqueia: assunto errado, imagem corrompida, anatomia impossível, texto legível
+- Permite: estilo simplificado, telas com conteúdo abstrato, cues simbólicos de outage
 
-Existem duas lanes:
-- `preview`
-- `heavy`
+## Estrutura de artefatos por slug
 
-Comportamento:
-- 1 preview pode rodar em paralelo com 1 heavy
-- 2 heavy não rodam juntos
-- 2 preview não rodam juntos
-- jobs extra ficam enfileirados
+```
+video-engine/runs/{slug}/storyboard.json ......... storyboard final
+video-engine/runs/{slug}-preview/storyboard.json .. storyboard preview
+video-engine/runs/{slug}/voiceover.json ........... metadados de voz + timedWords
+video-engine/public/runs/{slug}/audio/voiceover.mp3 áudio final
+video-engine/runs/{slug}/render-props.json ........ props do Remotion
+video-engine/out/{slug}.mp4 ....................... saída do Remotion
+video-engine/assets/envato/{slug}/scene-XX.mp4 .... clips de cena
+video-engine/assets/envato/{slug}/_flux2_images/ ... PNGs e segmentos intermediários
+/root/postar/{canal}/{arquivo}.mp4 ................ export final
+```
 
-## Operação do serviço
-
-Serviço:
-- `codex-video-ui.service`
-
-Comandos:
+## Serviço e operação
 
 ```bash
 systemctl status codex-video-ui.service
@@ -250,7 +281,7 @@ systemctl restart codex-video-ui.service
 journalctl -u codex-video-ui.service -f
 ```
 
-Antes de reiniciar:
+Antes de reiniciar, verificar que não há jobs ativos:
 
 ```bash
 python3 - <<'PY'
@@ -261,192 +292,43 @@ print({k:data.get(k) for k in ['activeJobId','activePreviewJobId','activeHeavyJo
 PY
 ```
 
-Só reiniciar com segurança quando:
-- `activeJobId = null`
-- `activePreviewJobId = null`
-- `activeHeavyJobId = null`
-- `queueLength = 0`
-
-Observação:
-- reinício com jobs vivos pode marcar jobs `queued/running` como falhados
-- o estado da UI e do disco pode ficar inconsistente até o próximo recovery
-
-## GCloud / Vertex / Billing
-
-Projeto atual:
-- `project-79978184-3df0-40b2-b9f`
-
-Location:
-- `us-central1`
-
-Credencial atual usada pelo app:
-- `/home/william/claude-dinamico-test/gcp-ate.json`
-
-`gcloud` já foi instalado e autenticado com a service account do projeto.
-
-Serviços já habilitados:
-- `aiplatform.googleapis.com`
-- `texttospeech.googleapis.com`
-- `cloudbilling.googleapis.com`
-- `logging.googleapis.com`
-- `monitoring.googleapis.com`
-- `bigquery.googleapis.com`
-- `bigquerydatatransfer.googleapis.com`
-
-Billing:
-- billing account ativa: `billingAccounts/010548-6B432A-4593A9`
-
-Dataset de export de billing já criado:
-- `project-79978184-3df0-40b2-b9f:billing_export`
-
-Passo ainda manual:
-- ativar o Cloud Billing Export no console
-- URL: `https://console.cloud.google.com/billing/export?project=project-79978184-3df0-40b2-b9f`
-
-Depois disso, o custo real pode ser consultado via BigQuery.
-
-## Estimativa de custo já encontrada
-
-Estimativa local consolidada a partir de `gemini-usage.json`:
-- total observado: `~US$ 0,7718`
-
-Quebra local encontrada:
-- `gemini-2.5-flash`: `~US$ 0,3367`
-- `gemini-2.5-flash-image`: `~US$ 0,4351`
-
-Importante:
-- isto **não** é a fatura oficial do GCP
-- é só estimativa local do app
-- TTS ainda não está consolidado nesse cálculo local
-
-## TikTok
-
-O sistema hoje oferece:
-- helper local de upload
-- cópia de descrição
-- thumbnail local
-- MP4 pronto
-
-Limite atual:
-- não existe integração oficial de publish do TikTok implementada
-- o helper é semi-manual
-
-## Galeria / Layout
-
-O `Layout` hoje não é só “estilo visual”.
-Também serve para:
-- comparar presets visuais
-- comparar modelos de imagem com prompt real
-- ver custo/qualidade por modelo
-
-Scripts relevantes:
-- [scripts/generate-style-gallery.mjs](/root/repo/videos-flux2/scripts/generate-style-gallery.mjs)
-- [web/public/style-gallery/index.html](/root/repo/videos-flux2/web/public/style-gallery/index.html)
+Só reiniciar quando todos forem `null` / `0`.
 
 ## Comandos úteis
 
 ```bash
-# UI
-npm run web
-
-# wrapper principal
-node scripts/foiumaideia.mjs --title "CHAMARAM O GPS DE PIADA"
-
-# rerender de voz
-node video-engine/scripts/rerender-voice.mjs --slug 2026-04-05-exemplo --voice Charon
-
-# validação manual
-node video-engine/scripts/validate-run.mjs --slug 2026-04-05-exemplo
+npm run web                                          # subir a UI
+node scripts/foiumaideia.mjs --title "TITULO AQUI"   # gerar vídeo via CLI
+node video-engine/scripts/rerender-voice.mjs --slug SLUG --voice Charon  # re-render voz
+node video-engine/scripts/validate-run.mjs --slug SLUG                   # validação manual
+npm run test:flux2-rules                             # regressão regras de tela
+npm run test:scene-spec                              # regressão scene spec
+npm run test:scene-failure-taxonomy                  # regressão taxonomia de falhas
 ```
 
-## Mudanças recentes importantes
+## Logs e diagnóstico
 
-- image model selector real na UI
-- default de imagem trocado para `Imagen 4 Fast`
-- resolução de geração elevada para `1080x1920` / `1920x1080`
-- layout gallery com comparação real de modelos
-- TTS pacing mais conservador para reduzir `429`
-- checklist e ação recomendada no cockpit
-- `force-fail` mata processo real
-- `scene-regenerate` com rota de recovery parcial
-- wrapper deixou de short-circuitar por export final já existente
-- wrapper agora só reaproveita preview quando `--reuse-preview` for explícito
-- `failed panel` da UI passou a refletir melhor a recomendação real
+```bash
+curl -s http://127.0.0.1:3210/api/jobs    # ver jobs
+curl -s http://127.0.0.1:3210/api/videos  # ver vídeos
+curl -s http://127.0.0.1:3210/api/config  # ver config
+```
 
-## Bugs conhecidos e limites atuais
+## Bugs conhecidos
 
-### 1. `same slug` ainda é fonte de risco
+1. **Slug compartilhado** — `runs/`, `assets/envato/`, `out/` são indexados por slug. Tentativas diferentes do mesmo slug compartilham artefatos.
+2. **UI não lista clips de cena** — falta botão nativo para `scene-XX.mp4` no painel do job.
+3. **`/tmp` pode saturar** — Remotion usa /tmp para frames intermediários. Mitigado com TMPDIR redirecionado para `.tmp/system`.
+4. **Quotas 429** — podem acontecer em geração de imagem, Gemini Vision e TTS. Retry com backoff exponencial implementado.
 
-Mesmo com várias correções, o sistema ainda compartilha namespace de artefatos por `slug`:
-- `runs/<slug>`
-- `assets/envato/<slug>`
-- `out/<slug>.mp4`
+## Próximas ondas
 
-Risco:
-- um job pode parecer mais saudável ou mais completo por causa de artefato de outra tentativa do mesmo `slug`
+1. Criar modelo `video_case` + `job_attempt` (eliminar conflitos de slug)
+2. Versionar artefatos por revisão
+3. Listar clips de cena na UI
+4. Tornar `Biblioteca` o cockpit principal
 
-Mitigação atual:
-- freshness checks
-- `artifactEpochAt`
-- recovery mais conservador
-- uso do backend como autoridade da cena faltante
-
-Correção estrutural ainda pendente:
-- `video_case` + `job_attempt` canônicos com revisão própria
-
-### 2. `scene-regenerate` ainda usa metadata global do slug
-
-Risco:
-- manifests e relatórios do slug podem refletir uma partial run
-
-Estado:
-- ainda não foi completamente isolado por cena/revisão
-
-### 3. Billing real ainda depende do export para BigQuery
-
-Hoje existe:
-- billing ativo
-- dataset criado
-
-Mas falta:
-- export oficial ativado no console
-
-### 4. `/tmp` pode voltar a saturar
-
-Já houve falha real de render por `/tmp` cheio, não por falta de espaço no disco principal.
-
-Pontos de atenção:
-- bundles do Remotion
-- caches temporários
-- arquivos grandes esquecidos em `/tmp`
-
-### 5. Quotas `429`
-
-Ainda podem acontecer em:
-- Vertex image generation
-- Gemini Vision
-- Gemini-TTS / Google Cloud TTS
-
-Mitigação:
-- pacing mais conservador
-- retries
-- observação do log
-
-## Próximas ondas recomendadas
-
-Para deixar o sistema realmente autônomo sem depender de contexto manual:
-
-1. criar `video_case` canônico
-2. separar `job_attempt` de `video_case`
-3. invalidar `audio/render/qa` por revisão real
-4. persistir provenance por etapa
-5. tornar `Vídeos` o cockpit primário e `Logs` só suporte
-
-## Fonte de verdade ao reabrir noutro terminal
-
-Se reabrir o projeto sem contexto anterior, usar este `README.md` como ponto de partida.
-
-Para validar rapidamente o estado:
+## Validação rápida
 
 ```bash
 python3 - <<'PY'

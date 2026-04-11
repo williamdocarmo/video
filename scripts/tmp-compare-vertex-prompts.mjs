@@ -87,7 +87,7 @@ const generateImagenImage = async ({
     body: JSON.stringify(body)
   });
 
-  const payload = await response.json().catch(() => ({}));
+  const payload = await response.json().catch(() => ({})); /* expected: response may not be JSON */
   if (!response.ok) {
     throw new Error(`Imagen failed (${response.status}): ${JSON.stringify(payload).slice(0, 500)}`);
   }

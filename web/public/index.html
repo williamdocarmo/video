@@ -3,164 +3,186 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Gemini Video Local</title>
-    <link rel="stylesheet" href="/styles.css">
+    <title>Video Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css?v=20260407-ui3">
   </head>
   <body>
     <div class="page-shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">Gemini Video Local</p>
-          <h1>Gerar vídeo a partir de um título ou de um artigo inteiro.</h1>
-          <p class="lede">
-            Preencha o assunto ou cole o texto completo, escolha idioma, duração, voz e tom.
-            O servidor local chama o pipeline que já existe neste projeto.
-          </p>
+      <header class="topbar">
+        <div class="topbar-brand">
+          <span class="topbar-logo">Video Studio</span>
         </div>
-
-        <div class="hero-card">
-          <div class="hero-stat">
-            <span class="stat-label">Pendentes</span>
-            <strong id="queueCount">0</strong>
-          </div>
-          <div class="hero-stat">
-            <span class="stat-label">Fila roteiro</span>
-            <strong id="previewQueueCount">0</strong>
-          </div>
-          <div class="hero-stat">
-            <span class="stat-label">Fila render</span>
-            <strong id="heavyQueueCount">0</strong>
-          </div>
-          <div class="hero-stat">
-            <span class="stat-label">Servidor</span>
-            <strong>local</strong>
-          </div>
+        <nav class="topbar-tabs" role="tablist" aria-label="Seções do app">
+          <button type="button" class="topbar-tab active" data-tab-target="workspace">Criar</button>
+          <button type="button" class="topbar-tab" data-tab-target="logs">Pipeline</button>
+          <button type="button" class="topbar-tab" data-tab-target="videos">Biblioteca</button>
+          <button type="button" class="topbar-tab" data-tab-target="layout">Estilos</button>
+        </nav>
+        <div class="topbar-status">
+          <span class="topbar-pill"><span class="topbar-pill-label">Fila</span> <strong id="queueCount">0</strong></span>
+          <span class="topbar-pill"><span class="topbar-pill-label">Preview</span> <strong id="previewQueueCount">0</strong></span>
+          <span class="topbar-pill"><span class="topbar-pill-label">Render</span> <strong id="heavyQueueCount">0</strong></span>
         </div>
       </header>
 
-      <div class="tabbar" role="tablist" aria-label="Seções do app">
-        <button type="button" class="tab-button active" data-tab-target="workspace">Criar</button>
-        <button type="button" class="tab-button" data-tab-target="logs">Logs</button>
-        <button type="button" class="tab-button" data-tab-target="videos">Vídeos</button>
-        <button type="button" class="tab-button" data-tab-target="layout">Layout</button>
-      </div>
-
       <section class="tab-panel" data-tab-panel="workspace">
         <main class="layout">
-          <section class="panel">
+          <section class="panel panel-command">
             <div class="panel-head">
+              <p class="panel-kicker">Launch</p>
               <h2>Novo vídeo</h2>
-              <p>Se vier só com título, ele precisa ser bem específico. Para temas soltos ou amplos, cole um texto-base completo.</p>
+              <p>Escreva o briefing, ajuste o perfil e dispare preview ou geração final sem saltar entre telas.</p>
             </div>
 
             <form id="generateForm" class="stack">
-              <label class="field">
-                <span>Título / assunto</span>
-                <input type="text" name="title" placeholder="Ex.: Como a IA vai mudar o trabalho em 2030">
-                <small id="titleHint" class="field-hint">Se não colar texto-base, use um título específico com pelo menos 6 palavras.</small>
-              </label>
-
-              <label class="field">
-                <span>Texto completo para o Gemini usar como base</span>
-                <textarea
-                  name="sourceText"
-                  rows="9"
-                  placeholder="Cole aqui o artigo inteiro, notas, briefing ou qualquer texto-base. Se deixar vazio, o pipeline usa só o título."
-                ></textarea>
-                <small id="sourceTextHint" class="field-hint">Com texto-base, o pipeline fica mais estável e reduz falhas do Gemini no storyboard/plano visual.</small>
-              </label>
-
-              <div class="grid two">
+              <div class="form-section">
+                <div class="form-section-head">
+                  <p class="section-chip">Entrada</p>
+                  <h3>Assunto e contexto</h3>
+                </div>
                 <label class="field">
-                  <span>Idioma</span>
-                  <select name="language" id="generateLanguage"></select>
+                  <span>Título / assunto</span>
+                  <input type="text" name="title" placeholder="Ex.: Como a IA vai mudar o trabalho em 2030">
+                  <small id="titleHint" class="field-hint">Se não colar texto-base, use um título específico com pelo menos 6 palavras.</small>
                 </label>
 
                 <label class="field">
-                  <span>Formato de saída</span>
-                  <select name="outputProfile" id="generateOutputProfile"></select>
-                  <small id="outputProfileHint" class="field-hint"></small>
+                  <span>Texto completo para o Gemini usar como base</span>
+                  <textarea
+                    name="sourceText"
+                    rows="9"
+                    placeholder="Cole aqui o artigo inteiro, notas, briefing ou qualquer texto-base. Se deixar vazio, o pipeline usa só o título."
+                  ></textarea>
+                  <small id="sourceTextHint" class="field-hint">Com texto-base, o pipeline fica mais estável e reduz falhas do Gemini no storyboard/plano visual.</small>
                 </label>
               </div>
 
-              <div class="grid two">
-                <label class="field">
-                  <span>Duração</span>
-                  <select name="targetSeconds" id="generateDuration"></select>
-                  <small id="durationHint" class="field-hint"></small>
-                </label>
+              <div class="form-section">
+                <div class="form-section-head">
+                  <p class="section-chip">Configuração</p>
+                  <h3>Formato, ritmo e imagem</h3>
+                </div>
+                <div class="grid two">
+                  <label class="field">
+                    <span>Idioma</span>
+                    <select name="language" id="generateLanguage"></select>
+                  </label>
+
+                  <label class="field">
+                    <span>Formato de saída</span>
+                    <select name="outputProfile" id="generateOutputProfile"></select>
+                    <small id="outputProfileHint" class="field-hint"></small>
+                  </label>
+                </div>
 
                 <label class="field">
-                  <span>Modelo de imagem</span>
-                  <select name="imageModel" id="generateImageModel"></select>
-                  <div class="field-note-row">
-                    <small id="imageModelHint" class="field-hint"></small>
-                    <small id="imageModelCost" class="field-pill hidden"></small>
-                  </div>
+                  <span>Modo de geração</span>
+                  <select name="generationMode" id="generateGenerationMode"></select>
+                  <small id="generationModeHint" class="field-hint"></small>
                 </label>
+
+                <div class="grid two">
+                  <label class="field">
+                    <span>Duração</span>
+                    <select name="targetSeconds" id="generateDuration"></select>
+                    <small id="durationHint" class="field-hint"></small>
+                  </label>
+
+                  <label class="field">
+                    <span>Modelo de imagem</span>
+                    <select name="imageModel" id="generateImageModel"></select>
+                    <div class="field-note-row">
+                      <small id="imageModelHint" class="field-hint"></small>
+                      <small id="imageModelCost" class="field-pill hidden"></small>
+                    </div>
+                  </label>
+                </div>
+
+                <div class="grid two">
+                  <label class="field">
+                    <span id="generateImageStyleLabel">Estilo de imagem</span>
+                    <select name="imageStyle" id="generateImageStyle"></select>
+                    <small id="imageStyleHint" class="field-hint"></small>
+                    <div id="imageStylePreview" class="style-preview hidden">
+                      <div class="style-preview-copy">
+                        <p class="style-preview-kicker">Readout visual</p>
+                        <strong id="imageStylePreviewLabel">Estilo selecionado</strong>
+                        <p id="imageStylePreviewDescription">Sem descrição adicional.</p>
+                        <a id="imageStylePreviewLink" class="text-link style-preview-link" href="#generateImageStyle" target="_blank" rel="noreferrer">Abrir referência</a>
+                      </div>
+                      <a id="imageStylePreviewImageLink" class="style-preview-thumb hidden" href="#generateImageStyle" target="_blank" rel="noreferrer">
+                        <img id="imageStylePreviewImage" alt="Preview do estilo selecionado">
+                      </a>
+                    </div>
+                  </label>
+
+                  <label class="field">
+                    <span>Estilo de roteiro</span>
+                    <select name="tone" id="generateTone"></select>
+                    <small id="toneHint" class="field-hint"></small>
+                  </label>
+                </div>
               </div>
 
-              <div class="grid two">
-                <label class="field">
-                  <span>Estilo de imagem</span>
-                  <select name="imageStyle" id="generateImageStyle"></select>
-                  <small id="imageStyleHint" class="field-hint"></small>
-                </label>
+              <div class="form-section">
+                <div class="form-section-head">
+                  <p class="section-chip">Saída</p>
+                  <h3>Voz, canal e execução</h3>
+                </div>
+                <div class="grid two">
+                  <label class="field">
+                    <span>Voz</span>
+                    <select name="voice" id="generateVoice" data-custom-target="generateCustomVoice"></select>
+                    <small id="voiceHint" class="field-hint"></small>
+                  </label>
+
+                  <label class="field hidden" id="generateCustomVoiceField">
+                    <span>Voz personalizada</span>
+                    <input type="text" name="customVoice" id="generateCustomVoice" placeholder="Ex.: Charon ou Kore">
+                  </label>
+                </div>
 
                 <label class="field">
-                  <span>Estilo de roteiro</span>
-                  <select name="tone" id="generateTone"></select>
-                  <small id="toneHint" class="field-hint"></small>
-                </label>
-              </div>
-
-              <div class="grid two">
-                <label class="field">
-                  <span>Voz</span>
-                  <select name="voice" id="generateVoice" data-custom-target="generateCustomVoice"></select>
-                  <small id="voiceHint" class="field-hint"></small>
+                  <span>Canal de destino</span>
+                  <select name="channel" id="generateChannel"></select>
+                  <small id="channelHint" class="field-hint"></small>
                 </label>
 
-                <label class="field hidden" id="generateCustomVoiceField">
-                  <span>Voz personalizada</span>
-                  <input type="text" name="customVoice" id="generateCustomVoice" placeholder="Ex.: Charon ou Kore">
-                </label>
-              </div>
+                <div class="toggle-row toggle-row-command">
+                  <label class="check">
+                    <input type="checkbox" name="force" checked>
+                    <span>Forçar regeneração</span>
+                  </label>
 
-              <label class="field">
-                <span>Canal de destino</span>
-                <select name="channel" id="generateChannel"></select>
-                <small id="channelHint" class="field-hint"></small>
-              </label>
+                  <label class="check">
+                    <input type="checkbox" name="noMusic" checked>
+                    <span>Sem música de fundo</span>
+                  </label>
 
-              <div class="toggle-row">
-                <label class="check">
-                  <input type="checkbox" name="force" checked>
-                  <span>Forçar regeneração</span>
-                </label>
-
-                <label class="check">
-                  <input type="checkbox" name="noMusic" checked>
-                  <span>Sem música de fundo</span>
-                </label>
-
-                <label class="check">
-                  <input type="checkbox" name="autoApprove" id="generateAutoApprove">
-                  <span>Gerar direto sem aprovação</span>
-                </label>
+                  <label class="check">
+                    <input type="checkbox" name="autoApprove" id="generateAutoApprove">
+                    <span>Gerar direto sem aprovação</span>
+                  </label>
+                </div>
               </div>
 
               <div class="button-row">
                 <button id="generateSubmitButton" type="submit" class="button primary" data-preview-only="true">Montar preview para aprovar</button>
+                <p class="button-row-note">Preview primeiro reduz retrabalho quando o briefing ainda está instável.</p>
               </div>
               <p id="generateValidationHint" class="field-hint hidden"></p>
             </form>
           </section>
 
-          <section class="panel">
+          <section class="panel panel-status">
             <div class="panel-head">
+              <p class="panel-kicker">Run state</p>
               <h2>Status atual</h2>
-              <p>Logs em tempo real, links de saída e dados da run selecionada.</p>
+              <p>Resumo do run selecionado com a menor quantidade possível de ruído operacional.</p>
             </div>
 
             <div id="jobEmpty" class="empty-state">
@@ -173,15 +195,32 @@
                   <h3 id="jobTitle">Título</h3>
                   <p class="job-meta" id="jobMeta"></p>
                   <p class="job-progress-meta" id="jobProgressMeta"></p>
+                  <div class="progress-meter" aria-hidden="true">
+                    <span id="jobProgressFill"></span>
+                  </div>
                 </div>
               </div>
 
               <div class="state-strip">
-                <p class="state-label">Stage badges</p>
+                <p class="state-label">Estado do run</p>
                 <div class="state-badge-row">
                   <span class="stage-badge" id="jobType">generate</span>
                   <span class="stage-badge" id="jobStatus">queued</span>
                 </div>
+              </div>
+
+              <div class="recovery-guide" aria-label="Guia rápido de recovery">
+                <article class="recovery-guide-card recovery-guide-card-safe">
+                  <p class="state-label">Primeiro</p>
+                  <strong>Continue no mesmo run.</strong>
+                  <p class="state-copy muted">Retomar e reparar preserva mais contexto do que reenfileirar tudo.</p>
+                </article>
+
+                <article class="recovery-guide-card recovery-guide-card-warn">
+                  <p class="state-label">Fallback</p>
+                  <strong>Volte ao storyboard salvo.</strong>
+                  <p class="state-copy muted">Use quando o run atual já não for confiável.</p>
+                </article>
               </div>
 
               <div class="state-grid">
@@ -196,55 +235,65 @@
                   <p id="jobRecommendedLabel" class="state-copy">Revise o RCA, abra os artefatos vinculados e retome a partir do ponto salvo quando o job oferecer essa rota.</p>
                   <p id="jobRecommendedDetails" class="field-hint">A próxima ação é calculada a partir dos artefatos reais do run.</p>
 
-                  <div class="link-row">
-                    <a id="jobOutputLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir vídeo</a>
-                    <a id="jobStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
+                  <div class="artifact-block">
+                    <p class="artifact-label">Artefatos do run</p>
+                    <div class="link-row artifact-links">
+                      <a id="jobOutputLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir vídeo</a>
+                      <a id="jobStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
+                    </div>
                   </div>
 
-                  <div class="button-row hidden" id="jobActions">
-                    <button id="resumeJobButton" type="button" class="button secondary">Retomar a partir do ponto salvo</button>
-                    <button id="regenerateSceneButton" type="button" class="button secondary">Regenerar cena faltante</button>
-                    <button id="generateAudioButton" type="button" class="button secondary">Gerar áudio</button>
-                    <button id="renderOnlyButton" type="button" class="button secondary">Renderizar vídeo</button>
-                    <button id="validateJobButton" type="button" class="button secondary">Validar vídeo</button>
-                    <button id="forceFailJobButton" type="button" class="button danger">Marcar como travado e liberar fila</button>
+                  <div class="artifact-block">
+                    <p class="artifact-label">Cenas</p>
+                    <div id="jobSceneLinks" class="link-row artifact-links"></div>
+                  </div>
+
+                  <p class="action-note field-hint">Ação disponível não substitui o checklist: avance só quando a etapa anterior também estiver consistente.</p>
+
+                  <div class="action-groups hidden" id="jobActions">
+                    <div class="action-primary-row">
+                      <button id="resumeJobButton" type="button" class="button primary">Retomar a partir do ponto salvo</button>
+                      <button id="regenerateSceneButton" type="button" class="button primary">Regenerar cena faltante</button>
+                      <button id="generateAudioButton" type="button" class="button primary">Gerar áudio</button>
+                      <button id="renderOnlyButton" type="button" class="button primary">Renderizar vídeo</button>
+                      <button id="validateJobButton" type="button" class="button primary">Validar vídeo</button>
+                    </div>
+                    <details class="action-more">
+                      <summary>Mais ações</summary>
+                      <div class="action-more-content">
+                        <button id="retryFromStoryboardJobButton" type="button" class="button secondary">Refazer a partir do storyboard</button>
+                        <button id="forceFailJobButton" type="button" class="button danger">Marcar como travado e liberar fila</button>
+                      </div>
+                    </details>
                   </div>
                 </article>
               </div>
 
               <article class="state-card">
-                <p class="state-label">Checklist da pipeline</p>
-                <div id="jobStepChecklist" class="step-checklist"></div>
+                <div class="section-head">
+                  <div class="section-head-copy">
+                    <p class="state-label">Checklist</p>
+                    <p class="field-hint">Use como travamento objetivo: siga só quando a etapa anterior estiver pronta.</p>
+                  </div>
+
+                  <div class="step-legend" aria-hidden="true">
+                    <span class="step-legend-pill" data-tone="safe">Pode seguir</span>
+                    <span class="step-legend-pill" data-tone="warn">Revisar</span>
+                    <span class="step-legend-pill" data-tone="danger">Bloqueado</span>
+                  </div>
+                </div>
+                <div id="jobStepChecklist" class="pipeline-stepper"></div>
               </article>
 
               <div id="previewPanel" class="stack hidden">
                 <div class="button-row">
-                  <button id="approvePreviewButton" type="button" class="button primary hidden">Aprovar e gerar vídeo</button>
+                  <button id="approvePreviewButton" type="button" class="button primary hidden">Aprovar edição e gerar vídeo</button>
                 </div>
-
-                <div id="previewSummary" class="preview-summary hidden"></div>
-                <div id="previewScenes" class="preview-scenes"></div>
-              </div>
-
-              <pre id="jobLog" class="log-box"></pre>
-            </div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head">
-              <h2>Histórico</h2>
-              <p>Jobs recentes e arquivos MP4 encontrados no diretório de exportação.</p>
-            </div>
-
-            <div class="history-grid">
-              <div>
-                <h3 class="subhead">Jobs</h3>
-                <div id="jobsList" class="history-list"></div>
-              </div>
-
-              <div>
-                <h3 class="subhead">Arquivos</h3>
-                <div id="runsList" class="history-list"></div>
+                <p class="field-hint preview-edit-hint">Edite o storyboard e os prompts antes de aprovar. As alterações serão usadas no job pesado.</p>
+                <form id="previewStoryboardForm" class="preview-storyboard-form">
+                  <div id="previewSummary" class="preview-summary hidden"></div>
+                  <div id="previewScenes" class="preview-scenes"></div>
+                </form>
               </div>
             </div>
           </section>
@@ -253,19 +302,27 @@
 
       <section class="tab-panel hidden" data-tab-panel="logs">
         <div class="library-layout">
-          <section class="panel">
+          <section class="panel panel-sidebar">
             <div class="panel-head">
-              <h2>Jobs e output</h2>
-              <p>Acompanhe os logs dos jobs em tempo real sem sair do site.</p>
+              <p class="panel-kicker">Pipeline</p>
+              <h2>Jobs recentes</h2>
+              <p>Selecione um job e abra o trecho certo do log sem rolar uma parede infinita.</p>
             </div>
-
-            <div>
-              <h3 class="subhead">Jobs recentes</h3>
-              <div id="logsJobsList" class="history-list"></div>
+            <div class="list-toolbar list-toolbar-vertical">
+              <input type="search" id="jobSearchInput" class="toolbar-search" placeholder="Buscar job...">
+              <div class="toolbar-filters">
+                <button type="button" class="filter-chip active" data-job-filter="all">Todos</button>
+                <button type="button" class="filter-chip" data-job-filter="running">Running</button>
+                <button type="button" class="filter-chip" data-job-filter="completed">OK</button>
+                <button type="button" class="filter-chip" data-job-filter="failed">Failed</button>
+                <button type="button" class="filter-chip" data-job-filter="queued">Queued</button>
+              </div>
             </div>
+            <div id="logsJobsList" class="history-list history-list-tall"></div>
+            <div id="jobsPagination" class="pagination-bar"></div>
           </section>
 
-          <section class="panel">
+          <section class="panel panel-console">
             <div id="logsEmpty" class="empty-state">
               Selecione um job para acompanhar o output.
             </div>
@@ -277,6 +334,9 @@
                   <h3 id="logsTitle">Job</h3>
                   <p id="logsMeta" class="job-meta"></p>
                   <p id="logsProgressMeta" class="job-progress-meta"></p>
+                  <div class="progress-meter" aria-hidden="true">
+                    <span id="logsProgressFill"></span>
+                  </div>
                 </div>
                 <span class="status-pill" id="logsStatus">queued</span>
               </div>
@@ -288,6 +348,20 @@
 
               <p id="logsFailureSummary" class="field-hint hidden"></p>
 
+              <div class="log-toolbar">
+                <div class="log-toolbar-copy">
+                  <p class="log-toolbar-kicker">Janela do log</p>
+                  <p id="logsPageInfo" class="field-hint">Página 1 de 1</p>
+                </div>
+
+                <div class="pagination-controls">
+                  <button id="logsFirstPageButton" type="button" class="button secondary">Primeiros</button>
+                  <button id="logsPrevPageButton" type="button" class="button secondary">Anterior</button>
+                  <button id="logsNextPageButton" type="button" class="button secondary">Próximos</button>
+                  <button id="logsLastPageButton" type="button" class="button secondary">Últimos</button>
+                </div>
+              </div>
+
               <pre id="logsJobLog" class="log-box log-box-wide"></pre>
             </div>
           </section>
@@ -298,25 +372,34 @@
         <div class="library-layout">
           <section class="panel">
             <div class="panel-head">
-              <h2>Vídeos criados</h2>
-              <p>Biblioteca dos MP4 exportados e dos jobs que falharam, com ações rápidas para revisar e refazer.</p>
+              <p class="panel-kicker">Archive</p>
+              <h2>Saídas locais e exportadas</h2>
+              <p>Vídeos prontos para revisar, editar e publicar. O último render validado entra aqui.</p>
             </div>
+
+            <div class="list-toolbar">
+              <input type="search" id="videoSearchInput" class="toolbar-search" placeholder="Buscar vídeo...">
+              <div class="toolbar-filters">
+                <button type="button" class="filter-chip active" data-video-filter="all">Todos</button>
+                <button type="button" class="filter-chip" data-video-filter="local">Local</button>
+                <button type="button" class="filter-chip" data-video-filter="published">Publicado</button>
+                <button type="button" class="filter-chip" data-video-filter="scheduled">Agendado</button>
+              </div>
+            </div>
+
             <div class="stack">
               <div>
                 <h3 class="subhead">Concluídos</h3>
-                <div id="videosList" class="history-list"></div>
-              </div>
-
-              <div>
-                <h3 class="subhead">Falhados</h3>
-                <div id="failedJobsList" class="history-list"></div>
+                <div id="videosList" class="video-grid"></div>
+                <div id="videosPagination" class="pagination-bar"></div>
               </div>
             </div>
+
           </section>
 
           <section class="panel">
             <div id="videoEmpty" class="empty-state">
-              Selecione um vídeo concluído ou um job falhado para editar, publicar agora ou agendar.
+              Selecione um vídeo concluído para editar, publicar agora ou agendar.
             </div>
 
             <div id="videoDetails" class="stack hidden">
@@ -343,6 +426,16 @@
               <div class="link-row">
                 <a id="videoOpenLink" class="text-link" href="#" target="_blank" rel="noreferrer">Abrir arquivo</a>
                 <a id="videoStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
+              </div>
+
+              <div class="artifact-block">
+                <p class="artifact-label">Origem</p>
+                <div id="videoSourceJobInfo" class="link-row artifact-links"></div>
+              </div>
+
+              <div class="artifact-block">
+                <p class="artifact-label">Cenas</p>
+                <div id="videoSceneLinks" class="link-row artifact-links"></div>
               </div>
 
               <div id="videoParamsCard" class="meta-card hidden">
@@ -438,49 +531,6 @@
               </form>
             </div>
 
-            <div id="failedJobDetails" class="stack hidden">
-              <div class="failure-banner">
-                <div class="failure-banner-copy">
-                  <p class="job-kicker">Job falhado</p>
-                  <h3 id="failedJobTitle">Job falhado</h3>
-                </div>
-              </div>
-
-              <div class="state-strip">
-                <p class="state-label">Stage badges</p>
-                <div class="state-badge-row">
-                  <span class="stage-badge" id="failedJobChannel">Falhado</span>
-                  <span class="stage-badge" id="failedJobStatus" data-state="failed">failed</span>
-                </div>
-              </div>
-
-              <div class="state-grid state-grid-wide">
-                <article class="state-card">
-                  <p class="state-label">Stage detail</p>
-                  <p id="failedJobMeta" class="state-copy"></p>
-                </article>
-
-                <article class="state-card state-card-accent">
-                  <p class="state-label">RCA</p>
-                  <p id="failedJobError" class="state-copy error"></p>
-                  <p class="state-copy muted">Use este bloco para consolidar a causa raiz antes de reenfileirar ou ajustar o prompt, o storyboard ou o material de entrada.</p>
-                </article>
-
-                <article class="state-card">
-                  <p class="state-label">Ação recomendada</p>
-                  <p id="failedJobRecommendedLabel" class="state-copy">Abra o storyboard, revise o que foi gerado e siga a próxima ação segura indicada pelo sistema.</p>
-                  <p id="failedJobRecommendedDetails" class="field-hint">O painel de falhados reaproveita a recomendação calculada a partir dos artefatos reais do run.</p>
-
-                  <div class="link-row">
-                    <a id="failedJobStoryboardLink" class="text-link hidden" href="#" target="_blank" rel="noreferrer">Abrir storyboard</a>
-                  </div>
-
-                  <div id="failedJobActions" class="button-row">
-                    <button id="retryFailedJobButton" type="button" class="button primary">Refazer este job</button>
-                  </div>
-                </article>
-              </div>
-            </div>
           </section>
         </div>
       </section>
@@ -488,8 +538,9 @@
       <section class="tab-panel hidden" data-tab-panel="layout">
         <section class="panel">
           <div class="panel-head">
+            <p class="panel-kicker">Look system</p>
             <h2>Galeria de estilos e modelos</h2>
-            <p>Referências reais geradas pelo próprio app para comparar presets visuais e também o comportamento dos modelos de imagem no caso do GPS.</p>
+            <p>Referências reais para comparar presets visuais e modelos de imagem.</p>
           </div>
 
           <div class="stack">
@@ -508,6 +559,6 @@
       </section>
     </div>
 
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/app.js?v=20260407-ui3"></script>
   </body>
 </html>

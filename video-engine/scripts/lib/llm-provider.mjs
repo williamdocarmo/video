@@ -4,6 +4,7 @@ import {tmpdir} from "node:os";
 import path from "node:path";
 import {z} from "zod";
 import {resolveOutputProfileConfig} from "../../../config/output-profiles.mjs";
+import {normalizeText, sleep as wait, uniqueStrings} from "../../../../shared/utils.mjs";
 import {createGeminiUsageSummary, recordGeminiUsage} from "./gemini-usage.mjs";
 import {getGcpAccessToken, resolveGcpConfig} from "./gcp-config.mjs";
 
@@ -65,21 +66,9 @@ const storyboardOutputSchema = {
   required: ["videoTitle", "hook", "postCaption", "hashtags", "cta", "scenes"]
 };
 
-const normalizeText = (value) => {
-  return String(value ?? "")
-    .replace(/```json/gi, "")
-    .replace(/```/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-};
-
 const clampText = (value, maxLength) => {
   const normalized = normalizeText(value);
   return normalized.length <= maxLength ? normalized : normalized.slice(0, maxLength).trim();
-};
-
-const uniqueStrings = (values = []) => {
-  return [...new Set((Array.isArray(values) ? values : []).filter(Boolean).map((value) => normalizeText(value)).filter(Boolean))];
 };
 
 const uniqueFindings = (values = []) => {
@@ -251,7 +240,7 @@ const cleanTopic = (title) => {
 };
 
 const sanitizeEnglishSearchQuery = (value) => {
-  return normalizeText(value)
+  let result = normalizeText(value)
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^A-Za-z0-9\s-]+/g, " ")
@@ -264,15 +253,29 @@ const sanitizeEnglishSearchQuery = (value) => {
     .replace(/\bprogress bar animation\b/gi, "abstract progress bar icon")
     .replace(/\bsoftware installation or update completion\b/gi, "software refresh symbol")
     .replace(/\bdisplaying\b/gi, "with")
+    .replace(/\bdisplayed\b/gi, "shown")
     .replace(/\bshowing\b/gi, "with")
+    /* ── Screen-content sanitisation: rewrite device+content into abstract device shots ── */
+    .replace(/\b(screen|display|monitor)\s+with\s+(?:a\s+)?(?:\w+\s+){0,3}(online store|website|app|dashboard|chat|code|analytics|interface|ui|menu|feed|inbox|search results?|product list(?:ing)?s?|shopping cart|browser|checkout|form|page|profile|timeline|map)\b/gi, "blank glowing $1")
+    .replace(/\b(phone|smartphone|tablet|laptop|computer)\s+(?:screen\s+)?with\s+(?:a\s+)?(?:\w+\s+){0,3}(selection of products?|products? list(?:ing)?s?|online store|website|app|shopping|items?|messages?|notifications?|search results?|social media|feed|chat|browser|checkout)\b/gi, "$1 with a blank glowing screen")
+    .replace(/\bscrolling through\s+(?:a\s+)?(?:vast |large |huge )?(selection of |variety of )?(products?|items?|options?|listings?|results?|messages?|posts?|feed)\s+on\s+(?:a\s+)?(phone|smartphone|tablet|screen)\b/gi, "browsing a $3 with a blank glowing screen")
+    .replace(/\b(?:shown|displayed|projected)\s+on\s+(?:a\s+)?(phone|smartphone|tablet|laptop|computer|monitor|screen)\s*(screen)?\b/gi, "near a $1 with a blank glowing screen")
     .replace(/\bnotification bubble\b/gi, "notification icon bubble")
     .replace(/\blow balance indicator\b/gi, "nearly empty balance bar icon")
     .replace(/\bemail\b/gi, "envelope icon")
     .replace(/\btemplate\b/gi, "abstract panel")
     .replace(/\bon the screen\b/gi, "near the device")
+    .replace(/\bon\s+(?:a\s+)?(computer|laptop|phone|smartphone|tablet|monitor)\s+screen\b/gi, "near a $1 with a blank glowing screen")
     .replace(/\b(vertical|portrait)\b/gi, "")
     .replace(/\s+/g, " ")
     .trim();
+  /* If a device is mentioned but no screen state is specified, force dark/off screen
+     to prevent the image model from hallucinating text on the device */
+  if (/\b(smartphone|phone|tablet|laptop|computer|monitor)\b/i.test(result) &&
+      !/\b(blank|glowing|dark|off|turned.off|black screen)\b/i.test(result)) {
+    result = result.replace(/\b(smartphone|phone|tablet|laptop|computer|monitor)\b/i, "$1 with a dark turned-off screen");
+  }
+  return result;
 };
 
 const DESK_LAPTOP_QUERY_RE =
@@ -370,14 +373,35 @@ const PRODUCTIVITY_LEAK_RE =
   /\b(traducao|tradução|traduzir|resumo|resumos|resumir|pesquisa|pesquisas|pesquisar|organizacao|organização|organizar|mesmas apps|apps\b|aplicativos\b|workflow|produtividade|software|automacao|automação|browser|navegador|multimodal)\b/i;
 const PRODUCTIVITY_TITLE_RE =
   /\b(ai|ia|app|apps|aplicativo|aplicativos|produtividade|traducao|tradução|resumo|pesquisa|organizacao|organização|software|workflow|automacao|automação)\b/i;
-const PAYMENT_QUERY_RE =
-  /\b(credit card|payment terminal|declined|checkout counter|empty wallet|cashier|price displayed)\b/i;
-const PAYMENT_TOPIC_RE =
-  /\b(card|cartao|cartão|payment|checkout|wallet|repair bill|repair price|conserto|assistencia|assistência|prejuizo|prejuízo|orcamento|orçamento)\b/i;
-const PHOTO_QUERY_RE =
-  /\b(taking photo|portrait photo|phone camera|smartphone camera|outdoors)\b/i;
-const PHOTO_TOPIC_RE =
-  /\b(photo|foto|camera do celular|smartphone camera|portrait mode|portrait|retrato|selfie|tirando foto)\b/i;
+/* ── Semantic domain groups for off-topic detection ──
+   Each group defines a conceptual domain. If the searchQuery triggers a domain
+   pattern AND the narration/title shares ANY token from the same semantic group,
+   the query is considered on-topic regardless of exact wording or language. */
+const SEMANTIC_DOMAIN_GROUPS = [
+  {
+    label: "payment-or-checkout imagery",
+    queryRe: /\b(credit card|payment terminal|declined|checkout counter|empty wallet|cashier|price displayed)\b/i,
+    /* Any of these tokens in title+narration means the video is about this domain */
+    topicTokens: new Set([
+      /* EN */ "card", "credit", "payment", "checkout", "wallet", "cashier", "money", "bank",
+      "banking", "purchase", "shopping", "store", "price", "buy", "buying", "commerce",
+      "ecommerce", "online", "internet", "financial", "transaction",
+      /* PT */ "cartao", "cartoes", "credito", "pagamento", "pagar", "caixa", "dinheiro",
+      "banco", "bancario", "bancarios", "compra", "comprar", "compras", "loja", "lojas",
+      "preco", "precos", "comercio", "financeiro", "transacao", "online", "internet",
+    ]),
+  },
+  {
+    label: "photo-or-camera imagery",
+    queryRe: /\b(taking photo|portrait photo|phone camera|smartphone camera)\b/i,
+    topicTokens: new Set([
+      /* EN */ "photo", "photograph", "camera", "portrait", "selfie", "picture", "snap",
+      "photography", "lens", "shoot", "shooting",
+      /* PT */ "foto", "fotos", "fotografia", "camera", "retrato", "selfie", "imagem",
+      "fotografar", "tirando",
+    ]),
+  },
+];
 
 const hasPostCaptionCta = (storyboard) => {
   const combined = normalizeText(`${storyboard?.postCaption || ""} ${storyboard?.cta || ""}`);
@@ -417,14 +441,19 @@ const getOffTopicQueryScenes = (storyboard, title) => {
   return (storyboard?.scenes ?? []).flatMap((scene, index) => {
     const query = normalizeText(scene?.searchQuery || "");
     const topicContext = normalizeText(`${title} ${scene?.narration || ""}`);
+    const topicTokens = extractTopicTokens(topicContext);
     const reasons = [];
 
-    if (PAYMENT_QUERY_RE.test(query) && !PAYMENT_TOPIC_RE.test(topicContext)) {
-      reasons.push("payment-or-checkout imagery");
-    }
+    for (const {queryRe, label, topicTokens: domainTokens} of SEMANTIC_DOMAIN_GROUPS) {
+      if (!queryRe.test(query)) continue;
 
-    if (PHOTO_QUERY_RE.test(query) && !PHOTO_TOPIC_RE.test(topicContext)) {
-      reasons.push("photo-or-camera imagery");
+      /* If ANY token from the narration/title appears in this domain's
+         semantic group, the video is about this domain → not off-topic. */
+      const isOnTopic = topicTokens.some((t) => domainTokens.has(t));
+
+      if (!isOnTopic) {
+        reasons.push(label);
+      }
     }
 
     return reasons.length > 0
@@ -1180,7 +1209,14 @@ const GEMINI_MAX_RETRIES = Math.max(
   Number.parseInt(process.env.GEMINI_MAX_RETRIES || "2", 10) || 2
 );
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const GEMINI_BACKOFF_BASE_MS = 4000;
+const GEMINI_BACKOFF_MAX_MS = 120000;
+
+const computeGeminiRetryDelayMs = (attempt) => {
+  const exponentialDelay = GEMINI_BACKOFF_BASE_MS * 2 ** Math.max(0, attempt);
+  const jitterMs = Math.floor(Math.random() * 2000);
+  return Math.min(GEMINI_BACKOFF_MAX_MS, exponentialDelay + jitterMs);
+};
 
 const isRetryableGeminiStatus = (status) => status === 408 || status === 409 || status === 429 || status >= 500;
 
@@ -1276,7 +1312,7 @@ const callZai = async ({apiKey, model, temperature, messages}) => {
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
+    const errorText = await response.text().catch(() => ""); /* expected: body may be unreadable */
     throw new Error(`Z.ai falhou com status ${response.status}: ${errorText.slice(0, 200)}`);
   }
 
@@ -1361,7 +1397,7 @@ const parseOpenRouterJson = async ({text, apiKey, model, repairProvider = "openr
   }
 };
 
-const callVertexGemini = async ({model, messages, jsonMode = false, usageContext = "unspecified"}) => {
+const callVertexGemini = async ({model, messages, jsonMode = false, responseSchema, usageContext = "unspecified"}) => {
   const systemParts = [];
   const userParts = [];
   const gcpConfig = resolveGcpConfig(process.env);
@@ -1400,7 +1436,8 @@ const callVertexGemini = async ({model, messages, jsonMode = false, usageContext
             jsonMode
               ? {
                 temperature: 0,
-                responseMimeType: "application/json"
+                responseMimeType: "application/json",
+                ...(responseSchema ? {responseSchema} : {})
               }
               : {
                 temperature: 0
@@ -1411,7 +1448,7 @@ const callVertexGemini = async ({model, messages, jsonMode = false, usageContext
       });
 
       if (!response.ok) {
-        const err = await response.text().catch(() => "");
+        const err = await response.text().catch(() => ""); /* expected: body may be unreadable */
         const failure = new Error(`Vertex Gemini falhou com status ${response.status}: ${err.slice(0, 240)}`);
 
         if (!isRetryableGeminiStatus(response.status) || attempt >= GEMINI_MAX_RETRIES) {
@@ -1419,7 +1456,7 @@ const callVertexGemini = async ({model, messages, jsonMode = false, usageContext
         }
 
         lastError = failure;
-        await wait(1500 * (attempt + 1));
+        await wait(computeGeminiRetryDelayMs(attempt));
         continue;
       }
 
@@ -1444,7 +1481,7 @@ const callVertexGemini = async ({model, messages, jsonMode = false, usageContext
         throw error;
       }
 
-      await wait(1500 * (attempt + 1));
+      await wait(computeGeminiRetryDelayMs(attempt));
     }
   }
 
@@ -1465,7 +1502,7 @@ const parseVertexJson = async ({text, model}) => {
   }
 };
 
-const callGemini = async ({apiKey, model, messages, jsonMode = false, usageContext = "unspecified"}) => {
+const callGemini = async ({apiKey, model, messages, jsonMode = false, responseSchema, usageContext = "unspecified"}) => {
   const systemParts = [];
   const userParts = [];
 
@@ -1498,7 +1535,8 @@ const callGemini = async ({apiKey, model, messages, jsonMode = false, usageConte
             generationConfig: jsonMode
               ? {
                   temperature: 0,
-                  responseMimeType: "application/json"
+                  responseMimeType: "application/json",
+                  ...(responseSchema ? {responseSchema} : {})
                 }
               : {
                   temperature: 0
@@ -1509,7 +1547,7 @@ const callGemini = async ({apiKey, model, messages, jsonMode = false, usageConte
       );
 
       if (!response.ok) {
-        const err = await response.text().catch(() => "");
+        const err = await response.text().catch(() => ""); /* expected: body may be unreadable */
         const failure = new Error(`Gemini falhou com status ${response.status}: ${err.slice(0, 200)}`);
 
         if (!isRetryableGeminiStatus(response.status) || attempt >= GEMINI_MAX_RETRIES) {
@@ -1517,7 +1555,7 @@ const callGemini = async ({apiKey, model, messages, jsonMode = false, usageConte
         }
 
         lastError = failure;
-        await wait(1500 * (attempt + 1));
+        await wait(computeGeminiRetryDelayMs(attempt));
         continue;
       }
 
@@ -1542,7 +1580,7 @@ const callGemini = async ({apiKey, model, messages, jsonMode = false, usageConte
         throw error;
       }
 
-      await wait(1500 * (attempt + 1));
+      await wait(computeGeminiRetryDelayMs(attempt));
     }
   }
 
@@ -1564,6 +1602,7 @@ export const callJsonProvider = async ({provider, apiKey, model, messages, schem
       model: selectedModel,
       messages,
       jsonMode: true,
+      responseSchema: schema,
       usageContext
     });
 
@@ -1610,6 +1649,7 @@ export const callJsonProvider = async ({provider, apiKey, model, messages, schem
       model: geminiModel,
       messages,
       jsonMode: true,
+      responseSchema: schema,
       usageContext
     });
 
@@ -1660,6 +1700,7 @@ const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourc
   {
     role: "user",
     content: [
+      // --- CRITICAL RULES (top of prompt for primacy) ---
       (() => {
         const {minWords, maxWords} = getTargetWordRange(desiredDurationSeconds, language);
 
@@ -1669,33 +1710,41 @@ const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourc
       `Title: ${title}`,
       `Target duration: around ${desiredDurationSeconds || 100} seconds.`,
       `Create a video plan with ${MIN_SCENES} to ${MAX_SCENES} scenes.`,
+      "Each searchQuery must use ASCII English only: plain Latin letters, numbers, spaces, and hyphens. Never mix Portuguese, Chinese, emojis, or non-Latin characters.",
+      "Each searchQuery must avoid readable text inside devices, interfaces, signs, emails, buttons, documents, or alerts. Never write phrases like 'Access Denied', 'Update Now', 'error message', headlines, notification copy, button labels, links on screen, or form fields. Describe blank panels, warning icons, abstract alerts, or lock symbols instead.",
+      "Never include literal button labels or quoted UI words like 'Update', 'Login', 'Verify', or 'Allow' in any searchQuery.",
+      "Set cta to an empty string.",
+      "Do not start scenes with filler connectors like 'Só que', 'Mas olha só', 'Ao mesmo tempo', 'Agora' or 'Na prática'.",
+
+      // --- NARRATION STRUCTURE ---
       "Each narration line must be concrete, easy to understand, visually specific, and long enough for the full script to reach the target duration.",
       "Each narration line must describe something a viewer can SEE in an illustration: a person, an object, an action, a place. Avoid abstract concepts without visual anchors.",
       "Use short sentences. One sentence per visual idea. If a sentence has two ideas, split it into two scenes.",
       "Each narration line must be a complete spoken sentence.",
       "The narration must flow like one continuous voiceover without forced transition crutches.",
-      "Across scenes, vary the environment, object, and staging. Do not repeat the same person-at-desk setup unless the topic truly stays in the same moment.",
-      "Across the whole storyboard, avoid more than three desk-or-laptop scenes total unless the title is specifically about office workflow.",
-      "Do not start scenes with filler connectors like 'Só que', 'Mas olha só', 'Ao mesmo tempo', 'Agora' or 'Na prática'.",
       "Never start a scene with loose continuation fragments like 'ou um menu', 'e uma tela', 'mas um detalhe' or any other incomplete phrase.",
       "Avoid robotic list formatting. Make it sound like one person is guiding the viewer from one idea to the next.",
-      "Avoid abstract visuals.",
       "Use a strong practical hook, but do not include CTA in the narration.",
-      "Set cta to an empty string.",
-      "Do not inject unrelated generic tech filler such as translation, summaries, research, app workflows, organization features, AI capabilities, or browser habits unless the title or source material is explicitly about that subtopic.",
+
+      // --- VISUAL STYLE ---
       "The visual style is minimalist stick figure illustration: simple line art characters with thin black lines, large round heads, and flat colored icons or objects. Think corporate memphis meets stick figure animation on a white background.",
       "Prefer visual concepts that work as simple flat illustrations: a person at a desk, someone holding a phone, a laptop with a blank screen, coins or money symbols, a simple house, a clock, arrows pointing up, a lightbulb, simple icons floating around a character.",
       "If the title is about future technology or complex topics, translate each idea into a simple everyday scene that can be drawn as a stick figure illustration.",
       "Prefer people interacting with objects, simple devices, everyday scenes, workspaces, homes, and iconic symbols that convey the idea visually.",
-      "Do not create icon-only scenes. Every scene must feel like a real illustrated moment with a person, object, action, or physical setting, not a floating symbol on empty space.",
+
+      // --- SCENE VARIETY ---
+      "Across scenes, vary the environment, object, and staging. Do not repeat the same person-at-desk setup unless the topic truly stays in the same moment.",
+      "Across the whole storyboard, avoid more than three desk-or-laptop scenes total unless the title is specifically about office workflow.",
       "Search queries must vary camera viewpoint and staging across scenes when possible: mix wider scene context, device-led shots, hands interacting with objects, side views, over-the-shoulder views, and top-down desk moments instead of repeating the same straight-on framing.",
       "Avoid scene plans that become one abstract category per scene.",
+      "Do not inject unrelated generic tech filler such as translation, summaries, research, app workflows, organization features, AI capabilities, or browser habits unless the title or source material is explicitly about that subtopic.",
+
+      // --- CRITICAL RULES (end of prompt for recency) ---
+      "Avoid abstract visuals.",
+      "Do not create icon-only scenes. Every scene must feel like a real illustrated moment with a person, object, action, or physical setting, not a floating symbol on empty space.",
       "NEVER use charts, graphs, bar charts, pie charts, line graphs, or any data visualization as a scene visual. Instead, translate statistics and percentages into human scenes: '70% of companies' becomes 'seven out of ten people holding phones', '3x faster' becomes 'a person finishing work early and leaving the office'. Use people, objects, and actions to represent numbers.",
       "NEVER use calendar visuals with specific dates, years, or numbers written on them. Instead show a person circling a date, a hand flipping pages, or a clock to represent time passing.",
       "Each searchQuery must be a vivid, detailed English description of the exact image to generate, as if describing it to an illustrator: include subject, action, setting, and mood. Example: 'stick figure character at a messy desk surrounded by floating paper icons and clock symbols, overwhelmed expression, flat white background'.",
-      "Each searchQuery must use ASCII English only: plain Latin letters, numbers, spaces, and hyphens. Never mix Portuguese, Chinese, emojis, or non-Latin characters.",
-      "Each searchQuery must avoid readable text inside devices, interfaces, signs, emails, buttons, documents, or alerts. Never write phrases like 'Access Denied', 'Update Now', 'error message', headlines, notification copy, button labels, links on screen, or form fields. Describe blank panels, warning icons, abstract alerts, or lock symbols instead.",
-      "Never include literal button labels or quoted UI words like 'Update', 'Login', 'Verify', or 'Allow' in any searchQuery.",
       "For every scene, the narration and searchQuery should refer to the same exact visual idea.",
       "Hashtags should be relevant and platform-native.",
       ...buildCreativeContextLines({sourceText, scriptGuidance}),

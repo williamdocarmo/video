@@ -3,6 +3,7 @@ import {mkdir, readFile, rm, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import * as speechSdk from "microsoft-cognitiveservices-speech-sdk";
+import {sleep} from "../../../shared/utils.mjs";
 import {sanitizeTimedWordsForAudio} from "./alignment-utils.mjs";
 import {getGcpAccessToken, resolveGcpConfig} from "./gcp-config.mjs";
 
@@ -293,62 +294,64 @@ const synthesizeWithElevenLabs = async ({
   let timeOffsetSeconds = 0;
   let charOffset = 0;
 
-  for (let index = 0; index < chunks.length; index += 1) {
-    const payload = {
-      text: chunks[index],
-      model_id: modelId,
-      voice_settings: voiceSettings
-    };
-
-    if (languageCode) {
-      payload.language_code = languageCode;
-    }
-
-    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps?output_format=mp3_44100_128`, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "xi-api-key": apiKey
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      throw new Error(`ElevenLabs respondeu ${response.status}`);
-    }
-
-    const responseBody = await response.json();
-    const partPath = path.join(tempDir, `part-${String(index).padStart(2, "0")}.mp3`);
-    partPaths.push(partPath);
-    await writeFile(partPath, Buffer.from(String(responseBody.audio_base64 || ""), "base64"));
-
-    timedWords.push(
-      ...buildTimedWordsFromAlignment({
+  try {
+    for (let index = 0; index < chunks.length; index += 1) {
+      const payload = {
         text: chunks[index],
-        alignment: responseBody.alignment,
-        timeOffsetSeconds,
-        charOffset
-      })
-    );
+        model_id: modelId,
+        voice_settings: voiceSettings
+      };
 
-    timeOffsetSeconds += getAudioDurationSeconds(partPath);
-    charOffset += chunks[index].length;
+      if (languageCode) {
+        payload.language_code = languageCode;
+      }
+
+      const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps?output_format=mp3_44100_128`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "xi-api-key": apiKey
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        throw new Error(`ElevenLabs respondeu ${response.status}`);
+      }
+
+      const responseBody = await response.json();
+      const partPath = path.join(tempDir, `part-${String(index).padStart(2, "0")}.mp3`);
+      partPaths.push(partPath);
+      await writeFile(partPath, Buffer.from(String(responseBody.audio_base64 || ""), "base64"));
+
+      timedWords.push(
+        ...buildTimedWordsFromAlignment({
+          text: chunks[index],
+          alignment: responseBody.alignment,
+          timeOffsetSeconds,
+          charOffset
+        })
+      );
+
+      timeOffsetSeconds += getAudioDurationSeconds(partPath);
+      charOffset += chunks[index].length;
+    }
+
+    if (partPaths.length === 1) {
+      await writeFile(mp3Path, await readFile(partPaths[0]));
+    } else {
+      const concatFile = path.join(tempDir, "concat.txt");
+      const concatBody = partPaths.map((partPath) => `file '${partPath.replace(/'/g, "'\\''")}'`).join("\n");
+
+      await writeFile(concatFile, `${concatBody}\n`);
+      run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatFile, "-ar", "44100", "-ac", "2", "-b:a", "192k", mp3Path]);
+      await rm(concatFile);
+    }
+  } finally {
+    await Promise.all(partPaths.map((partPath) => rm(partPath, {force: true}))).catch(() => {}); /* best-effort temp cleanup */
+    await rm(tempDir, {recursive: true, force: true}).catch(() => {}); /* best-effort temp cleanup */
   }
-
-  if (partPaths.length === 1) {
-    await writeFile(mp3Path, await readFile(partPaths[0]));
-  } else {
-    const concatFile = path.join(tempDir, "concat.txt");
-    const concatBody = partPaths.map((partPath) => `file '${partPath.replace(/'/g, "'\\''")}'`).join("\n");
-
-    await writeFile(concatFile, `${concatBody}\n`);
-    run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatFile, "-ar", "44100", "-ac", "2", "-b:a", "192k", mp3Path]);
-    await rm(concatFile);
-  }
-
-  await Promise.all(partPaths.map((partPath) => rm(partPath, {force: true})));
-  await rm(tempDir, {recursive: true, force: true});
 
   return {
     provider: "elevenlabs",
@@ -592,43 +595,44 @@ const synthesizeWithAzureSpeech = async ({
 
   await mkdir(tempDir, {recursive: true});
 
-  for (let index = 0; index < chunkEntries.length; index += 1) {
-    const chunk = chunkEntries[index];
-    const partPath = path.join(tempDir, `part-${String(index).padStart(2, "0")}.mp3`);
-    partPaths.push(partPath);
+  try {
+    for (let index = 0; index < chunkEntries.length; index += 1) {
+      const chunk = chunkEntries[index];
+      const partPath = path.join(tempDir, `part-${String(index).padStart(2, "0")}.mp3`);
+      partPaths.push(partPath);
 
-    const {boundaries} = await synthesizeAzureChunkToFile({
-      text: chunk.text,
-      outputPath: partPath,
-      apiKey,
-      region,
-      endpoint,
-      voiceName,
-      languageCode
-    });
-
-    timedWords.push(
-      ...buildTimedWordsFromAzureBoundaries({
+      const {boundaries} = await synthesizeAzureChunkToFile({
         text: chunk.text,
-        boundaries,
-        timeOffsetSeconds,
-        charOffset: chunk.startChar
-      })
-    );
+        outputPath: partPath,
+        apiKey,
+        region,
+        endpoint,
+        voiceName,
+        languageCode
+      });
 
-    timeOffsetSeconds += getAudioDurationSeconds(partPath);
-  }
+      timedWords.push(
+        ...buildTimedWordsFromAzureBoundaries({
+          text: chunk.text,
+          boundaries,
+          timeOffsetSeconds,
+          charOffset: chunk.startChar
+        })
+      );
 
-  if (partPaths.length === 1) {
-    run("ffmpeg", ["-y", "-i", partPaths[0], "-ar", "44100", "-ac", "2", "-b:a", "192k", mp3Path]);
-  } else {
-    const concatFile = path.join(tempDir, "concat.txt");
-    const concatBody = partPaths.map((partPath) => `file '${partPath.replace(/'/g, "'\\''")}'`).join("\n");
+      timeOffsetSeconds += getAudioDurationSeconds(partPath);
+    }
 
-    await writeFile(concatFile, `${concatBody}\n`);
-    run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatFile, "-ar", "44100", "-ac", "2", "-b:a", "192k", mp3Path]);
-    await rm(concatFile, {force: true});
-  }
+    if (partPaths.length === 1) {
+      run("ffmpeg", ["-y", "-i", partPaths[0], "-ar", "44100", "-ac", "2", "-b:a", "192k", mp3Path]);
+    } else {
+      const concatFile = path.join(tempDir, "concat.txt");
+      const concatBody = partPaths.map((partPath) => `file '${partPath.replace(/'/g, "'\\''")}'`).join("\n");
+
+      await writeFile(concatFile, `${concatBody}\n`);
+      run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatFile, "-ar", "44100", "-ac", "2", "-b:a", "192k", mp3Path]);
+      await rm(concatFile, {force: true});
+    }
 
   let sanitizedTimedWords = reattachPunctuation(sanitizeCharOffsets(timedWords, text), text);
   const audioDurationSeconds = getAudioDurationSeconds(mp3Path);
@@ -749,8 +753,10 @@ const synthesizeWithAzureSpeech = async ({
     }
   }
 
-  await Promise.all(partPaths.map((partPath) => rm(partPath, {force: true})));
-  await rm(tempDir, {recursive: true, force: true});
+  } finally {
+    await Promise.all(partPaths.map((partPath) => rm(partPath, {force: true}))).catch(() => {}); /* best-effort temp cleanup */
+    await rm(tempDir, {recursive: true, force: true}).catch(() => {}); /* best-effort temp cleanup */
+  }
 
   return {
     provider: "azure-speech",
@@ -765,7 +771,6 @@ const parsePcmRate = (mimeType) => {
   return Number.parseInt(match?.[1] || "24000", 10);
 };
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ALLOW_ESTIMATED_TIMED_WORDS =
   String(process.env.ALLOW_ESTIMATED_TIMED_WORDS || "true").trim().toLowerCase() === "true";
 let whisperAvailability;
@@ -897,31 +902,66 @@ const extractTimedWordsWithStt = async ({mp3Path, languageCode = "pt-BR"}) => {
     const tmpReqPath = part.flacPath.replace(".flac", ".req.json");
     await writeFile(tmpReqPath, payloadJson);
 
-    try {
-      const response = await fetch("https://speech.googleapis.com/v1/speech:recognize", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`
-        },
-        body: payloadJson
-      });
+    const STT_MAX_ATTEMPTS = 4;
+    const STT_BACKOFF_BASE_MS = 4000;
+    const STT_BACKOFF_MAX_MS = 60000;
+    let sttResponse = null;
+    let sttLastError = null;
 
-      if (!response.ok) {
-        const errorSnippet = await extractResponseErrorSnippet(response);
+    try {
+      for (let sttAttempt = 0; sttAttempt < STT_MAX_ATTEMPTS; sttAttempt += 1) {
+        try {
+          sttResponse = await fetch("https://speech.googleapis.com/v1/speech:recognize", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`
+            },
+            body: payloadJson
+          });
+
+          if (sttResponse.ok) {
+            break;
+          }
+
+          const isRetryable = [429, 500, 502, 503, 504].includes(sttResponse.status);
+          if (!isRetryable || sttAttempt >= STT_MAX_ATTEMPTS - 1) {
+            break;
+          }
+
+          const backoffMs = Math.min(STT_BACKOFF_MAX_MS, STT_BACKOFF_BASE_MS * 2 ** sttAttempt + Math.floor(Math.random() * 2000));
+          process.stderr.write(
+            `STT part offset=${part.offset} respondeu ${sttResponse.status}; nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
+          );
+          await sleep(backoffMs);
+        } catch (fetchError) {
+          sttLastError = fetchError;
+          if (sttAttempt >= STT_MAX_ATTEMPTS - 1) {
+            break;
+          }
+          const backoffMs = Math.min(STT_BACKOFF_MAX_MS, STT_BACKOFF_BASE_MS * 2 ** sttAttempt + Math.floor(Math.random() * 2000));
+          process.stderr.write(
+            `STT part offset=${part.offset} falhou (${String(fetchError?.message || fetchError)}); nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
+          );
+          await sleep(backoffMs);
+        }
+      }
+
+      if (!sttResponse?.ok) {
+        const errorSnippet = sttResponse ? await extractResponseErrorSnippet(sttResponse) : "";
         const authHint =
-          response.status === 401 || response.status === 403
+          sttResponse && (sttResponse.status === 401 || sttResponse.status === 403)
             ? " Verifica se a service account tem acesso ao Google Cloud Speech-to-Text."
             : "";
         process.stderr.write(
-          `STT part offset=${part.offset} falhou: ${response.status}` +
+          `STT part offset=${part.offset} falhou: ${sttResponse?.status ?? "network error"}` +
           (errorSnippet ? ` (${errorSnippet})` : "") +
           `${authHint}\n`
         );
         continue;
       }
 
-      const payload = await response.json();
+      const payload = await sttResponse.json();
 
       for (const result of (payload?.results || [])) {
         for (const word of (result?.alternatives?.[0]?.words || [])) {
@@ -1903,141 +1943,141 @@ const synthesizeWithGoogleGeminiTts = async ({
 
   await mkdir(tempDir, {recursive: true});
 
-  for (let index = 0; index < chunks.length; index += 1) {
-    const promptText =
-      languageCode === "pt-BR"
-        ? `Fale em português do Brasil, ${stylePrompt || "com voz masculina natural, segura e calorosa"}, dizendo exatamente este texto: ${chunks[index]}`
-        : `Speak naturally${stylePrompt ? `, ${stylePrompt}` : ""}, saying exactly this text: ${chunks[index]}`;
+  try {
+    for (let index = 0; index < chunks.length; index += 1) {
+      const promptText =
+        languageCode === "pt-BR"
+          ? `Fale em português do Brasil, ${stylePrompt || "com voz masculina natural, segura e calorosa"}, dizendo exatamente este texto: ${chunks[index]}`
+          : `Speak naturally${stylePrompt ? `, ${stylePrompt}` : ""}, saying exactly this text: ${chunks[index]}`;
 
-    const requestUrl =
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-    const requestBody = {
-      contents: [
-        {
-          parts: [
-            {
-              text: promptText
-            }
-          ]
-        }
-      ],
-      generationConfig: withThinkingDisabled({
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName
+      const requestUrl =
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const requestBody = {
+        contents: [
+          {
+            parts: [
+              {
+                text: promptText
+              }
+            ]
+          }
+        ],
+        generationConfig: withThinkingDisabled({
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName
+              }
             }
           }
+        })
+      };
+
+      let response = null;
+      let lastStatus = null;
+
+      for (let attempt = 0; attempt < GOOGLE_TTS_MAX_ATTEMPTS; attempt += 1) {
+        try {
+          response = await fetch(requestUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(requestBody)
+          });
+          lastStatus = response.status;
+
+          if (response.ok) {
+            break;
+          }
+
+          if (!isRetryableGoogleTtsStatus(response.status) || attempt >= GOOGLE_TTS_MAX_ATTEMPTS - 1) {
+            break;
+          }
+
+          const backoffMs = computeGoogleRetryDelayMs(response, attempt);
+          process.stderr.write(
+            `Aviso: Google Gemini TTS devolveu ${response.status} no chunk ${index + 1}/${chunks.length}; nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
+          );
+          await sleep(backoffMs);
+        } catch (error) {
+          lastStatus = null;
+
+          if (attempt >= GOOGLE_TTS_MAX_ATTEMPTS - 1 || !isRetryableCloudGeminiTtsError(error)) {
+            throw error;
+          }
+
+          const backoffMs = computeGoogleRetryDelayMs(null, attempt);
+          process.stderr.write(
+            `Aviso: Google Gemini TTS falhou no chunk ${index + 1}/${chunks.length} (${String(error?.message || error)}); nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
+          );
+          await sleep(backoffMs);
         }
-      })
-    };
+      }
 
-    let response = null;
-    let lastStatus = null;
+      if (!response?.ok) {
+        throw new Error(`Google Gemini TTS respondeu ${lastStatus ?? response?.status ?? "erro desconhecido"}`);
+      }
 
-    for (let attempt = 0; attempt < GOOGLE_TTS_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        response = await fetch(requestUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(requestBody)
-        });
-        lastStatus = response.status;
+      const payload = await response.json();
+      const audioPart = payload?.candidates?.[0]?.content?.parts?.find((part) => part?.inlineData?.data);
 
-        if (response.ok) {
-          break;
-        }
+      if (!audioPart?.inlineData?.data) {
+        throw new Error("Google Gemini TTS nao devolveu audio.");
+      }
 
-        if (!isRetryableGoogleTtsStatus(response.status) || attempt >= GOOGLE_TTS_MAX_ATTEMPTS - 1) {
-          break;
-        }
+      const mimeType = String(audioPart.inlineData.mimeType || "audio/L16;codec=pcm;rate=24000");
+      const sampleRate = parsePcmRate(mimeType);
+      const tempRawPath = path.join(tempDir, `part-${String(index).padStart(2, "0")}.raw`);
+      const partMp3Path = path.join(tempDir, `part-${String(index).padStart(2, "0")}.mp3`);
+      partPaths.push(partMp3Path);
+      modelVersion = payload?.modelVersion ?? modelVersion;
 
-        const backoffMs = computeGoogleRetryDelayMs(response, attempt);
-        process.stderr.write(
-          `Aviso: Google Gemini TTS devolveu ${response.status} no chunk ${index + 1}/${chunks.length}; nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
-        );
-        await sleep(backoffMs);
-      } catch (error) {
-        lastStatus = null;
+      usageMetadata.promptTokenCount += Number(payload?.usageMetadata?.promptTokenCount ?? 0);
+      usageMetadata.candidatesTokenCount += Number(payload?.usageMetadata?.candidatesTokenCount ?? 0);
+      usageMetadata.totalTokenCount += Number(payload?.usageMetadata?.totalTokenCount ?? 0);
 
-        if (attempt >= GOOGLE_TTS_MAX_ATTEMPTS - 1 || !isRetryableCloudGeminiTtsError(error)) {
-          throw error;
-        }
+      await writeFile(tempRawPath, Buffer.from(audioPart.inlineData.data, "base64"));
+      run("ffmpeg", [
+        "-y",
+        "-f",
+        "s16le",
+        "-ar",
+        String(sampleRate),
+        "-ac",
+        "1",
+        "-i",
+        tempRawPath,
+        "-vn",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-b:a",
+        "192k",
+        partMp3Path
+      ]);
+      await rm(tempRawPath, {force: true});
 
-        const backoffMs = computeGoogleRetryDelayMs(null, attempt);
-        process.stderr.write(
-          `Aviso: Google Gemini TTS falhou no chunk ${index + 1}/${chunks.length} (${String(error?.message || error)}); nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
-        );
-        await sleep(backoffMs);
+      if (index < chunks.length - 1 && GOOGLE_TTS_INTER_REQUEST_MS > 0) {
+        await sleep(GOOGLE_TTS_INTER_REQUEST_MS);
       }
     }
 
-    if (!response?.ok) {
-      throw new Error(`Google Gemini TTS respondeu ${lastStatus ?? response?.status ?? "erro desconhecido"}`);
+    if (partPaths.length === 1) {
+      await writeFile(mp3Path, await readFile(partPaths[0]));
+    } else {
+      const concatFile = path.join(tempDir, "concat.txt");
+      const concatBody = partPaths.map((partPath) => `file '${partPath.replace(/'/g, "'\\''")}'`).join("\n");
+      await writeFile(concatFile, `${concatBody}\n`);
+      run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatFile, "-ar", "44100", "-ac", "2", "-b:a", "192k", mp3Path]);
+      await rm(concatFile, {force: true});
     }
-
-    const payload = await response.json();
-    const audioPart = payload?.candidates?.[0]?.content?.parts?.find((part) => part?.inlineData?.data);
-
-    if (!audioPart?.inlineData?.data) {
-      throw new Error("Google Gemini TTS nao devolveu audio.");
-    }
-
-    const mimeType = String(audioPart.inlineData.mimeType || "audio/L16;codec=pcm;rate=24000");
-    const sampleRate = parsePcmRate(mimeType);
-    const tempRawPath = path.join(tempDir, `part-${String(index).padStart(2, "0")}.raw`);
-    const partMp3Path = path.join(tempDir, `part-${String(index).padStart(2, "0")}.mp3`);
-    partPaths.push(partMp3Path);
-    modelVersion = payload?.modelVersion ?? modelVersion;
-
-    usageMetadata.promptTokenCount += Number(payload?.usageMetadata?.promptTokenCount ?? 0);
-    usageMetadata.candidatesTokenCount += Number(payload?.usageMetadata?.candidatesTokenCount ?? 0);
-    usageMetadata.totalTokenCount += Number(payload?.usageMetadata?.totalTokenCount ?? 0);
-
-    await writeFile(tempRawPath, Buffer.from(audioPart.inlineData.data, "base64"));
-    run("ffmpeg", [
-      "-y",
-      "-f",
-      "s16le",
-      "-ar",
-      String(sampleRate),
-      "-ac",
-      "1",
-      "-i",
-      tempRawPath,
-      "-vn",
-      "-ar",
-      "44100",
-      "-ac",
-      "2",
-      "-b:a",
-      "192k",
-      partMp3Path
-    ]);
-    await rm(tempRawPath, {force: true});
-
-    if (index < chunks.length - 1 && GOOGLE_TTS_INTER_REQUEST_MS > 0) {
-      await sleep(GOOGLE_TTS_INTER_REQUEST_MS);
-    }
+  } finally {
+    await Promise.all(partPaths.map((partPath) => rm(partPath, {force: true}))).catch(() => {}); /* best-effort temp cleanup */
+    await rm(tempDir, {recursive: true, force: true}).catch(() => {}); /* best-effort temp cleanup */
   }
-
-  if (partPaths.length === 1) {
-    await writeFile(mp3Path, await readFile(partPaths[0]));
-  } else {
-    // Re-encode instead of -c copy to avoid MP3 frame padding artifacts at chunk boundaries
-    // that create micro-silences and confuse STT word timing at junction points
-    const concatFile = path.join(tempDir, "concat.txt");
-    const concatBody = partPaths.map((partPath) => `file '${partPath.replace(/'/g, "'\\''")}'`).join("\n");
-    await writeFile(concatFile, `${concatBody}\n`);
-    run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatFile, "-ar", "44100", "-ac", "2", "-b:a", "192k", mp3Path]);
-    await rm(concatFile, {force: true});
-  }
-
-  await Promise.all(partPaths.map((partPath) => rm(partPath, {force: true})));
-  await rm(tempDir, {recursive: true, force: true});
 
   // Compress long inter-sentence silences in the generated audio.
   // Gemini TTS often inserts ~0.9-1.0s pauses between sentences; we cap them
@@ -2082,54 +2122,55 @@ const synthesizeWithCloudTtsChirp3 = async ({
 
   await mkdir(tempDir, {recursive: true});
 
-  for (let index = 0; index < chunks.length; index += 1) {
-    const response = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-        "x-goog-user-project": gcpConfig.projectId
-      },
-      body: JSON.stringify({
-        input: {text: chunks[index]},
-        voice: {languageCode, name: voiceName},
-        audioConfig: {audioEncoding: "MP3", sampleRateHertz: 44100}
-      })
-    });
+  try {
+    for (let index = 0; index < chunks.length; index += 1) {
+      const response = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+          "x-goog-user-project": gcpConfig.projectId
+        },
+        body: JSON.stringify({
+          input: {text: chunks[index]},
+          voice: {languageCode, name: voiceName},
+          audioConfig: {audioEncoding: "MP3", sampleRateHertz: 44100}
+        })
+      });
 
-    if (!response.ok) {
-      const errorSnippet = await extractResponseErrorSnippet(response);
-      throw new Error(`Cloud TTS respondeu ${response.status}${errorSnippet ? ` (${errorSnippet})` : ""}`);
+      if (!response.ok) {
+        const errorSnippet = await extractResponseErrorSnippet(response);
+        throw new Error(`Cloud TTS respondeu ${response.status}${errorSnippet ? ` (${errorSnippet})` : ""}`);
+      }
+
+      const payload = await response.json();
+
+      if (!payload?.audioContent) {
+        throw new Error("Cloud TTS Chirp3 nao devolveu audio.");
+      }
+
+      const partPath = path.join(tempDir, `part-${String(index).padStart(2, "0")}.mp3`);
+      partPaths.push(partPath);
+      await writeFile(partPath, Buffer.from(payload.audioContent, "base64"));
+
+      if (index < chunks.length - 1 && CLOUD_GEMINI_TTS_INTER_REQUEST_MS > 0) {
+        await sleep(CLOUD_GEMINI_TTS_INTER_REQUEST_MS);
+      }
     }
 
-    const payload = await response.json();
-
-    if (!payload?.audioContent) {
-      throw new Error("Cloud TTS Chirp3 nao devolveu audio.");
+    if (partPaths.length === 1) {
+      await writeFile(mp3Path, await readFile(partPaths[0]));
+    } else {
+      const concatFile = path.join(tempDir, "concat.txt");
+      const concatBody = partPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n");
+      await writeFile(concatFile, `${concatBody}\n`);
+      run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatFile, "-ar", "44100", "-ac", "2", "-b:a", "192k", mp3Path]);
+      await rm(concatFile, {force: true});
     }
-
-    const partPath = path.join(tempDir, `part-${String(index).padStart(2, "0")}.mp3`);
-    partPaths.push(partPath);
-    await writeFile(partPath, Buffer.from(payload.audioContent, "base64"));
-
-    if (index < chunks.length - 1 && CLOUD_GEMINI_TTS_INTER_REQUEST_MS > 0) {
-      await sleep(CLOUD_GEMINI_TTS_INTER_REQUEST_MS);
-    }
+  } finally {
+    await Promise.all(partPaths.map((p) => rm(p, {force: true}))).catch(() => {}); /* best-effort temp cleanup */
+    await rm(tempDir, {recursive: true, force: true}).catch(() => {}); /* best-effort temp cleanup */
   }
-
-  if (partPaths.length === 1) {
-    await writeFile(mp3Path, await readFile(partPaths[0]));
-  } else {
-    // Re-encode instead of -c copy to avoid MP3 frame padding artifacts at chunk boundaries
-    const concatFile = path.join(tempDir, "concat.txt");
-    const concatBody = partPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n");
-    await writeFile(concatFile, `${concatBody}\n`);
-    run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatFile, "-ar", "44100", "-ac", "2", "-b:a", "192k", mp3Path]);
-    await rm(concatFile, {force: true});
-  }
-
-  await Promise.all(partPaths.map((p) => rm(p, {force: true})));
-  await rm(tempDir, {recursive: true, force: true});
 
   const maxSilence = Number.parseFloat(process.env.TTS_MAX_SILENCE_SECONDS || "0.4");
   if (maxSilence > 0) {
@@ -2170,99 +2211,101 @@ const synthesizeWithCloudTtsGemini = async ({
 
   await mkdir(tempDir, {recursive: true});
 
-  for (let index = 0; index < chunks.length; index += 1) {
-    let response = null;
-    let lastError = null;
+  try {
+    for (let index = 0; index < chunks.length; index += 1) {
+      let response = null;
+      let lastError = null;
 
-    for (let attempt = 0; attempt < CLOUD_GEMINI_TTS_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        response = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${accessToken}`,
-            "x-goog-user-project": gcpConfig.projectId
-          },
-          body: JSON.stringify({
-            input: {
-              prompt:
-                stylePrompt ||
-                (languageCode === "pt-BR"
-                  ? "Fale em português do Brasil com voz masculina firme, natural, segura e envolvente."
-                  : "Speak with a natural, confident and engaging delivery."),
-              text: chunks[index]
+      for (let attempt = 0; attempt < CLOUD_GEMINI_TTS_MAX_ATTEMPTS; attempt += 1) {
+        try {
+          response = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+              "x-goog-user-project": gcpConfig.projectId
             },
-            voice: {
-              languageCode,
-              name: voiceName,
-              model_name: model
-            },
-            audioConfig: {
-              audioEncoding: "MP3",
-              sampleRateHertz: 44100
-            }
-          })
-        });
+            body: JSON.stringify({
+              input: {
+                prompt:
+                  stylePrompt ||
+                  (languageCode === "pt-BR"
+                    ? "Fale em português do Brasil com voz masculina firme, natural, segura e envolvente."
+                    : "Speak with a natural, confident and engaging delivery."),
+                text: chunks[index]
+              },
+              voice: {
+                languageCode,
+                name: voiceName,
+                model_name: model
+              },
+              audioConfig: {
+                audioEncoding: "MP3",
+                sampleRateHertz: 44100
+              }
+            })
+          });
 
-        if (response.ok) {
-          break;
+          if (response.ok) {
+            break;
+          }
+
+          const retryable = isRetryableGoogleTtsStatus(response.status);
+          lastError = new Error(`Cloud Gemini TTS respondeu ${response.status}`);
+          if (!retryable || attempt >= CLOUD_GEMINI_TTS_MAX_ATTEMPTS - 1) {
+            break;
+          }
+
+          const backoffMs = computeCloudGeminiRetryDelayMs(response, attempt);
+          process.stderr.write(
+            `Aviso: Cloud Gemini TTS respondeu ${response.status} no chunk ${index + 1}/${chunks.length}; nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
+          );
+          await sleep(backoffMs);
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          if (attempt >= CLOUD_GEMINI_TTS_MAX_ATTEMPTS - 1 || !isRetryableCloudGeminiTtsError(lastError)) {
+            throw lastError;
+          }
+
+          const backoffMs = computeCloudGeminiRetryDelayMs(null, attempt);
+          process.stderr.write(
+            `Aviso: Cloud Gemini TTS falhou no chunk ${index + 1}/${chunks.length} (${lastError.message}); nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
+          );
+          await sleep(backoffMs);
         }
-
-        const retryable = isRetryableGoogleTtsStatus(response.status);
-        lastError = new Error(`Cloud Gemini TTS respondeu ${response.status}`);
-        if (!retryable || attempt >= CLOUD_GEMINI_TTS_MAX_ATTEMPTS - 1) {
-          break;
-        }
-
-        const backoffMs = computeCloudGeminiRetryDelayMs(response, attempt);
-        process.stderr.write(
-          `Aviso: Cloud Gemini TTS respondeu ${response.status} no chunk ${index + 1}/${chunks.length}; nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
-        );
-        await sleep(backoffMs);
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        if (attempt >= CLOUD_GEMINI_TTS_MAX_ATTEMPTS - 1 || !isRetryableCloudGeminiTtsError(lastError)) {
-          throw lastError;
-        }
-
-        const backoffMs = computeCloudGeminiRetryDelayMs(null, attempt);
-        process.stderr.write(
-          `Aviso: Cloud Gemini TTS falhou no chunk ${index + 1}/${chunks.length} (${lastError.message}); nova tentativa em ${Math.round(backoffMs / 1000)}s.\n`
-        );
-        await sleep(backoffMs);
       }
+
+      if (!response?.ok) {
+        const errorSnippet = response ? await extractResponseErrorSnippet(response) : "";
+        throw new Error(
+          lastError?.message ||
+            `Cloud Gemini TTS respondeu ${response?.status ?? "erro desconhecido"}${errorSnippet ? ` (${errorSnippet})` : ""}`
+        );
+      }
+
+      const payload = await response.json();
+      if (!payload?.audioContent) {
+        throw new Error("Cloud Gemini TTS nao devolveu audio.");
+      }
+
+      const partPath = path.join(tempDir, `part-${String(index).padStart(2, "0")}.mp3`);
+      partPaths.push(partPath);
+      await writeFile(partPath, Buffer.from(payload.audioContent, "base64"));
     }
 
-    if (!response?.ok) {
-      const errorSnippet = response ? await extractResponseErrorSnippet(response) : "";
-      throw new Error(
-        lastError?.message ||
-          `Cloud Gemini TTS respondeu ${response?.status ?? "erro desconhecido"}${errorSnippet ? ` (${errorSnippet})` : ""}`
-      );
+    if (partPaths.length === 1) {
+      await writeFile(mp3Path, await readFile(partPaths[0]));
+    } else {
+      const concatFile = path.join(tempDir, "concat.txt");
+      const concatBody = partPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n");
+      await writeFile(concatFile, `${concatBody}\n`);
+      run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatFile, "-ar", "44100", "-ac", "2", "-b:a", "192k", mp3Path]);
+      await rm(concatFile, {force: true});
     }
-
-    const payload = await response.json();
-    if (!payload?.audioContent) {
-      throw new Error("Cloud Gemini TTS nao devolveu audio.");
-    }
-
-    const partPath = path.join(tempDir, `part-${String(index).padStart(2, "0")}.mp3`);
-    partPaths.push(partPath);
-    await writeFile(partPath, Buffer.from(payload.audioContent, "base64"));
+  } finally {
+    await Promise.all(partPaths.map((p) => rm(p, {force: true}))).catch(() => {}); /* best-effort temp cleanup */
+    await rm(tempDir, {recursive: true, force: true}).catch(() => {}); /* best-effort temp cleanup */
   }
-
-  if (partPaths.length === 1) {
-    await writeFile(mp3Path, await readFile(partPaths[0]));
-  } else {
-    const concatFile = path.join(tempDir, "concat.txt");
-    const concatBody = partPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n");
-    await writeFile(concatFile, `${concatBody}\n`);
-    run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatFile, "-ar", "44100", "-ac", "2", "-b:a", "192k", mp3Path]);
-    await rm(concatFile, {force: true});
-  }
-
-  await Promise.all(partPaths.map((p) => rm(p, {force: true})));
-  await rm(tempDir, {recursive: true, force: true});
 
   const maxSilence = Number.parseFloat(process.env.TTS_MAX_SILENCE_SECONDS || "0.4");
   if (maxSilence > 0) {

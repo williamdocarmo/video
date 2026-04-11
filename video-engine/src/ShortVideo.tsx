@@ -63,15 +63,13 @@ const KaraokeCaption = ({
     }
   }
 
-  const entranceOpacity = interpolate(frame, [caption.startFrame, caption.startFrame + 5], [0, 1], {
+  // Captions are time-critical; keep them readable immediately instead of fading in over ~200ms.
+  const entranceOpacity = 1;
+  const entranceTranslateY = interpolate(frame, [caption.startFrame, caption.startFrame + 2], [4, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp"
   });
-  const entranceTranslateY = interpolate(frame, [caption.startFrame, caption.startFrame + 6], [10, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp"
-  });
-  const entranceScale = interpolate(frame, [caption.startFrame, caption.startFrame + 6], [0.985, 1], {
+  const entranceScale = interpolate(frame, [caption.startFrame, caption.startFrame + 2], [0.995, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp"
   });
@@ -369,7 +367,7 @@ export const ShortVideo = ({
   const isWide = width > height;
   const layoutPadding = isWide ? 56 : 72;
   const captionBottomSpacer = isWide ? 0 : 180;
-  const introVisibility = interpolate(frame, [0, 12, 84, 114], [0, 1, 1, 0], {
+  const introVisibility = interpolate(frame, [0, 10, 30, 48], [0, 1, 1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp"
   });

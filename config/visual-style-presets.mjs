@@ -1,3 +1,27 @@
+/**
+ * @typedef {object} VisualStylePreset
+ * @property {string} id - Preset key (e.g. "claude", "kiro").
+ * @property {string} label - Human-readable name.
+ * @property {string} description - Short description of the visual style.
+ * @property {boolean} expectStickman - Whether the style uses stick figure characters.
+ * @property {string} characterPrompt - Prompt fragment describing the character.
+ * @property {string} stylePrompt - Main style prompt for image generation.
+ * @property {string} styleLockPrompt - Prompt enforcing cross-scene consistency.
+ * @property {string} compositionRules - Composition constraints.
+ * @property {string[]} backgroundDirectives - Background guidelines.
+ * @property {string} defaultLighting - Lighting description.
+ * @property {string} plannerGuidance - Guidance for the visual planner LLM.
+ * @property {string} humanGuidance - How humans should be rendered.
+ * @property {string} anatomyGuidance - Anatomy constraints.
+ * @property {string} scaleGuidance - Scale/framing constraints.
+ * @property {string[]} attemptDirectives - Progressive retry directives for image generation.
+ * @property {string} refinePromptLead - Prefix for prompt refinement.
+ * @property {string} refinePromptFinish - Suffix for prompt refinement.
+ * @property {string} auditStyleDescription - Description used by Gemini Vision audit.
+ * @property {string[]} [negativePromptRemovals] - Terms to remove from negative prompts.
+ */
+
+/** @type {Record<string, VisualStylePreset>} */
 export const VISUAL_STYLE_PRESETS = {
   claude: {
     id: "claude",
@@ -396,6 +420,11 @@ export const VISUAL_STYLE_PRESETS = {
 
 export const DEFAULT_VISUAL_STYLE_PRESET = "claude";
 
+/**
+ * Resolve a visual style preset by ID, falling back to the default.
+ * @param {string} value - Preset ID.
+ * @returns {VisualStylePreset}
+ */
 export const resolveVisualStylePreset = (value) => {
   const normalized = String(value || DEFAULT_VISUAL_STYLE_PRESET).trim().toLowerCase();
   return VISUAL_STYLE_PRESETS[normalized] || VISUAL_STYLE_PRESETS[DEFAULT_VISUAL_STYLE_PRESET];

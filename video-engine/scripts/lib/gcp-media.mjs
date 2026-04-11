@@ -1,9 +1,5 @@
+import {normalizeText} from "../../../shared/utils.mjs";
 import {getGcpAccessToken, resolveGcpConfig} from "./gcp-config.mjs";
-
-const normalizeText = (value) =>
-  String(value ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
 
 const withThinkingDisabled = (config = {}) => ({
   ...config,
@@ -40,6 +36,7 @@ export const callVertexMultimodalText = async ({
   model,
   textParts = [],
   inlineDataParts = [],
+  systemInstruction,
   generationConfig
 }) => {
   const config = resolveGcpConfig(process.env);
@@ -65,6 +62,10 @@ export const callVertexMultimodalText = async ({
     contents: [{role: "user", parts}]
   };
 
+  if (systemInstruction) {
+    body.systemInstruction = {parts: [{text: systemInstruction}]};
+  }
+
   if (generationConfig && Object.keys(generationConfig).length > 0) {
     body.generationConfig = withThinkingDisabled(generationConfig);
   }
@@ -78,7 +79,7 @@ export const callVertexMultimodalText = async ({
     body: JSON.stringify(body)
   });
 
-  const payload = await response.json().catch(() => ({}));
+  const payload = await response.json().catch(() => ({})); /* expected: response body may not be valid JSON */
 
   if (!response.ok) {
     const details = normalizeText(JSON.stringify(payload));
@@ -133,7 +134,7 @@ export const generateVertexImage = async ({
       body: JSON.stringify(body)
     });
 
-    const payload = await response.json().catch(() => ({}));
+    const payload = await response.json().catch(() => ({})); /* expected: response body may not be valid JSON */
 
     if (!response.ok) {
       const details = normalizeText(JSON.stringify(payload));
@@ -187,7 +188,7 @@ export const generateVertexImage = async ({
     body: JSON.stringify(body)
   });
 
-  const payload = await response.json().catch(() => ({}));
+  const payload = await response.json().catch(() => ({})); /* expected: response body may not be valid JSON */
 
   if (!response.ok) {
     const details = normalizeText(JSON.stringify(payload));
