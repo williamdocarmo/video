@@ -152,7 +152,7 @@ Root cause summary:
 - retries fixed semantics but could worsen run cohesion
 - QA emphasized scene validity more than run-level identity
 
-Remote MVP mitigation already applied in `scripts/generate-flux2-assets.mjs`:
+Remote MVP mitigation already applied in `scripts/generate-google-assets.mjs`:
 
 - stable run-level visual direction
 - directive normalization

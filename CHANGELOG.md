@@ -2,6 +2,56 @@
 
 ---
 
+## [2026-04-12] Pipeline rename flux2→google, image quality improvements, bug fixes
+
+### 1) Resumo Executivo
+
+Renomeação completa do pipeline de geração de imagens de "flux2" para "google" (Vertex AI Imagen / Gemini Image), remoção de 7 ficheiros de documentação obsoletos, melhorias de qualidade de imagem (anatomia, ritmo visual, hooks), e correção de dois bugs em produção (data passada no publicador e resolução de voice IDs do ElevenLabs).
+
+### 2) O que foi implementado
+
+**Renomeação de scripts**
+- `scripts/generate-flux2-assets.mjs` → `scripts/generate-google-assets.mjs`
+- `scripts/test-generate-flux2-rules.mjs` → `scripts/test-generate-google-rules.mjs`
+- Callers atualizados: `web/lib/job-execution.mjs`, `scripts/foiumaideia.mjs`, `package.json`
+- Provider interno corrigido: `"flux2-local"` → `"google-imagen"` (3 ocorrências em generate-google-assets.mjs)
+
+**Documentação limpa**
+- Removidos 7 ficheiros obsoletos: `CHANGELOG-QUALITY.md`, `STYLE-CONSISTENCY-PLAN.md`, `STYLE-CONSISTENCY-STORIES.md`, `eleven.md`, `relatorio.md`, `docs/bathroom-motion-prompts.md`, `docs/ui-ux-redesign-task.md`
+- `README.md`, `PRODUCTION-RUNBOOK.md`, `top.md`, `video.md` corrigidos: imagens geradas via Vertex AI Imagen / Gemini 2.5 Flash Image (API remota), não local MLX/FLUX2
+
+**Qualidade de imagem**
+- Instrução de anatomia positiva adicionada em `generate-google-assets.mjs`: cenas com personagens agora instruem o modelo a mostrar exactamente uma pessoa com dois braços e duas mãos (estilos normais), ou exactamente um stick figure (estilo stickman)
+- `GOOGLE_IMAGE_MODEL=imagen-4.0-generate-001` definido como default no `.env` (Imagen 4 Full)
+- `FLUX2_RENDER_RETRY_COUNT=5` aumentado no `.env`
+
+**Qualidade de storyboard (`video-engine/scripts/lib/llm-provider.mjs`)**
+- Regra de hook: exige hook provocativo com padrões de exemplo
+- Regra de título único: proíbe títulos de cena duplicados
+- Ritmo visual: alternância de tipos de cena (humano → simbólico → institucional → humano)
+- Review pass: novos checks 10d (ritmo visual) e 10e (títulos únicos)
+- QA detector: check `duplicate_scene_titles` com auto-repair
+
+**Correções de bugs**
+- `web/server.mjs`: quando `scheduleAt` armazenado está no passado, usa `now` em vez de enviar data passada ao agendador.online (corrige erro "A data não pode ser no passado")
+- `web/server.mjs`: voice IDs do ElevenLabs (alfanuméricos, 10+ chars) são agora aceites directamente, sem cair no fallback de voz Google Cloud
+
+### 3) Arquivos afetados
+
+| Arquivo | Mudança |
+|---------|---------|
+| `scripts/generate-google-assets.mjs` | Renomeado de generate-flux2-assets.mjs; provider "flux2-local"→"google-imagen"; instrução de anatomia adicionada |
+| `scripts/test-generate-google-rules.mjs` | Renomeado de test-generate-flux2-rules.mjs |
+| `scripts/foiumaideia.mjs` | Referência ao script renomeado |
+| `web/lib/job-execution.mjs` | Referência ao script renomeado |
+| `package.json` | Scripts npm actualizados |
+| `video-engine/scripts/lib/llm-provider.mjs` | Regras de hook, título único, ritmo visual, QA detector |
+| `web/server.mjs` | Bug fix data passada; bug fix ElevenLabs voice ID |
+| `README.md`, `PRODUCTION-RUNBOOK.md`, `top.md`, `video.md` | Descrição do pipeline corrigida |
+| 7 ficheiros `.md` | Removidos (obsoletos) |
+
+---
+
 ## [2026-04-12] Integração ElevenLabs TTS
 
 ### 1) Resumo Executivo

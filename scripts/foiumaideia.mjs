@@ -696,7 +696,7 @@ const run = async () => {
       const assetScript =
         generationMode === "text-to-video"
           ? path.join(wrapperRoot, "scripts", "generate-text-to-video-assets.mjs")
-          : path.join(wrapperRoot, "scripts", "generate-flux2-assets.mjs");
+          : path.join(wrapperRoot, "scripts", "generate-google-assets.mjs");
       const assetArgs =
         generationMode === "text-to-video"
           ? [

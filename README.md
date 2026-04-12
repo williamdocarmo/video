@@ -35,7 +35,7 @@ Node.js HTTP server (:3210, 0.0.0.0)
   │
   ├─ scripts/
   │   ├─ foiumaideia.mjs ......... orquestrador principal (preview → assets → pipeline → export)
-  │   ├─ generate-flux2-assets.mjs geração visual (Gemini planner + Vertex Imagen + ffmpeg)
+  │   ├─ generate-google-assets.mjs geração visual (Gemini planner + Vertex Imagen + ffmpeg, via API remota)
   │   └─ lib/
   │       ├─ scene-spec.mjs ...... compilador de especificação de cena (câmera, pose, afeto, risco)
   │       └─ scene-failure-taxonomy.mjs classificador de falhas visuais (12 categorias)
@@ -63,7 +63,7 @@ Node.js HTTP server (:3210, 0.0.0.0)
   │   │   └─ types.ts ............ tipos TypeScript (Scene, CaptionChunk, ShortVideoProps)
   │   ├─ runs/{slug}/ ............ storyboard, voiceover, render-props, reports, QA
   │   ├─ public/runs/{slug}/ ..... áudio, vídeo, thumbnails servidos pelo Remotion
-  │   ├─ assets/envato/{slug}/ ... scene-XX.mp4, _flux2_images/, manifests
+  │   ├─ assets/envato/{slug}/ ... scene-XX.mp4, imagens geradas (PNG), manifests
   │   └─ out/{slug}.mp4 .......... saída final do Remotion
   │
   ├─ config/
@@ -101,12 +101,12 @@ Node.js HTTP server (:3210, 0.0.0.0)
    ├─ PREVIEW: spawn make-plan1-video.mjs --preview-only
    │   └─ Gera storyboard + QA → retorna para aprovação na UI
    │
-   ├─ ASSETS: spawn generate-flux2-assets.mjs
+   ├─ ASSETS: spawn generate-google-assets.mjs
    │   ├─ Gemini planeja shots por cena (visual-plan.json)
-   │   ├─ Vertex Imagen gera PNGs por segmento
+   │   ├─ Vertex AI Imagen / Gemini 2.5 Flash Image gera PNGs via API remota
    │   ├─ Gemini Vision audita cada imagem
    │   ├─ Retry com directivas progressivas se falhar
-   │   └─ ffmpeg converte PNGs → scene-XX.mp4
+   │   └─ ffmpeg converte PNGs → scene-XX.mp4 (local, leve)
    │
    └─ HEAVY: spawn make-plan1-video.mjs (pipeline completo)
        │
@@ -131,8 +131,8 @@ Node.js HTTP server (:3210, 0.0.0.0)
        │
        ├─ 5d. Assets visuais
        │   ├─ Resolve clips locais (assets/envato/{slug}/)
-       │   ├─ Auditoria visual local (Python script)
-       │   └─ Resolve ilustrações Flux2 (single-shot → still image)
+       │   ├─ Auditoria visual (Gemini Vision via API)
+       │   └─ Resolve ilustrações geradas (Vertex Imagen / Gemini Image → still image)
        │
        ├─ 5e. Timeline (timings.mjs)
        │   ├─ buildTimeline() → frames por cena + legendas karaoke
@@ -163,7 +163,7 @@ O sistema suporta 4 providers de TTS, selecionáveis via `TTS_PROVIDER` env var 
 | Cloud Gemini TTS | `google-gemini-tts` / `gemini-tts` / `gemini` | Via Google Cloud STT | `extractTimedWordsFromAudio()` | Provider padrão. Modelo `gemini-2.5-flash-tts`. Fallback para Chirp3-HD se transiente. |
 | Cloud TTS Chirp3-HD | `gcloud` / `google` / `auto` | Via Google Cloud STT | `extractTimedWordsFromAudio()` | Fallback do Gemini TTS. Vozes `pt-BR-Chirp3-HD-*`. |
 | ElevenLabs | `elevenlabs` | Nativo (`/with-timestamps`) | `extractTimedWordsFromAudio()` se alignment vazio | Alignment character-level convertido para timedWords via `buildTimedWordsFromAlignment()`. |
-| Azure Speech | `azure` | Nativo (word boundaries) | `extractTimedWordsFromAudio()` se cobertura incompleta | `microsoft-cognitiveservices-speech-sdk`. Padding de cauda automático. |
+| Azure Speech | `azure` | Nativo (word boundaries) | `extractTimedWordsFromAudio()` se cobertura incompleta | `microsoft-cognitiveservices-speech-sdk`. Padding de cauda automático. **Opcional — não configurado por padrão (requer `AZURE_SPEECH_KEY`).** |
 
 ### Fluxo de timestamps (timedWords)
 
@@ -408,7 +408,9 @@ Middlewares: HSTS (1 ano), X-Frame-Options DENY, X-Content-Type-Options nosniff,
 
 ---
 
-## Asset pipeline visual (generate-flux2-assets.mjs)
+## Asset pipeline visual (generate-google-assets.mjs)
+
+Geração de imagens é **remota via API Google** (Vertex AI Imagen ou Gemini 2.5 Flash Image). Não há geração local de imagens; o processamento pesado local é o Remotion (render Chromium) e o ffmpeg.
 
 ```
 1. Gemini planeja shots por cena → visual-plan.json
@@ -416,7 +418,7 @@ Middlewares: HSTS (1 ano), X-Frame-Options DENY, X-Content-Type-Options nosniff,
    ├─ Prompt detalhado por segmento
    └─ Guiado pelo visual style preset selecionado
 
-2. Vertex Imagen gera PNGs por segmento
+2. Vertex AI Imagen / Gemini 2.5 Flash Image gera PNGs por segmento (via API remota)
    ├─ Modelo: imagen-4.0-fast-generate-001 (padrão) ou gemini-2.5-flash-image
    ├─ Resolução: 1024×1024 (escalado para 1080×1920 ou 1920×1080)
    └─ Retry com directivas progressivas (até 6 tentativas)
@@ -539,8 +541,8 @@ node video-engine/scripts/rerender-voice.mjs --slug MEU-SLUG --reuse-existing-au
 # Validar run existente
 node video-engine/scripts/validate-run.mjs --slug MEU-SLUG
 
-# Gerar apenas assets visuais
-node scripts/generate-flux2-assets.mjs --slug MEU-SLUG
+# Gerar apenas assets visuais (imagens via Vertex AI / Gemini API)
+node scripts/generate-google-assets.mjs --slug MEU-SLUG
 
 # Reiniciar serviço
 systemctl restart codex-video-ui.service

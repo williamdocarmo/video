@@ -17,7 +17,8 @@ There are two different realities:
 2. **Production system**
    - real deploy repo: `/root/repo/videos-flux2` on host `192.168.1.70`
    - UI/API: `video.vamostestar.online`
-   - stack: Node web app + Google/Gemini/Imagen pipeline + Remotion + publish integrations
+   - stack: Node web app + Google/Gemini/Imagen pipeline (all image generation is **remote API** — Vertex AI Imagen or Gemini 2.5 Flash Image) + Remotion render (local, Chromium) + ffmpeg (local, lightweight) + publish integrations
+   - the heavy local work is **Remotion** (Chromium compositing) and **ffmpeg** — not image generation
 
 Do not use this file as the source of truth for the production host internals. Use [PRODUCTION-RUNBOOK.md](/Users/guardian/Documents/repo/video/PRODUCTION-RUNBOOK.md) for that.
 
@@ -90,7 +91,7 @@ Current production channel expectations:
 
 ## Visual Consistency Status
 
-The production image pipeline had a real style-drift problem:
+The production image pipeline (remote Vertex AI Imagen / Gemini 2.5 Flash Image via API) had a real style-drift problem:
 
 - style was prompt decoration, not run contract
 - retries could break style while fixing semantics

@@ -172,7 +172,7 @@ Notes:
    The code sets `GOOGLE_IMAGE_MIN_INTERVAL_MS` to **35,000 ms** and also adds `GOOGLE_IMAGE_REQUEST_PAUSE_MS` of **2,500 ms**. For 10 images, this can burn roughly **6 minutes of wall time** before counting model latency. That does not increase Vertex AI API spend, but it does increase paid compute time if the worker runs on Cloud Run Jobs or a dedicated VM.
 
 2. The CLI image-model default is inconsistent with the web-app default.
-   The web app defaults to **Imagen 4 Fast**, but `scripts/generate-flux2-assets.mjs` still defaults to **`gemini-2.5-flash-image`** if `GOOGLE_IMAGE_MODEL` is not set. Manual or ad hoc CLI runs can therefore cost nearly **2x more per image** than UI-triggered runs.
+   The web app defaults to **Imagen 4 Fast**, but `scripts/generate-google-assets.mjs` still defaults to **`gemini-2.5-flash-image`** if `GOOGLE_IMAGE_MODEL` is not set. Manual or ad hoc CLI runs can therefore cost nearly **2x more per image** than UI-triggered runs.
 
 3. Retry artifacts are not cleaned aggressively.
    The current workspace contains **70 leftover `__attempt-*` PNG files** across generated asset directories. That is direct evidence of retry waste and unnecessary retained storage.
@@ -330,9 +330,9 @@ Repo evidence used for modeling:
 - `video-engine/scripts/lib/gcp-media.mjs`
 - `video-engine/scripts/make-plan1-video.mjs`
 - `video-engine/scripts/rerender-voice.mjs`
-- `scripts/generate-flux2-assets.mjs`
+- `scripts/generate-google-assets.mjs`
 - `video-engine/runs/*/orchestration-report.json`
 - `video-engine/runs/*/voiceover.json`
 - `video-engine/runs/*/render-props.json`
-- `video-engine/assets/envato/*/flux2-manifest.json`
+- `video-engine/assets/envato/*/google-assets-manifest.json`
 - `video-engine/assets/envato/*/gemini-usage.json`

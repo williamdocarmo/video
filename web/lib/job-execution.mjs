@@ -310,7 +310,7 @@ export const createSceneRegenerateJobCommand = (job) => {
   const generationMode = job.input.generationMode || DEFAULT_GENERATION_MODE;
   const assetScript = generationMode === "text-to-video"
     ? path.join(projectRoot, "scripts", "generate-text-to-video-assets.mjs")
-    : path.join(projectRoot, "scripts", "generate-flux2-assets.mjs");
+    : path.join(projectRoot, "scripts", "generate-google-assets.mjs");
   const args = generationMode === "text-to-video"
     ? [
         assetScript,

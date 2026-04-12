@@ -1698,7 +1698,8 @@ const main = async () => {
           provider: llmProvider,
           cwd: projectRoot,
           sourceText,
-          scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || ""
+          scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || "",
+          imageStyleHint: process.env.IMAGE_STYLE_PRESET || ""
         })
       });
     } catch (error) {

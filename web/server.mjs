@@ -579,7 +579,7 @@ const getChannelPreset = (value) => channelPresets[value] || channelPresets.foiu
 const getDefaultVoiceForLanguage = (language) =>
   String(language || "").startsWith("en") ? DEFAULT_ENGLISH_VOICE : DEFAULT_VOICE;
 
-const resolveRequestedVoice = ({selectedVoice, customVoice, language, channelPreset = null}) => {
+const resolveRequestedVoice = ({selectedVoice, customVoice, language, channelPreset = null, audioProvider = "gcp"}) => {
   const requestedVoice = String(selectedVoice || "").trim();
   const trimmedCustomVoice = String(customVoice || "").trim();
   const channelVoice =
@@ -592,6 +592,11 @@ const resolveRequestedVoice = ({selectedVoice, customVoice, language, channelPre
   }
 
   if (VALID_VOICES.includes(requestedVoice)) {
+    return requestedVoice;
+  }
+
+  // Accept ElevenLabs voice IDs (alphanumeric 20-char IDs) when provider is elevenlabs
+  if (audioProvider === "elevenlabs" && requestedVoice.length >= 10 && /^[a-zA-Z0-9]+$/.test(requestedVoice)) {
     return requestedVoice;
   }
 
@@ -1892,11 +1897,13 @@ const handleGenerateRequest = async (request, response) => {
   const channelPreset = getChannelPreset(channel.value);
   const imageModel = resolveImageModel(body.imageModel, resolveImageModel(baseChildEnv.GOOGLE_IMAGE_MODEL || baseChildEnv.IMAGE_MODEL));
   const generationMode = resolveGenerationMode(body.generationMode, resolveGenerationMode(baseChildEnv.GENERATION_MODE));
+  const audioProvider = body.audioProvider === "elevenlabs" ? "elevenlabs" : "gcp";
   const voice = resolveRequestedVoice({
     selectedVoice,
     customVoice,
     language,
-    channelPreset
+    channelPreset,
+    audioProvider
   });
 
   if (!voice) {
@@ -1905,7 +1912,6 @@ const handleGenerateRequest = async (request, response) => {
   }
 
   const targetSeconds = getProfileTargetSeconds(outputProfile.id, Number(body.targetSeconds));
-  const audioProvider = body.audioProvider === "elevenlabs" ? "elevenlabs" : "gcp";
   const slug = buildUniqueGenerateSlug(title);
   const caseId = createId();
   const sourceTextFile = sourceText ? path.join(inputsDir, `${createId()}-source.txt`) : "";
@@ -2121,7 +2127,8 @@ const handleRerenderRequest = async (request, response) => {
     selectedVoice,
     customVoice,
     language,
-    channelPreset: null
+    channelPreset: null,
+    audioProvider: body.audioProvider === "elevenlabs" ? "elevenlabs" : "gcp"
   });
 
   if (!voice) {
@@ -2308,9 +2315,13 @@ const buildAutoRerenderJob = (sourceJob) => {
   const renderProps = readJsonSyncIfExists(paths.renderPropsPath);
   const language = VALID_LANGUAGES.includes(sourceJob.input?.language) ? sourceJob.input.language : "pt-BR";
   const tone = VALID_TONES.includes(sourceJob.input?.tone) ? sourceJob.input.tone : "natural_clean";
-  const voice = VALID_VOICES.includes(String(sourceJob.input?.voice || "").trim())
-    ? String(sourceJob.input.voice).trim()
-    : getDefaultVoiceForLanguage(language);
+  const voice = resolveRequestedVoice({
+    selectedVoice: String(sourceJob.input?.voice || "").trim(),
+    customVoice: "",
+    language,
+    channelPreset: null,
+    audioProvider: sourceJob.input?.audioProvider === "elevenlabs" ? "elevenlabs" : "gcp"
+  });
   const outputProfile = resolveOutputProfileConfig(
     sourceJob.input?.outputProfile ||
     renderProps?.outputProfile ||
@@ -2358,7 +2369,13 @@ const buildRetryFromStoryboardGenerateJob = async (sourceJob) => {
   const language = VALID_LANGUAGES.includes(sourceJob.input?.language) ? sourceJob.input.language : "pt-BR";
   const tone = VALID_TONES.includes(sourceJob.input?.tone) ? sourceJob.input.tone : (channelPreset.tone || "natural_clean");
   const selectedVoice = String(sourceJob.input?.voice || DEFAULT_VOICE).trim();
-  const voice = VALID_VOICES.includes(selectedVoice) ? selectedVoice : DEFAULT_VOICE;
+  const voice = resolveRequestedVoice({
+    selectedVoice,
+    customVoice: "",
+    language,
+    channelPreset,
+    audioProvider: sourceJob.input?.audioProvider === "elevenlabs" ? "elevenlabs" : "gcp"
+  });
   const generationMode = resolveGenerationMode(
     sourceJob.input?.generationMode,
     resolveGenerationMode(baseChildEnv.GENERATION_MODE)
@@ -2567,7 +2584,14 @@ const handleVideoRefazerRequest = async (request, response) => {
   const language = VALID_LANGUAGES.includes(body.language) ? body.language : (previousJob?.input?.language || "pt-BR");
   const tone = VALID_TONES.includes(body.tone) ? body.tone : (previousJob?.input?.tone || channelPreset.tone || "natural_clean");
   const selectedVoice = String(body.voice || previousJob?.input?.voice || DEFAULT_VOICE).trim();
-  const voice = VALID_VOICES.includes(selectedVoice) ? selectedVoice : DEFAULT_VOICE;
+  const approveAudioProvider = (body.audioProvider || previousJob?.input?.audioProvider) === "elevenlabs" ? "elevenlabs" : "gcp";
+  const voice = resolveRequestedVoice({
+    selectedVoice,
+    customVoice: "",
+    language,
+    channelPreset,
+    audioProvider: approveAudioProvider
+  });
   const imageModel = resolveImageModel(
     body.imageModel || previousJob?.input?.imageModel,
     resolveImageModel(baseChildEnv.GOOGLE_IMAGE_MODEL || baseChildEnv.IMAGE_MODEL)
@@ -2692,7 +2716,13 @@ const handleRegenerateMissingSceneRequest = async (request, response) => {
   const language = VALID_LANGUAGES.includes(sourceJob.input?.language) ? sourceJob.input.language : "pt-BR";
   const tone = VALID_TONES.includes(sourceJob.input?.tone) ? sourceJob.input.tone : (channelPreset.tone || "natural_clean");
   const selectedVoice = String(sourceJob.input?.voice || DEFAULT_VOICE).trim();
-  const voice = VALID_VOICES.includes(selectedVoice) ? selectedVoice : DEFAULT_VOICE;
+  const voice = resolveRequestedVoice({
+    selectedVoice,
+    customVoice: "",
+    language,
+    channelPreset,
+    audioProvider: sourceJob.input?.audioProvider === "elevenlabs" ? "elevenlabs" : "gcp"
+  });
   const sceneJob = {
     id: createId(),
     type: "scene-regenerate",
@@ -2854,7 +2884,11 @@ const handleVideoPublishRequest = async (request, response) => {
     .map((item) => String(item || "").trim().toUpperCase())
     .filter(Boolean);
   const safePlatforms = platforms.length > 0 ? platforms : ["FB", "IG", "YT"];
-  const publishDate = String(body.scheduleAt || meta?.scheduleAt || "").trim() || new Date().toISOString();
+  const rawPublishDate = String(body.scheduleAt || meta?.scheduleAt || "").trim() || new Date().toISOString();
+  // If the resolved date is in the past (e.g. stale metadata from an old job), publish immediately instead
+  const publishDate = new Date(rawPublishDate).getTime() <= Date.now()
+    ? new Date().toISOString()
+    : rawPublishDate;
   const isDraft = body.isDraft === true;
   const token = await getAgendadorToken(publishChannel.value);
   const accountsPayload = await agendadorFetch("/social-accounts", {token});

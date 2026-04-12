@@ -634,6 +634,19 @@ const getStoryboardIssueList = ({storyboard, title}) => {
     }));
   }
 
+  // Duplicate scene titles
+  const sceneTitles = (storyboard.scenes || []).map((s) => (s.title || "").trim().toLowerCase());
+  const duplicateTitles = sceneTitles.filter((t, i) => t && sceneTitles.indexOf(t) !== i);
+  if (duplicateTitles.length > 0) {
+    const unique = [...new Set(duplicateTitles)];
+    issues.push(createQaFinding({
+      code: "duplicate_scene_titles",
+      severity: "issue",
+      message: `Duplicate scene titles found: ${unique.map((t) => `"${t}"`).join(", ")}. Every scene title must be unique — rename them to reflect their distinct beats.`,
+      details: {duplicateTitles: unique}
+    }));
+  }
+
   return issues;
 };
 
@@ -1691,7 +1704,102 @@ const buildFormatGuidance = () =>
     ? `Create a ${OUTPUT_FORMAT_DESCRIPTION}. Keep scenes broader, let ideas breathe a little more, and avoid short-form wording like "shorts" or "vertical".`
     : `Create a ${OUTPUT_FORMAT_DESCRIPTION}. Keep the pacing punchy, concise, and optimized for short-form retention.`;
 
-const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourceText, scriptGuidance}) => [
+const buildVisualStyleGuidance = (imageStyleHint) => {
+  const hint = String(imageStyleHint || "").trim().toLowerCase();
+  if (!hint || hint === "claude" || hint === "kiro") {
+    return {
+      styleDescription: "minimalist stick figure illustration: simple line art characters with thin black lines, large round heads, and flat colored icons or objects. Think corporate memphis meets stick figure animation on a white background.",
+      preferredConcepts: "Prefer visual concepts that work as simple flat illustrations: a person at a desk, someone holding a phone, a laptop with a blank screen, coins or money symbols, a simple house, a clock, arrows pointing up, a lightbulb, simple icons floating around a character.",
+      complexTopicRule: "If the title is about future technology or complex topics, translate each idea into a simple everyday scene that can be drawn as a stick figure illustration.",
+      generalPreference: "Prefer people interacting with objects, simple devices, everyday scenes, workspaces, homes, and iconic symbols that convey the idea visually.",
+      searchQueryExample: "stick figure character at a messy desk surrounded by floating paper icons and clock symbols, overwhelmed expression, flat white background"
+    };
+  }
+  if (hint === "ink") {
+    return {
+      styleDescription: "editorial ink illustration with crisp black brushwork, strong contrast, graphic shadow masses, clean paper background, and controlled negative space. Think premium editorial magazine art with bold silhouettes.",
+      preferredConcepts: "Prefer visual concepts that work as bold ink illustrations: a person with confident silhouette, hands interacting with objects, strong figure-ground separation, dramatic ink shadow masses, and clean readable compositions.",
+      complexTopicRule: "If the title is about future technology or complex topics, translate each idea into a concrete human scene with bold ink rendering and strong visual contrast.",
+      generalPreference: "Prefer people with clear silhouettes, strong postures, crisp ink objects, and editorial framing with generous negative space.",
+      searchQueryExample: "editorial ink illustration of a person holding a solar panel with bold black brushwork, strong contrast, clean paper background, dramatic shadow masses, no text"
+    };
+  }
+  if (hint === "realistic_film") {
+    return {
+      styleDescription: "cinematic realistic film still with natural light, documentary realism, subtle color grading, real-world textures, and shallow depth of field. Think premium documentary photography.",
+      preferredConcepts: "Prefer visual concepts that work as realistic film stills: a real person at a desk, hands on a device, natural environments, believable textures, and grounded human moments.",
+      complexTopicRule: "If the title is about future technology or complex topics, translate each idea into a believable real-world scene with natural lighting and grounded human behavior.",
+      generalPreference: "Prefer realistic people in natural settings, real objects, documentary-style framing, and premium cinematic composition.",
+      searchQueryExample: "cinematic film still of a person installing solar panels on a rooftop, natural golden hour light, documentary realism, shallow depth of field, no text"
+    };
+  }
+  if (hint === "editorial_clean") {
+    return {
+      styleDescription: "clean editorial illustration with modern explainer art, crisp shapes, restrained palette, light neutral background, and high clarity. Think modern infographic meets editorial magazine art.",
+      preferredConcepts: "Prefer visual concepts that work as clean editorial illustrations: simplified human figures, clear object hierarchy, one proof visual per scene, and restrained color palette.",
+      complexTopicRule: "If the title is about future technology or complex topics, translate each idea into a clean editorial illustration with one clear focal subject and readable objects.",
+      generalPreference: "Prefer simplified editorial humans, crisp shapes, one main object or proof visual, and clean compositions with high readability.",
+      searchQueryExample: "clean editorial illustration of a person comparing two energy sources side by side, crisp shapes, restrained palette, light background, no text"
+    };
+  }
+  if (hint === "cartoon_3d") {
+    return {
+      styleDescription: "stylized 3D cartoon render with soft volumetric lighting, rounded shapes, clean materials, and a vibrant but controlled palette. Think Pixar-quality animated short frame.",
+      preferredConcepts: "Prefer visual concepts that work as 3D cartoon renders: rounded friendly characters, colorful props, charming actions, and clean staging like an animated film frame.",
+      complexTopicRule: "If the title is about future technology or complex topics, translate each idea into a charming 3D cartoon scene with friendly characters and readable props.",
+      generalPreference: "Prefer stylized 3D characters with expressive faces, rounded forms, clean materials, and polished animated-short composition.",
+      searchQueryExample: "stylized 3D cartoon render of a cheerful character holding a glowing solar panel on a rooftop, soft volumetric lighting, rounded forms, vibrant palette, no text"
+    };
+  }
+  if (hint === "punk") {
+    return {
+      styleDescription: "punk editorial poster illustration with raw collage energy, torn-paper layers, rough ink texture, bold black shapes, dirty off-white paper, and sharp red accents. Think rebellious street poster art.",
+      preferredConcepts: "Prefer visual concepts that work as punk poster compositions: one dominant hero subject, raw collage layers, bold shapes, aggressive framing, and immediate visual impact.",
+      complexTopicRule: "If the title is about future technology or complex topics, translate each idea into a rebellious punk poster frame with one dominant subject and raw editorial energy.",
+      generalPreference: "Prefer bold hero subjects, torn-edge collage textures, strong poster-like impact, and aggressive short-form compositions.",
+      searchQueryExample: "punk editorial poster of a giant solar panel crushing oil barrels, raw collage texture, torn paper layers, bold black shapes, sharp red accents, dirty paper background, no text"
+    };
+  }
+  if (hint === "editorial_line_green") {
+    return {
+      styleDescription: "black and white editorial line art illustration with subtle green accents, refined pen drawing, modern magazine look, crisp contour lines, and detailed environmental storytelling.",
+      preferredConcepts: "Prefer visual concepts that work as detailed line art: editorial humans in rich environments, practical room details, clear object hierarchy, and subtle green accent highlights.",
+      complexTopicRule: "If the title is about future technology or complex topics, translate each idea into a detailed line art scene with environmental storytelling and practical objects.",
+      generalPreference: "Prefer editorial line art humans with natural proportions, detailed lived-in environments, and crisp pen drawing with selective green accents.",
+      searchQueryExample: "editorial line art illustration of a person on a rooftop installing solar panels with detailed environment, crisp black contour lines, subtle green accents on the panels, no text"
+    };
+  }
+  if (hint === "urban_sketching") {
+    return {
+      styleDescription: "urban sketchbook illustration with ink line drawing, light watercolor wash, observational drawing feel, travel journal energy, and handmade imperfections.",
+      preferredConcepts: "Prefer visual concepts that work as urban sketches: hand-drawn scenes, loose ink lines, watercolor washes, observational everyday moments, and sketchbook texture.",
+      complexTopicRule: "If the title is about future technology or complex topics, translate each idea into a hand-drawn sketchbook scene with observational rhythm and watercolor energy.",
+      generalPreference: "Prefer hand-drawn sketchbook figures, lively ink lines, light watercolor washes, and observational compositions with paper texture.",
+      searchQueryExample: "urban sketchbook illustration of workers installing solar panels, lively ink lines, light watercolor wash, observational drawing feel, paper texture, no text"
+    };
+  }
+  if (hint === "time_split_bold") {
+    return {
+      styleDescription: "bold editorial comparison illustration with one dominant hero object, clear past-versus-present contrast, high-contrast shapes, controlled accent colors, and strong mobile-first composition.",
+      preferredConcepts: "Prefer visual concepts that work as bold comparison illustrations: one hero object dominating the frame, clear antique-versus-modern contrast, strong negative space, and immediate mobile readability.",
+      complexTopicRule: "If the title is about future technology or complex topics, translate each idea into a bold comparison frame with one hero object and clear past-versus-present visual contrast.",
+      generalPreference: "Prefer dominant hero objects, clear comparison beats, high-contrast editorial shapes, and bold mobile-first framing.",
+      searchQueryExample: "bold editorial comparison of a tiny coal power plant next to a massive modern solar farm, dominant hero object, clear past-versus-present contrast, high contrast, no text"
+    };
+  }
+  // fallback to stick figure
+  return {
+    styleDescription: "minimalist stick figure illustration: simple line art characters with thin black lines, large round heads, and flat colored icons or objects.",
+    preferredConcepts: "Prefer visual concepts that work as simple flat illustrations: a person at a desk, someone holding a phone, a laptop with a blank screen, coins or money symbols.",
+    complexTopicRule: "If the title is about future technology or complex topics, translate each idea into a simple everyday scene that can be drawn as a stick figure illustration.",
+    generalPreference: "Prefer people interacting with objects, simple devices, everyday scenes, workspaces, homes, and iconic symbols that convey the idea visually.",
+    searchQueryExample: "stick figure character at a messy desk surrounded by floating paper icons and clock symbols, overwhelmed expression, flat white background"
+  };
+};
+
+const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourceText, scriptGuidance, imageStyleHint}) => {
+  const visualStyle = buildVisualStyleGuidance(imageStyleHint);
+  return [
   {
     role: "system",
     content:
@@ -1725,14 +1833,17 @@ const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourc
       "Never start a scene with loose continuation fragments like 'ou um menu', 'e uma tela', 'mas um detalhe' or any other incomplete phrase.",
       "Avoid robotic list formatting. Make it sound like one person is guiding the viewer from one idea to the next.",
       "Use a strong practical hook, but do not include CTA in the narration.",
+      "The hook must be a sharp, provocative statement that creates immediate curiosity — never a generic intro or a question. Use a before-and-after contrast, a surprising reversal, or a bold accusation. Example patterns: 'X era uma piada... agora domina o planeta', 'Disseram que X nunca ia funcionar... estavam muito errados', 'X parecia impossível... até alguém provar o contrário'. The hook must make the viewer feel they will miss something important if they scroll away.",
 
       // --- VISUAL STYLE ---
-      "The visual style is minimalist stick figure illustration: simple line art characters with thin black lines, large round heads, and flat colored icons or objects. Think corporate memphis meets stick figure animation on a white background.",
-      "Prefer visual concepts that work as simple flat illustrations: a person at a desk, someone holding a phone, a laptop with a blank screen, coins or money symbols, a simple house, a clock, arrows pointing up, a lightbulb, simple icons floating around a character.",
-      "If the title is about future technology or complex topics, translate each idea into a simple everyday scene that can be drawn as a stick figure illustration.",
-      "Prefer people interacting with objects, simple devices, everyday scenes, workspaces, homes, and iconic symbols that convey the idea visually.",
+      `The visual style is ${visualStyle.styleDescription}`,
+      visualStyle.preferredConcepts,
+      visualStyle.complexTopicRule,
+      visualStyle.generalPreference,
 
       // --- SCENE VARIETY ---
+      "Every scene title must be unique. Never reuse the same title for two different scenes. If two scenes cover related beats, differentiate their titles clearly — for example, instead of two scenes called 'A Queda', use 'O Preço Antigo' and 'O Preço Hoje'.",
+      "Alternate scene types to create visual rhythm and dynamism. Follow a contrast pattern across scenes: human scene (person doing something) → symbolic scene (object or metaphor illustrating the point) → institutional/environmental scene (building, landscape, or wide context) → back to human. Never place three consecutive scenes of the same type. For example, avoid three scenes in a row showing a person at a desk — instead interleave with a symbolic shot (hand tossing old price tag in the trash) or an environmental shot (solar panels on rooftops across a neighbourhood).",
       "Across scenes, vary the environment, object, and staging. Do not repeat the same person-at-desk setup unless the topic truly stays in the same moment.",
       "Across the whole storyboard, avoid more than three desk-or-laptop scenes total unless the title is specifically about office workflow.",
       "Search queries must vary camera viewpoint and staging across scenes when possible: mix wider scene context, device-led shots, hands interacting with objects, side views, over-the-shoulder views, and top-down desk moments instead of repeating the same straight-on framing.",
@@ -1744,7 +1855,7 @@ const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourc
       "Do not create icon-only scenes. Every scene must feel like a real illustrated moment with a person, object, action, or physical setting, not a floating symbol on empty space.",
       "NEVER use charts, graphs, bar charts, pie charts, line graphs, or any data visualization as a scene visual. Instead, translate statistics and percentages into human scenes: '70% of companies' becomes 'seven out of ten people holding phones', '3x faster' becomes 'a person finishing work early and leaving the office'. Use people, objects, and actions to represent numbers.",
       "NEVER use calendar visuals with specific dates, years, or numbers written on them. Instead show a person circling a date, a hand flipping pages, or a clock to represent time passing.",
-      "Each searchQuery must be a vivid, detailed English description of the exact image to generate, as if describing it to an illustrator: include subject, action, setting, and mood. Example: 'stick figure character at a messy desk surrounded by floating paper icons and clock symbols, overwhelmed expression, flat white background'.",
+      `Each searchQuery must be a vivid, detailed English description of the exact image to generate, as if describing it to an illustrator: include subject, action, setting, and mood. Example: '${visualStyle.searchQueryExample}'.`,
       "For every scene, the narration and searchQuery should refer to the same exact visual idea.",
       "Hashtags should be relevant and platform-native.",
       ...buildCreativeContextLines({sourceText, scriptGuidance}),
@@ -1753,6 +1864,7 @@ const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourc
     ].join("\n")
   }
 ];
+};
 
 const buildReviewMessages = ({title, language, desiredDurationSeconds, storyboard, sourceText, scriptGuidance}) => [
   {
@@ -1788,9 +1900,11 @@ const buildReviewMessages = ({title, language, desiredDurationSeconds, storyboar
       "10. Replace hard-to-find visuals with concrete human scenes that imply the same idea.",
       "10b. Reduce repeated desk-laptop scenes. If several scenes use the same desk setup, rewrite some of them into phone, wallet, card, checkout, room, home, office, router, tablet, or hands-only object scenes.",
       "10c. Remove any unrelated generic tech filler such as translation, summaries, research, app workflows, organization features, AI capabilities, or browser habits unless the title or source material is explicitly about that subtopic.",
+      "10d. Ensure visual rhythm: alternate scene types across the storyboard — human scene (person doing something) → symbolic scene (object/metaphor) → institutional/environmental scene (building, landscape, wide context) → human. If three consecutive scenes are the same type, rewrite the middle one into a different type.",
+      "10e. Every scene title must be unique. If two scenes share the same title, rename them to reflect their distinct beats.",
       "11. NEVER use charts, graphs, bar charts, pie charts, line graphs, or data visualizations. Replace any statistics with human scenes: '70% of companies' becomes 'seven out of ten people holding phones', '3x faster' becomes 'a person finishing work early and leaving the office'.",
       "12. NEVER use calendar visuals with specific years or numbers. Show a person circling a date or a clock instead.",
-      "13. Every searchQuery must be a vivid, detailed English description of the exact image to illustrate: include subject, action, setting, and mood. Example: 'stick figure at a messy desk surrounded by floating paper icons and clock symbols, overwhelmed expression, flat white background'.",
+      "13. Every searchQuery must be a vivid, detailed English description of the exact image to illustrate: include subject, action, setting, and mood.",
       "14. Set cta to an empty string.",
       "15. Return the same JSON shape only.",
       ...buildCreativeContextLines({sourceText, scriptGuidance}),
@@ -1981,7 +2095,8 @@ export const generateStoryboard = async ({
   provider,
   cwd,
   sourceText = "",
-  scriptGuidance = ""
+  scriptGuidance = "",
+  imageStyleHint = ""
 }) => {
   const selectedProvider = resolveLlmProvider(provider);
 
@@ -1994,7 +2109,7 @@ export const generateStoryboard = async ({
       provider: selectedProvider,
       apiKey,
       model,
-      messages: buildGenerationMessages({title, language, desiredDurationSeconds, sourceText, scriptGuidance}),
+      messages: buildGenerationMessages({title, language, desiredDurationSeconds, sourceText, scriptGuidance, imageStyleHint}),
       schema: storyboardOutputSchema,
       cwd,
       usageContext: "storyboard-generate"

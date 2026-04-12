@@ -7,7 +7,7 @@ import {
   shotAllowsAbstractScreenContent,
   shotNeedsBlankDeviceScreen,
   shotNeedsStatusUiSignal
-} from "./generate-flux2-assets.mjs";
+} from "./generate-google-assets.mjs";
 
 const createShot = (overrides = {}) => ({
   coverageText: "",
