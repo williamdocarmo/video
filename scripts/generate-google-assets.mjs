@@ -2758,20 +2758,28 @@ const auditWithGeminiVision = async ({imagePath, visualGoal, narration, shot = n
   const base64 = imageBytes.toString("base64");
   const mimeType = imagePath.endsWith(".png") ? "image/png" : "image/jpeg";
 
+  // Strip quoted strings from visualGoal so the auditor doesn't check exact text content
+  // e.g. "speech bubble saying 'TOO WEAK'" → evaluates concept, not the literal words
+  const sanitizedGoal = String(visualGoal || "")
+    .replace(/'[^']{1,40}'/g, "[text]")
+    .replace(/"[^"]{1,40}"/g, "[text]")
+    .replace(/\b(saying|reading|labeled|text|caption|bubble|reads)\s+["""''][^"""'']{1,40}["""'']/gi, "$1 [text]");
+
   const prompt = [
     `You are a visual QA auditor for an automated video pipeline that uses a ${STYLE_AUDIT_DESCRIPTION}.`,
     `IMPORTANT: The intended art direction is ${STYLE_AUDIT_DESCRIPTION}. Treat that style as intentional, not as a defect.`,
     "",
-    `Scene visual goal: "${visualGoal}"`,
+    `Scene visual goal: "${sanitizedGoal}"`,
     `Scene narration: "${narration}"`,
     "",
     "Evaluate whether this image's CONCEPT and SUBJECT MATTER match the visual goal. Ignore the art style completely.",
+    "CRITICAL: The visual goal may reference specific words or text content — ignore those completely. Evaluate only whether the scene subject, action, and setting match the concept.",
     "Check ONLY for:",
     "- Completely wrong subject matter (e.g. scene about cooking but image shows a car)",
     "- Image is blank, corrupted, or unrecognizable",
     "- Impossible anatomy such as extra hands, extra arms, extra legs, duplicate heads, fused limbs, or 3 to 4 hands on one body",
     "- The main person is so tiny, distant, or reduced to a stray line that it does not read as a clear focal subject when the scene needs a person",
-    "- SKIP text checking entirely — text on screens, signs, or surfaces is handled by a separate OCR audit and is NOT your responsibility",
+    "- SKIP text checking entirely — text on screens, signs, speech bubbles, or surfaces is handled by a separate OCR audit and is NOT your responsibility",
     "",
     "Do NOT reject for:",
     `- ${STYLE_AUDIT_DESCRIPTION} instead of realistic people or realistic scenes (this IS the intended style)`,
@@ -2779,7 +2787,8 @@ const auditWithGeminiVision = async ({imagePath, visualGoal, narration, shot = n
     "- Flat colors, lack of shading, cartoon-like appearance, or line art style",
     "- Characters drawn as stick figures when the goal mentions 'woman', 'man', 'person' etc.",
     "- Minor detail differences or missing secondary elements",
-    "- Any text, letters, numbers, or writing on any surface (text is checked separately by OCR, not by this audit)",
+    "- Any text, letters, numbers, or writing on any surface — including speech bubbles, labels, signs, and screens (text is checked separately by OCR, not by this audit)",
+    "- Speech bubble content that differs from what the goal described — only the concept matters, not the exact words",
     ...buildGeminiVisionAuditGuardrails({shot}),
     ...(STYLE_IS_INK
       ? [

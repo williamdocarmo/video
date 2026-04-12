@@ -266,6 +266,13 @@
                       <button id="renderOnlyButton" type="button" class="button primary">Renderizar vídeo</button>
                       <button id="validateJobButton" type="button" class="button primary">Validar vídeo</button>
                     </div>
+                    <div id="regenerateScenePickerRow" class="field-row hidden">
+                      <label for="regenerateSceneInput" class="field-label">Regenerar cena específica</label>
+                      <div class="field-inline">
+                        <input type="number" id="regenerateSceneInput" min="1" max="30" placeholder="Nº" style="width:5rem">
+                        <button id="regenerateScenePickerButton" type="button" class="button secondary">Regenerar</button>
+                      </div>
+                    </div>
                     <details class="action-more">
                       <summary>Mais ações</summary>
                       <div class="action-more-content">
@@ -292,6 +299,14 @@
                 </div>
                 <div id="jobStepChecklist" class="pipeline-stepper"></div>
               </article>
+
+              <div id="jobSceneGallery" class="hidden">
+                <div class="section-head" style="margin-bottom:0">
+                  <h3 class="section-label" style="margin:0">Cenas geradas</h3>
+                  <button id="jobSceneGalleryToggle" type="button" class="button secondary" style="margin-left:auto">Mostrar</button>
+                </div>
+                <div id="jobSceneGalleryGrid" class="scene-gallery-grid hidden"></div>
+              </div>
 
               <div id="previewPanel" class="stack hidden">
                 <div class="button-row">
@@ -446,6 +461,14 @@
                 <div id="videoSceneLinks" class="link-row artifact-links"></div>
               </div>
 
+              <div id="sceneGallery" class="hidden">
+                <div class="section-head" style="margin-bottom:0">
+                  <h3 class="section-label" style="margin:0">Cenas geradas</h3>
+                  <button id="sceneGalleryToggle" type="button" class="button secondary" style="margin-left:auto">Mostrar</button>
+                </div>
+                <div id="sceneGalleryGrid" class="scene-gallery-grid hidden"></div>
+              </div>
+
               <div id="videoParamsCard" class="meta-card hidden">
                 <p class="meta-card-kicker">Parâmetros usados</p>
                 <div id="videoParamsGrid" class="meta-grid"></div>
@@ -533,6 +556,7 @@
                   <button id="saveVideoMetaButton" type="submit" class="button secondary">Salvar edição</button>
                   <button id="redoVideoButton" type="button" class="button secondary">Refazer</button>
                   <button id="publishVideoButton" type="button" class="button primary">Publicar agora no agenda.online</button>
+                  <button id="resetPublishButton" type="button" class="button secondary hidden">Publicar novamente</button>
                   <button id="openTikTokHelperButton" type="button" class="button secondary">TikTok Web</button>
                   <button id="deleteVideoButton" type="button" class="button danger">Deletar</button>
                 </div>

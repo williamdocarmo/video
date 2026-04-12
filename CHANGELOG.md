@@ -2,6 +2,30 @@
 
 ---
 
+## [2026-04-12b] UI autonomy features, image audit fix, model default update
+
+### Resumo
+Três novas features de autonomia no UI (republicar vídeo, regenerar cena específica, galeria de cenas), correção do Vision audit (falsos negativos por texto em speech bubbles), Imagen4 Full como padrão, e fix do publish mode para datas passadas.
+
+### O que foi implementado
+
+**UI — 3 novas features de autonomia**
+- **Publicar novamente:** botão `resetPublishButton` que aparece quando um vídeo já foi publicado — chama `POST /api/videos/:slug/reset-publish` e limpa o estado de publicação sem precisar editar ficheiros manualmente
+- **Regenerar cena específica:** campo numérico + botão para forçar a regeneração de qualquer cena por número (não só a "próxima faltante"), útil quando o audit falha numa cena específica
+- **Galeria de cenas:** grid de miniaturas das imagens PNG geradas por cena, visível no detalhe do job/vídeo, permite comparar visualmente estilos e modelos sem aceder ao filesystem
+
+**Fixes de audit e publicação**
+- `auditWithGeminiVision`: sanitiza strings entre aspas da `visualGoal` antes de passar ao Gemini — evita que o audit rejeite imagens por texto diferente em speech bubbles (ex: "TOO WEAK" vs "TOO EXPENSIVE")
+- Adicionado `"Speech bubble content that differs from the goal — only concept matters, not exact words"` à lista de exclusões do audit — aplica-se a todos os estilos
+- Fix publish mode no UI: `scheduleAt` histórico (data passada) não força mais o modo "agendado" — só usa "scheduled" se a data for futura
+
+**Defaults actualizados**
+- `presets.mjs`: `DEFAULT_IMAGE_MODEL` → `imagen-4.0-generate-001` (Full, era Fast)
+- `.env`: `GOOGLE_IMAGE_MODEL=imagen-4.0-generate-001` + `FLUX2_RENDER_RETRY_COUNT=5`
+- Instrução positiva de anatomia em cenas com personagem: "show exactly one person with exactly two arms and two hands — do not add a second person, crowd, or background silhouette"
+
+---
+
 ## [2026-04-12] Pipeline rename flux2→google, image quality improvements, bug fixes
 
 ### 1) Resumo Executivo

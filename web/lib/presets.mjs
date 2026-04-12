@@ -50,7 +50,7 @@ export const tonePresets = {
 
 export const DEFAULT_VOICE = "Iapetus";
 export const DEFAULT_ENGLISH_VOICE = "Charon";
-export const DEFAULT_IMAGE_MODEL = "imagen-4.0-fast-generate-001";
+export const DEFAULT_IMAGE_MODEL = "imagen-4.0-generate-001";
 export const DEFAULT_GENERATION_MODE = "image-pipeline";
 
 export const voiceOptions = [

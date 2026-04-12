@@ -105,6 +105,9 @@ const elements = {
   resumeJobButton: document.querySelector("#resumeJobButton"),
   retryFromStoryboardJobButton: document.querySelector("#retryFromStoryboardJobButton"),
   regenerateSceneButton: document.querySelector("#regenerateSceneButton"),
+  regenerateScenePickerRow: document.querySelector("#regenerateScenePickerRow"),
+  regenerateSceneInput: document.querySelector("#regenerateSceneInput"),
+  regenerateScenePickerButton: document.querySelector("#regenerateScenePickerButton"),
   generateAudioButton: document.querySelector("#generateAudioButton"),
   renderOnlyButton: document.querySelector("#renderOnlyButton"),
   validateJobButton: document.querySelector("#validateJobButton"),
@@ -156,8 +159,15 @@ const elements = {
   saveVideoMetaButton: document.querySelector("#saveVideoMetaButton"),
   redoVideoButton: document.querySelector("#redoVideoButton"),
   publishVideoButton: document.querySelector("#publishVideoButton"),
+  resetPublishButton: document.querySelector("#resetPublishButton"),
   openTikTokHelperButton: document.querySelector("#openTikTokHelperButton"),
   deleteVideoButton: document.querySelector("#deleteVideoButton"),
+  sceneGallery: document.querySelector("#sceneGallery"),
+  sceneGalleryGrid: document.querySelector("#sceneGalleryGrid"),
+  sceneGalleryToggle: document.querySelector("#sceneGalleryToggle"),
+  jobSceneGallery: document.querySelector("#jobSceneGallery"),
+  jobSceneGalleryGrid: document.querySelector("#jobSceneGalleryGrid"),
+  jobSceneGalleryToggle: document.querySelector("#jobSceneGalleryToggle"),
   videoLibraryHint: document.querySelector("#videoLibraryHint"),
   videoActionHint: document.querySelector("#videoActionHint"),
   videoSearchInput: document.querySelector("#videoSearchInput"),
@@ -1129,6 +1139,32 @@ const renderSourceJobInfo = (container, video) => {
   });
 };
 
+const renderSceneGallery = async (galleryEl, gridEl, jobId) => {
+  if (!galleryEl || !gridEl || !jobId) {
+    if (galleryEl) galleryEl.classList.add("hidden");
+    return;
+  }
+  try {
+    const data = await fetchJson(`/api/jobs/${encodeURIComponent(jobId)}/scenes`);
+    const scenes = Array.isArray(data?.scenes) ? data.scenes : [];
+    if (!scenes.length) {
+      galleryEl.classList.add("hidden");
+      return;
+    }
+    galleryEl.classList.remove("hidden");
+    gridEl.innerHTML = scenes.map(({sceneNumber, segNumber, url}) => `
+      <div>
+        <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">
+          <img src="${escapeHtml(url)}" alt="Cena ${sceneNumber}-${segNumber}" loading="lazy">
+        </a>
+        <p class="scene-label">Cena ${sceneNumber}${segNumber > 1 ? `-seg${segNumber}` : ''}</p>
+      </div>
+    `).join("");
+  } catch {
+    galleryEl.classList.add("hidden");
+  }
+};
+
 const parseDateTimeLocalToIso = (value) => {
   const raw = String(value || "").trim();
 
@@ -1978,6 +2014,16 @@ const renderSelectedJob = () => {
     ![canResume, canRetryFromStoryboard, canRegenerateScene, canGenerateAudio, canRenderOnly, canValidateOnly, canForceFail].some(Boolean)
   );
 
+  // Show scene picker row only when job is failed
+  if (elements.regenerateScenePickerRow) {
+    elements.regenerateScenePickerRow.classList.toggle("hidden", job.status !== "failed");
+  }
+
+  // Scene gallery for the job view
+  if (elements.jobSceneGallery && job.id) {
+    void renderSceneGallery(elements.jobSceneGallery, elements.jobSceneGalleryGrid, job.id);
+  }
+
   const isPreviewReady =
     job.type === "generate" &&
     job.input.previewOnly &&
@@ -2267,7 +2313,8 @@ const fillVideoForm = (video) => {
   elements.videoMetaForm.elements.hashtags.value = Array.isArray(video.hashtags) ? video.hashtags.join(" ") : "";
   elements.videoMetaForm.elements.scheduleAt.value = toDateTimeLocalValue(video.scheduleAt || "");
   elements.videoMetaForm.elements.isDraft.checked = video.isDraft === true;
-  const publishMode = video.scheduleAt || video.lastPublishStatus === "scheduled" ? "scheduled" : "now";
+  const scheduleAtIsFuture = video.scheduleAt && new Date(video.scheduleAt).getTime() > Date.now();
+  const publishMode = scheduleAtIsFuture || video.lastPublishStatus === "scheduled" ? "scheduled" : "now";
   elements.videoMetaForm.querySelectorAll('input[name="publishMode"]').forEach((input) => {
     input.checked = input.value === publishMode;
   });
@@ -2353,10 +2400,23 @@ const renderSelectedVideo = () => {
 
   syncPublishModeUI();
 
+  // Show "Publicar novamente" button only when video was previously published
+  if (elements.resetPublishButton) {
+    elements.resetPublishButton.classList.toggle("hidden", !video.publishedAt);
+  }
+
   const agendadorHint = state.agendador?.configured
     ? "Agendador pronto para publicar. Se faltar conta conectada, a API vai dizer qual rede está desconectada."
     : "As credenciais do agenda.online não apareceram no ambiente carregado. Se estiverem só no keychain, o publish ainda pode funcionar no backend.";
   elements.videoLibraryHint.textContent = agendadorHint;
+
+  // Scene gallery: fetch and render if we have a source job
+  const sourceJobIdForGallery = getVideoSourceJobId(video);
+  if (elements.sceneGallery && sourceJobIdForGallery) {
+    void renderSceneGallery(elements.sceneGallery, elements.sceneGalleryGrid, sourceJobIdForGallery);
+  } else if (elements.sceneGallery) {
+    elements.sceneGallery.classList.add("hidden");
+  }
 };
 
 const renderSelectedLibraryItem = () => {
@@ -2836,6 +2896,52 @@ elements.regenerateSceneButton?.addEventListener("click", async () => {
     job: selectedJob,
     actionKey: "regenerate-missing-scene"
   });
+});
+
+elements.regenerateScenePickerButton?.addEventListener("click", async () => {
+  const selectedJob = getJobById(state.selectedJobId);
+  if (!selectedJob) return;
+  const sceneNumber = parseInt(elements.regenerateSceneInput?.value || "0", 10);
+  if (!sceneNumber || sceneNumber < 1) {
+    window.alert("Informe um número de cena válido.");
+    return;
+  }
+  await runJobAction({
+    jobId: selectedJob.id,
+    url: `/api/jobs/${encodeURIComponent(selectedJob.id)}/regenerate-missing-scene`,
+    body: {jobId: selectedJob.id, sceneNumber}
+  });
+});
+
+elements.resetPublishButton?.addEventListener("click", async () => {
+  const video = getVideoById(state.selectedVideoId);
+  if (!video?.slug) return;
+  try {
+    await fetchJson(`/api/videos/${encodeURIComponent(video.slug)}/reset-publish`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({})
+    });
+    await refreshVideos();
+    setVideoActionHint("Estado de publicação resetado. Você pode publicar novamente.");
+    renderAll();
+  } catch (error) {
+    setVideoActionHint(error.message, {error: true});
+  }
+});
+
+elements.sceneGalleryToggle?.addEventListener("click", () => {
+  if (!elements.sceneGalleryGrid) return;
+  const isHidden = elements.sceneGalleryGrid.classList.contains("hidden");
+  elements.sceneGalleryGrid.classList.toggle("hidden", !isHidden);
+  elements.sceneGalleryToggle.textContent = isHidden ? "Ocultar" : "Mostrar";
+});
+
+elements.jobSceneGalleryToggle?.addEventListener("click", () => {
+  if (!elements.jobSceneGalleryGrid) return;
+  const isHidden = elements.jobSceneGalleryGrid.classList.contains("hidden");
+  elements.jobSceneGalleryGrid.classList.toggle("hidden", !isHidden);
+  elements.jobSceneGalleryToggle.textContent = isHidden ? "Ocultar" : "Mostrar";
 });
 
 elements.generateAudioButton?.addEventListener("click", async () => {

@@ -1464,3 +1464,10 @@ details.action-more summary {
 
   .publish-mode-toggle { grid-template-columns: 1fr; }
 }
+
+/* Scene gallery */
+.scene-gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; }
+.scene-gallery-grid img { width: 100%; border-radius: 4px; cursor: pointer; }
+.scene-gallery-grid .scene-label { font-size: 0.7rem; text-align: center; color: #888; }
+.field-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.field-inline { display: flex; align-items: center; gap: 6px; }

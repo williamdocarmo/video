@@ -3283,6 +3283,67 @@ const handleJobResumeRequest = async (req, res, {params}) => {
   await handleResumeRequest(req, res, params.id);
 };
 
+const handleResetPublishRequest = async (request, response, {params}) => {
+  const slug = String(params.slug || "").trim();
+  if (!slug) { sendJson(response, 400, {error: "Slug ausente."}); return; }
+  const existingMeta = await readVideoMeta(slug).catch(() => null);
+  if (!existingMeta) { sendJson(response, 404, {error: "Metadados do video nao encontrados."}); return; }
+  await writeVideoMeta(slug, {
+    ...existingMeta,
+    publishStatus: "ready",
+    publishedAt: null,
+    scheduleAt: null,
+    lastPublishStatus: null,
+    isDraft: false,
+    updatedAt: new Date().toISOString()
+  });
+  sendJson(response, 200, {ok: true});
+};
+
+const handleJobScenesRequest = async (_request, response, {params}) => {
+  const job = jobs.get(params.id);
+  if (!job) { sendJson(response, 404, {error: "Job nao encontrado."}); return; }
+  const slug = job.slug || "";
+  if (!slug) { sendJson(response, 400, {error: "Job sem slug."}); return; }
+  const assetDir = path.join(configuredVideoEngineRoot, "assets", "envato", slug);
+  const imagesDir = path.join(assetDir, "_flux2_images");
+  let files = [];
+  try {
+    files = await readdir(imagesDir);
+  } catch {
+    sendJson(response, 200, {scenes: []});
+    return;
+  }
+  // Build map of scene-seg -> best image file (final pick = no __attempt suffix wins; otherwise highest attempt)
+  const pngFiles = files.filter((f) => f.endsWith(".png"));
+  const sceneMap = new Map();
+  for (const file of pngFiles) {
+    // Match scene-NN-seg-NN.png or scene-NN-seg-NN__attempt-N.png
+    const finalMatch = file.match(/^scene-(\d+)-seg-(\d+)\.png$/);
+    const attemptMatch = file.match(/^scene-(\d+)-seg-(\d+)__attempt-(\d+)\.png$/);
+    if (finalMatch) {
+      const key = `${finalMatch[1]}-${finalMatch[2]}`;
+      // Final (no attempt) always wins
+      sceneMap.set(key, {sceneNumber: parseInt(finalMatch[1], 10), segNumber: parseInt(finalMatch[2], 10), file, isFinal: true, attempt: Infinity});
+    } else if (attemptMatch) {
+      const key = `${attemptMatch[1]}-${attemptMatch[2]}`;
+      const attempt = parseInt(attemptMatch[3], 10);
+      const existing = sceneMap.get(key);
+      if (!existing || (!existing.isFinal && attempt > existing.attempt)) {
+        sceneMap.set(key, {sceneNumber: parseInt(attemptMatch[1], 10), segNumber: parseInt(attemptMatch[2], 10), file, isFinal: false, attempt});
+      }
+    }
+  }
+  const scenes = Array.from(sceneMap.values())
+    .sort((a, b) => a.sceneNumber - b.sceneNumber || a.segNumber - b.segNumber)
+    .map(({sceneNumber, segNumber, file}) => ({
+      sceneNumber,
+      segNumber,
+      url: `/api/file?path=${encodeURIComponent(path.join(imagesDir, file))}`
+    }));
+  sendJson(response, 200, {scenes});
+};
+
 let elevenLabsVoicesCache = null;
 let elevenLabsVoicesCacheAt = 0;
 const ELEVENLABS_VOICES_TTL_MS = 300_000;
@@ -3333,6 +3394,8 @@ addRoute("POST", "/api/videos/refazer",                      handleVideoRefazerR
 addRoute("POST", "/api/videos/delete",                       handleVideoDeleteRequest);
 addRoute("POST", "/api/videos/publish",                      handleVideoPublishRequest);
 addRoute("POST", "/api/videos/tiktok-helper",                handleVideoTikTokHelperRequest);
+addRoute("POST", "/api/videos/:slug/reset-publish",          handleResetPublishRequest);
+addRoute("GET",  "/api/jobs/:id/scenes",                     handleJobScenesRequest);
 addRoute("POST", "/api/jobs/:id/retry-from-storyboard",      handleRetryFailedJobRequest);
 addRoute("POST", "/api/jobs/:id/regenerate-missing-scene",   handleRegenerateMissingSceneRequest);
 addRoute("POST", "/api/jobs/:id/generate-audio",             handleGenerateAudioRequest);
