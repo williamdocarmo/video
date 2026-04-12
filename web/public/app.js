@@ -81,6 +81,7 @@ const elements = {
   imageStylePreviewImage: document.querySelector("#imageStylePreviewImage"),
   toneHint: document.querySelector("#toneHint"),
   voiceHint: document.querySelector("#voiceHint"),
+  audioProvider: document.querySelector("#generateAudioProvider"),
   channelHint: document.querySelector("#channelHint"),
   queueCount: document.querySelector("#queueCount"),
   previewQueueCount: document.querySelector("#previewQueueCount"),
@@ -878,6 +879,57 @@ const getVoicesForLanguage = (languageCode) =>
 
 const getPreferredVoiceForLanguage = (languageCode, fallbackVoice = "") =>
   state.config?.defaultVoicesByLanguage?.[languageCode] || fallbackVoice || state.config?.defaults?.voice || "Iapetus";
+
+let cachedElevenLabsVoices = null;
+
+const fetchElevenLabsVoices = async () => {
+  if (cachedElevenLabsVoices) return cachedElevenLabsVoices;
+  try {
+    const res = await fetch("/api/elevenlabs-voices");
+    const data = await res.json();
+    cachedElevenLabsVoices = data.voices || [];
+  } catch {
+    cachedElevenLabsVoices = [];
+  }
+  return cachedElevenLabsVoices;
+};
+
+const syncVoiceOptionsForProvider = async () => {
+  const provider = elements.audioProvider?.value || "gcp";
+  const language = elements.generateForm?.language?.value || "pt-BR";
+  const voiceSelect = elements.generateForm?.voice;
+  if (!voiceSelect) return;
+
+  voiceSelect.innerHTML = "";
+
+  if (provider === "elevenlabs") {
+    voiceSelect.innerHTML = "<option disabled>Carregando vozes…</option>";
+    const voices = await fetchElevenLabsVoices();
+    voiceSelect.innerHTML = "";
+    for (const v of voices) {
+      const opt = document.createElement("option");
+      opt.value = v.value;
+      opt.textContent = v.category ? `${v.label} (${v.category})` : v.label;
+      voiceSelect.appendChild(opt);
+    }
+    if (voices.length === 0) {
+      voiceSelect.innerHTML = "<option disabled>Nenhuma voz disponível</option>";
+    }
+    if (elements.voiceHint) elements.voiceHint.textContent = "Vozes da conta ElevenLabs";
+  } else {
+    const voices = getVoicesForLanguage(language);
+    for (const v of voices) {
+      const opt = document.createElement("option");
+      opt.value = v.value;
+      opt.textContent = v.label;
+      voiceSelect.appendChild(opt);
+    }
+    voiceSelect.value = getPreferredVoiceForLanguage(language);
+    if (elements.voiceHint) elements.voiceHint.textContent = "";
+  }
+};
+
+elements.audioProvider?.addEventListener("change", syncVoiceOptionsForProvider);
 
 const syncVoiceHint = (voiceId) => {
   if (!elements.voiceHint) {
@@ -2593,6 +2645,7 @@ const buildGeneratePayload = (form, submitter) => {
     channel: String(data.get("channel") || "foiumaideia"),
     tone: String(data.get("tone") || "shortform_native"),
     voice: String(data.get("voice") || getPreferredVoiceForLanguage(String(data.get("language") || "pt-BR"))),
+    audioProvider: String(data.get("audioProvider") || "gcp"),
     customVoice: String(data.get("customVoice") || "").trim(),
     customStylePrompt: String(data.get("customStylePrompt") || "").trim(),
     force: form.force.checked,

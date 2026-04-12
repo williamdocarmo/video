@@ -140,6 +140,12 @@ const parseArgs = (argv) => {
       continue;
     }
 
+    if (item === "--provider") {
+      parsed.provider = argv[index + 1];
+      index += 1;
+      continue;
+    }
+
     if (item === "--generation-mode") {
       parsed.generationMode = argv[index + 1];
       index += 1;
@@ -413,6 +419,10 @@ const run = async () => {
   if (args.voice) {
     runtimeEnv.GOOGLE_TTS_VOICE = args.voice;
     runtimeEnv.AZURE_TTS_VOICE = args.voice;
+  }
+
+  if (args.provider) {
+    runtimeEnv.TTS_PROVIDER = args.provider;
   }
 
   runtimeEnv.GENERATION_MODE = generationMode;

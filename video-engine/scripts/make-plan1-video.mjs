@@ -263,7 +263,7 @@ const parseArgs = (argv) => {
   return parsed;
 };
 
-const TRUSTED_TIMED_WORD_SOURCES = new Set(["gcloud-speech-stt", "azure-word-boundary"]);
+const TRUSTED_TIMED_WORD_SOURCES = new Set(["gcloud-speech-stt", "azure-word-boundary", "elevenlabs-alignment"]);
 
 const normalizeTimedWordsSource = (source) => String(source || "").trim().toLowerCase();
 

@@ -1905,6 +1905,7 @@ const handleGenerateRequest = async (request, response) => {
   }
 
   const targetSeconds = getProfileTargetSeconds(outputProfile.id, Number(body.targetSeconds));
+  const audioProvider = body.audioProvider === "elevenlabs" ? "elevenlabs" : "gcp";
   const slug = buildUniqueGenerateSlug(title);
   const caseId = createId();
   const sourceTextFile = sourceText ? path.join(inputsDir, `${createId()}-source.txt`) : "";
@@ -1944,6 +1945,7 @@ const handleGenerateRequest = async (request, response) => {
         ? String(body.imageStyle)
         : DEFAULT_VISUAL_STYLE_PRESET,
       voice,
+      audioProvider,
       tone,
       stylePrompt: combineStylePrompt({
         language,
@@ -3247,9 +3249,41 @@ const handleJobResumeRequest = async (req, res, {params}) => {
   await handleResumeRequest(req, res, params.id);
 };
 
+let elevenLabsVoicesCache = null;
+let elevenLabsVoicesCacheAt = 0;
+const ELEVENLABS_VOICES_TTL_MS = 300_000;
+
+const handleElevenLabsVoicesRequest = async (_req, res) => {
+  const apiKey = String(baseChildEnv.ELEVENLABS_API_KEY || "").trim();
+  if (!apiKey) return sendJson(res, 200, {voices: []});
+
+  if (elevenLabsVoicesCache && Date.now() - elevenLabsVoicesCacheAt < ELEVENLABS_VOICES_TTL_MS) {
+    return sendJson(res, 200, {voices: elevenLabsVoicesCache});
+  }
+
+  try {
+    const r = await fetch("https://api.elevenlabs.io/v1/voices", {
+      headers: {"xi-api-key": apiKey}
+    });
+    if (!r.ok) return sendJson(res, 200, {voices: []});
+    const data = await r.json();
+    elevenLabsVoicesCache = (data.voices || []).map((v) => ({
+      value: v.voice_id,
+      label: v.name,
+      category: v.category || "",
+      languages: (v.labels?.language || "").split(",").map((l) => l.trim()).filter(Boolean)
+    }));
+    elevenLabsVoicesCacheAt = Date.now();
+    sendJson(res, 200, {voices: elevenLabsVoicesCache});
+  } catch {
+    sendJson(res, 200, {voices: []});
+  }
+};
+
 // ── Route table ──────────────────────────────────────────────────────────────
 
 addRoute("GET",  "/api/config",                              (_req, res) => handleConfigRequest(res));
+addRoute("GET",  "/api/elevenlabs-voices",                   handleElevenLabsVoicesRequest);
 addRoute("GET",  "/api/jobs",                                handleJobsListRequest);
 addRoute("GET",  "/api/jobs/:id/stream",                     handleJobStreamRequest);
 addRoute("GET",  "/api/jobs/:id",                            handleJobDetailRequest);

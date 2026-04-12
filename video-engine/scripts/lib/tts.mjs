@@ -2342,6 +2342,69 @@ export const synthesizeVoiceover = async ({
   azure
 }) => {
   const normalizedProvider = String(provider || "gcloud").trim().toLowerCase();
+
+  if (normalizedProvider === "elevenlabs") {
+    const apiKey = String(elevenlabs?.apiKey || process.env.ELEVENLABS_API_KEY || "").trim();
+    if (!apiKey) {
+      throw new Error("ElevenLabs requer ELEVENLABS_API_KEY.");
+    }
+
+    const voiceId = String(elevenlabs?.voiceId || process.env.ELEVENLABS_VOICE_ID || "").trim();
+    if (!voiceId) {
+      throw new Error("ElevenLabs requer ELEVENLABS_VOICE_ID.");
+    }
+
+    const result = await synthesizeWithElevenLabs({
+      text,
+      mp3Path,
+      apiKey,
+      voiceId,
+      modelId: String(elevenlabs?.modelId || process.env.ELEVENLABS_MODEL_ID || "eleven_multilingual_v2").trim(),
+      languageCode: String(elevenlabs?.languageCode || process.env.ELEVENLABS_LANGUAGE_CODE || "pt").trim(),
+      voiceSettings: elevenlabs?.voiceSettings || {
+        stability: Number(process.env.ELEVENLABS_STABILITY || 0.22),
+        similarity_boost: Number(process.env.ELEVENLABS_SIMILARITY_BOOST || 0.9),
+        style: Number(process.env.ELEVENLABS_STYLE || 0.3),
+        use_speaker_boost: process.env.ELEVENLABS_USE_SPEAKER_BOOST !== "false",
+        speed: Number(process.env.ELEVENLABS_SPEED || 1.05)
+      }
+    });
+
+    const maxSilence = Number.parseFloat(process.env.TTS_MAX_SILENCE_SECONDS || "0.4");
+    if (maxSilence > 0) {
+      compressAudioSilences(mp3Path, maxSilence);
+    }
+
+    let timedWords = result.timedWords || [];
+    const audioDurationSeconds = getAudioDurationSeconds(mp3Path);
+
+    if (timedWords.length === 0) {
+      const extracted = await extractTimedWordsFromAudio({
+        mp3Path,
+        apiKey: process.env.GOOGLE_API_KEY || "",
+        text,
+        languageCode: google?.languageCode || process.env.VIDEO_LANGUAGE || "pt-BR",
+        sceneSpans,
+        allowEstimated: ALLOW_ESTIMATED_TIMED_WORDS
+      });
+      timedWords = extracted.timedWords;
+      return {
+        provider: "elevenlabs",
+        timedWords,
+        timedWordsSource: extracted.timedWordsSource,
+        voiceName: voiceId
+      };
+    }
+
+    const normalized = sanitizeTimedWordsForAudio({timedWords, audioDurationSeconds});
+    return {
+      provider: "elevenlabs",
+      timedWords: normalized.timedWords,
+      timedWordsSource: "elevenlabs-alignment",
+      voiceName: voiceId
+    };
+  }
+
   if (!["gcloud", "google-cloud", "google", "auto", "google-gemini-tts", "gemini-tts", "gemini"].includes(normalizedProvider)) {
     throw new Error(`Provider de voz nao suportado para a pipeline GCP: ${normalizedProvider}`);
   }

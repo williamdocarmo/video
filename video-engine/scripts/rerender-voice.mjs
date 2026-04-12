@@ -31,11 +31,12 @@ const parseArgs = (argv) => {
     if (argv[i] === "--caption-shift-frames") { parsed.captionShiftFrames = Number.parseInt(argv[++i], 10) || 0; continue; }
     if (argv[i] === "--no-render") { parsed.noRender = true; continue; }
     if (argv[i] === "--reuse-existing-audio") { parsed.reuseExistingAudio = true; continue; }
+    if (argv[i] === "--provider") { parsed.provider = argv[++i]; continue; }
   }
   return parsed;
 };
 
-const TRUSTED_TIMED_WORD_SOURCES = new Set(["gcloud-speech-stt", "azure-word-boundary"]);
+const TRUSTED_TIMED_WORD_SOURCES = new Set(["gcloud-speech-stt", "azure-word-boundary", "elevenlabs-alignment"]);
 
 const normalizeTimedWordsSource = (source) => String(source || "").trim().toLowerCase();
 
@@ -623,7 +624,7 @@ const persistCanonicalArtifacts = async ({
 
 const main = async () => {
   const args = parseArgs(process.argv.slice(2));
-  loadSecretsIntoEnv(["GOOGLE_API_KEY", "AZURE_SPEECH_KEY"]);
+  loadSecretsIntoEnv(["GOOGLE_API_KEY", "AZURE_SPEECH_KEY", "ELEVENLABS_API_KEY"]);
 
   if (!args.slug) {
     process.stderr.write("Uso: node scripts/rerender-voice.mjs --slug <slug> [--voice pt-BR-AntonioNeural] [--style-prompt '...']\n");
@@ -674,7 +675,7 @@ const main = async () => {
   const existingAudioPath = await resolveExistingAudioPath(projectRoot, slug, canonicalRunAudioPath);
   let audioSourcePath = existingAudioPath;
 
-  const selectedProvider = String(process.env.TTS_PROVIDER || "auto").trim().toLowerCase();
+  const selectedProvider = String(args.provider || process.env.TTS_PROVIDER || "auto").trim().toLowerCase();
   const voicePlan = buildVoiceText(storyboard.scenes);
   let voiceResult;
   let audioDurationSeconds;
@@ -733,7 +734,19 @@ const main = async () => {
       aiffPath,
       mp3Path: stagedRunAudioPath,
       provider: selectedProvider,
-      elevenlabs: {},
+      elevenlabs: {
+        apiKey: process.env.ELEVENLABS_API_KEY || "",
+        voiceId: process.env.ELEVENLABS_VOICE_ID || "TX3LPaxmHKxFdv7VOQHJ",
+        modelId: process.env.ELEVENLABS_MODEL_ID || "eleven_multilingual_v2",
+        languageCode: process.env.ELEVENLABS_LANGUAGE_CODE || "pt",
+        voiceSettings: {
+          stability: Number(process.env.ELEVENLABS_STABILITY || 0.22),
+          similarity_boost: Number(process.env.ELEVENLABS_SIMILARITY_BOOST || 0.9),
+          style: Number(process.env.ELEVENLABS_STYLE || 0.3),
+          use_speaker_boost: process.env.ELEVENLABS_USE_SPEAKER_BOOST !== "false",
+          speed: Number(process.env.ELEVENLABS_SPEED || 1.05)
+        }
+      },
       google: {
         model: process.env.GOOGLE_TTS_MODEL || "gemini-2.5-flash-preview-tts",
         voiceName: voiceName || process.env.TTS_VOICE || "pt-BR-Chirp3-HD-Achernar",

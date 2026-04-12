@@ -12,64 +12,318 @@ Repo: `https://github.com/williamdocarmo/video.git`
 Internet
   │
   ▼
-Traefik (Docker, :443, Let's Encrypt TLS)
+Traefik v3.6.11 (Docker/Coolify, :443, Let's Encrypt TLS)
   │  ├─ redirect HTTP → HTTPS
   │  └─ secure-headers (HSTS, X-Frame-Options, etc.)
   │
   ▼
 Node.js HTTP server (:3210, 0.0.0.0)
   │
-  ├─ web/server.mjs .............. backend: API, fila, recovery, biblioteca, publicação
+  ├─ web/server.mjs .............. backend: API REST, fila dual-lane, recovery, biblioteca, publicação
   ├─ web/public/ ................. frontend: app.js, index.html, styles.css
+  │
+  ├─ web/lib/
+  │   ├─ presets.mjs ............. vozes, modelos, canais, tons, modos de geração
+  │   ├─ job-queue.mjs ........... fila dual-lane (preview + heavy)
+  │   ├─ job-state.mjs ........... análise de estado, recovery, taxonomia de falhas
+  │   ├─ job-execution.mjs ....... builders de comandos para child processes
+  │   ├─ video-library.mjs ....... gestão de vídeos exportados, metadados
+  │   ├─ agendador.mjs ........... integração com agendador.online (publicação/agendamento)
+  │   ├─ tiktok-helper.mjs ....... drafts e helper HTML para TikTok
+  │   ├─ routes.mjs .............. router pattern-based com :params
+  │   └─ utils.mjs ............... I/O, slugify, IDs, managed files
   │
   ├─ scripts/
   │   ├─ foiumaideia.mjs ......... orquestrador principal (preview → assets → pipeline → export)
   │   ├─ generate-flux2-assets.mjs geração visual (Gemini planner + Vertex Imagen + ffmpeg)
-  │   └─ lib/ .................... scene-spec, scene-failure-taxonomy, etc.
+  │   └─ lib/
+  │       ├─ scene-spec.mjs ...... compilador de especificação de cena (câmera, pose, afeto, risco)
+  │       └─ scene-failure-taxonomy.mjs classificador de falhas visuais (12 categorias)
   │
   ├─ video-engine/
   │   ├─ scripts/
   │   │   ├─ make-plan1-video.mjs  pipeline core (storyboard → voz → render → QA)
-  │   │   ├─ rerender-voice.mjs .. re-render de voz/áudio
+  │   │   ├─ rerender-voice.mjs .. re-render de voz/áudio (--provider, --reuse-existing-audio)
   │   │   ├─ validate-run.mjs .... validação QA (20+ checks)
   │   │   └─ lib/
-  │   │       ├─ llm-provider.mjs  chamadas LLM (Vertex Gemini, OpenRouter, etc.)
-  │   │       ├─ tts.mjs ......... TTS (Cloud Gemini TTS, Chirp3-HD, Azure, ElevenLabs)
-  │   │       ├─ timings.mjs ..... timeline, pacing, legendas karaoke
+  │   │       ├─ llm-provider.mjs  LLM (Vertex Gemini, OpenRouter): storyboard, QA, repair, graphic plan
+  │   │       ├─ tts.mjs ......... TTS multi-provider: Cloud Gemini TTS, Chirp3-HD, ElevenLabs, Azure
+  │   │       ├─ timings.mjs ..... timeline, pacing, legendas karaoke, frame ranges
+  │   │       ├─ alignment-utils.mjs normalização de timedWords para duração do áudio
   │   │       ├─ gcp-media.mjs ... Vertex AI image + multimodal
-  │   │       └─ gcp-config.mjs .. config GCP (projeto, location, credenciais)
+  │   │       ├─ gcp-config.mjs .. config GCP (projeto, location, credenciais, OAuth2)
+  │   │       ├─ secrets.mjs ..... gestão de secrets (keychain + env)
+  │   │       ├─ gemini-usage.mjs  tracking de uso/custo da API Gemini
+  │   │       ├─ story-flow.mjs .. conectores de cena (pt-BR/en-US)
+  │   │       ├─ used-assets.mjs . registro de assets usados (dedup com lock atômico)
+  │   │       └─ clean-cli.mjs ... execução streaming com progress compacto
   │   ├─ src/
-  │   │   ├─ ShortVideo.tsx ...... composição Remotion principal
-  │   │   ├─ Root.tsx ............ registro de composições
-  │   │   └─ types.ts ............ tipos dos render props
-  │   ├─ runs/{slug}/ ............ storyboard, voiceover, render-props, reports
-  │   ├─ public/runs/{slug}/ ..... áudio, vídeo servidos pelo Remotion
-  │   ├─ assets/envato/{slug}/ ... scene-XX.mp4, _flux2_images/
+  │   │   ├─ ShortVideo.tsx ...... composição Remotion principal (Ken Burns, karaoke, 5 estilos)
+  │   │   ├─ Root.tsx ............ registro de composições (CodexShort, CodexWide, CaptionStyleDemo)
+  │   │   └─ types.ts ............ tipos TypeScript (Scene, CaptionChunk, ShortVideoProps)
+  │   ├─ runs/{slug}/ ............ storyboard, voiceover, render-props, reports, QA
+  │   ├─ public/runs/{slug}/ ..... áudio, vídeo, thumbnails servidos pelo Remotion
+  │   ├─ assets/envato/{slug}/ ... scene-XX.mp4, _flux2_images/, manifests
   │   └─ out/{slug}.mp4 .......... saída final do Remotion
   │
   ├─ config/
   │   ├─ output-profiles.mjs ..... perfis de saída (vertical-short, horizontal-5m, horizontal-10m)
-  │   └─ visual-style-presets.mjs  10 presets visuais (claude, kiro, ink, punk, etc.)
+  │   └─ visual-style-presets.mjs  10 presets visuais com ~17 campos de prompt cada
   │
-  ├─ .web-ui/ .................... persistência: jobs.json, videos.json, inputs/, drafts
+  ├─ shared/utils.mjs ............ utilitários partilhados (normalizeText, sleep, slugify, extractJson)
+  ├─ .web-ui/ .................... persistência: jobs.json, videos.json, inputs/, tiktok-drafts/
   └─ /root/postar/{canal}/ ...... export final organizado por canal
 ```
 
-## Rede e acesso
+---
 
-O domínio `video.vamostestar.online` aponta para o servidor onde roda o app.
+## Pipeline de produção
 
-| Camada | Porta | Detalhe |
-|--------|-------|---------|
-| Traefik (Docker) | :443 / :80 | Reverse proxy com TLS via Let's Encrypt, redirect HTTP→HTTPS, headers de segurança |
-| Node.js | :3210 | `http.createServer()` puro, sem TLS (TLS termina no Traefik) |
+### Fluxo completo (título → vídeo)
 
-O Traefik encaminha `video.vamostestar.online` para `http://host.docker.internal:3210` com `passHostHeader: true`.
+```
+1. UI envia POST /api/generate  ─────────────────────────────────────────┐
+   { title, sourceText, language, voice, audioProvider,                  │
+     outputProfile, channel, tone, imageModel, generationMode, ... }     │
+                                                                         ▼
+2. server.mjs cria job → enqueueAndStart() ──── job-queue.mjs (dual-lane)
+   │  lane "preview" (storyboard only, rápido)
+   │  lane "heavy"   (pipeline completo, lento)
+   │
+   ▼
+3. job-execution.mjs → spawn("node scripts/foiumaideia.mjs ...")
+   │  Passa env vars: TTS_PROVIDER, ELEVENLABS_VOICE_ID, GOOGLE_TTS_VOICE,
+   │  IMAGE_MODEL, GENERATION_MODE, VIDEO_LANGUAGE, etc.
+   │
+   ▼
+4. foiumaideia.mjs (orquestrador)
+   │
+   ├─ PREVIEW: spawn make-plan1-video.mjs --preview-only
+   │   └─ Gera storyboard + QA → retorna para aprovação na UI
+   │
+   ├─ ASSETS: spawn generate-flux2-assets.mjs
+   │   ├─ Gemini planeja shots por cena (visual-plan.json)
+   │   ├─ Vertex Imagen gera PNGs por segmento
+   │   ├─ Gemini Vision audita cada imagem
+   │   ├─ Retry com directivas progressivas se falhar
+   │   └─ ffmpeg converte PNGs → scene-XX.mp4
+   │
+   └─ HEAVY: spawn make-plan1-video.mjs (pipeline completo)
+       │
+       ├─ 5a. Storyboard (Gemini LLM)
+       │   ├─ generateStoryboard() → JSON com cenas, narração, hook, CTA
+       │   ├─ evaluateStoryboardQa() → validação pré-visual
+       │   └─ repairStoryboard() → até 3 tentativas de correção
+       │
+       ├─ 5b. Plano gráfico (Gemini LLM)
+       │   ├─ generateGraphicPlanStrict() → queries de stock por cena
+       │   └─ alignGraphicPlan() → normaliza e enriquece queries
+       │
+       ├─ 5c. Voz (TTS multi-provider)
+       │   ├─ synthesizeVoiceover() → router de providers
+       │   │   ├─ "elevenlabs"       → ElevenLabs /with-timestamps (alignment nativo)
+       │   │   ├─ "google-gemini-tts" → Cloud Gemini TTS → STT para timestamps
+       │   │   ├─ "gcloud"/"auto"    → Cloud TTS Chirp3-HD → STT para timestamps
+       │   │   └─ "azure"            → Azure Speech (word boundaries nativos)
+       │   ├─ compressAudioSilences() → limita silêncios a 0.4s
+       │   ├─ sanitizeTimedWordsForAudio() → normaliza para duração real
+       │   └─ analyzeSceneSpeechPacing() → detecta cenas apressadas (>7 palavras/s)
+       │
+       ├─ 5d. Assets visuais
+       │   ├─ Resolve clips locais (assets/envato/{slug}/)
+       │   ├─ Auditoria visual local (Python script)
+       │   └─ Resolve ilustrações Flux2 (single-shot → still image)
+       │
+       ├─ 5e. Timeline (timings.mjs)
+       │   ├─ buildTimeline() → frames por cena + legendas karaoke
+       │   ├─ Atribui timedWords a cenas por char offset
+       │   └─ Gera CaptionChunks com word-level timing
+       │
+       ├─ 5f. Render (Remotion)
+       │   ├─ npx remotion render src/index.ts CodexShort out/{slug}.mp4
+       │   ├─ Ken Burns em imagens, cross-fade entre cenas
+       │   ├─ 5 estilos de legenda karaoke
+       │   └─ Retry com concurrency=1 se fetch local falhar
+       │
+       └─ 5g. QA (validate-run.mjs)
+           ├─ 20+ checks: output exists, scene count, captions, sync, pacing
+           ├─ Extrai frames de amostra para inspeção
+           ├─ Gera thumbnail com overlay de texto
+           └─ Persiste agent-report.json + orchestration-report.json
+```
 
-O serviço systemd (`codex-video-ui.service`) faz bind em `0.0.0.0:3210`:
+---
+
+## TTS — Providers de voz
+
+O sistema suporta 4 providers de TTS, selecionáveis via `TTS_PROVIDER` env var ou dropdown "Provedor de áudio" na UI.
+
+| Provider | Env value | Timestamps | Fallback STT | Notas |
+|----------|-----------|------------|--------------|-------|
+| Cloud Gemini TTS | `google-gemini-tts` / `gemini-tts` / `gemini` | Via Google Cloud STT | `extractTimedWordsFromAudio()` | Provider padrão. Modelo `gemini-2.5-flash-tts`. Fallback para Chirp3-HD se transiente. |
+| Cloud TTS Chirp3-HD | `gcloud` / `google` / `auto` | Via Google Cloud STT | `extractTimedWordsFromAudio()` | Fallback do Gemini TTS. Vozes `pt-BR-Chirp3-HD-*`. |
+| ElevenLabs | `elevenlabs` | Nativo (`/with-timestamps`) | `extractTimedWordsFromAudio()` se alignment vazio | Alignment character-level convertido para timedWords via `buildTimedWordsFromAlignment()`. |
+| Azure Speech | `azure` | Nativo (word boundaries) | `extractTimedWordsFromAudio()` se cobertura incompleta | `microsoft-cognitiveservices-speech-sdk`. Padding de cauda automático. |
+
+### Fluxo de timestamps (timedWords)
+
+Todos os providers produzem o mesmo formato `timedWords[]`:
+```json
+{
+  "text": "palavra",
+  "rawText": "palavra",
+  "startSeconds": 0.42,
+  "endSeconds": 0.78,
+  "startChar": 15,
+  "endChar": 21
+}
+```
+
+Pós-processamento comum:
+1. `sanitizeTimedWordsForAudio()` — escala timestamps se excedem duração do áudio
+2. `compressAudioSilences()` — limita silêncios inter-frase a 0.4s
+3. `anchorTimestampsToAudioSilences()` — re-alinha segmentos STT com silêncios reais
+4. `analyzeSceneSpeechPacing()` — rejeita runs com >7 palavras/s por cena
+
+### Trusted sources para QA
+`TRUSTED_TIMED_WORD_SOURCES`: `gcloud-speech-stt`, `azure-word-boundary`, `elevenlabs-alignment`
+
+---
+
+## Remotion — Composições e estilos
+
+### 3 composições registadas
+
+| ID | Resolução | FPS | Uso |
+|----|-----------|-----|-----|
+| `CodexShort` | 1080×1920 (9:16) | 30 | Shorts verticais |
+| `CodexWide` | 1920×1080 (16:9) | 30 | Vídeos horizontais |
+| `CaptionStyleDemo` | 1080×1920 | 30 | Preview de estilos |
+
+### 5 estilos de legenda karaoke
+
+| Estilo | Visual |
+|--------|--------|
+| `clean-broadcast` | Palavra ativa amarela, fundo pill semi-transparente, centrado |
+| `bold-tiktok-block` | Cada palavra é pill inline. Ativa = fundo amarelo + texto escuro |
+| `soft-karaoke` | Ativa amarela com glow. Container frosted glass com borda |
+| `outline-punch` | Stroke grosso preto, peso 900, sem container |
+| `caption-strip` | Strip inferior com borda amarela, alinhado à esquerda |
+
+### Efeitos visuais
+- **Ken Burns**: 4 variantes de movimento (zoom in/out + pan) ciclando por cena
+- **Cross-fade**: 12 frames (~400ms) de transição entre cenas
+- **Overlay gradient**: Escurecimento topo/base para legibilidade
+- **Hook/título**: Animação spring nos primeiros 48 frames
+- **Música de fundo**: Volume 8% (`volume={0.08}`)
+
+---
+
+## Perfis de saída
+
+| Perfil | Layout | Resolução | Composição | Duração padrão | Cenas |
+|--------|--------|-----------|------------|----------------|-------|
+| `vertical-short` | 9:16 | 1080×1920 | CodexShort | 100s | 14–18 |
+| `horizontal-5m` | 16:9 | 1920×1080 | CodexWide | 300s | 20–30 |
+| `horizontal-10m` | 16:9 | 1920×1080 | CodexWide | 600s | 30–42 |
+
+---
+
+## Presets visuais (10)
+
+Cada preset define ~17 campos de prompt para guiar a geração de imagens.
+
+| Preset | Estilo | Stickman |
+|--------|--------|----------|
+| `claude` (padrão) | Flat stick figure, white bg, corporate memphis | ✓ |
+| `kiro` | Dark cinematic stick figure, strong contrast | ✓ |
+| `editorial_clean` | Clean editorial illustration, crisp shapes | ✗ |
+| `realistic_film` | Cinematic film still, documentary realism | ✗ |
+| `cartoon_3d` | Stylized 3D cartoon, rounded forms | ✗ |
+| `urban_sketching` | Ink line + watercolor wash, sketchbook feel | ✗ |
+| `ink` | Editorial ink, crisp black brushwork | ✗ |
+| `editorial_line_green` | B&W line art + subtle green accents | ✗ |
+| `time_split_bold` | Bold comparison, hero object, past vs present | ✗ |
+| `punk` | Punk poster, raw collage, torn-paper | ✗ |
+
+---
+
+## Web UI — Tabs e funcionalidades
+
+### Tab "Criar"
+- Formulário com: título, texto-base, idioma (pt-BR/en-US), perfil de saída, duração, modo de geração, modelo de imagem, estilo visual, tom de roteiro, provedor de áudio (GCP/ElevenLabs), voz, canal, opções (forçar, sem música, auto-aprovar)
+- Submissão cria job na fila → SSE streaming de logs em tempo real
+- Preview mode: gera só storyboard para aprovação antes do pipeline completo
+
+### Tab "Pipeline"
+- Lista de jobs com status, progresso, logs
+- Ações: cancelar, retry, re-render voz, preparar áudio, render-only, validar-only, regenerar cena
+- SSE streaming de logs por job
+- Checklist de etapas por job (storyboard, assets, voz, render, QA)
+
+### Tab "Biblioteca"
+- Lista de vídeos exportados por canal
+- Metadados editáveis: título, caption, hashtags, plataformas
+- Publicação via agendador.online (Facebook, Instagram, YouTube, TikTok)
+- Download direto, preview de thumbnail
+- TikTok helper: página HTML standalone para upload manual
+
+### Tab "Estilos"
+- Preview dos 10 presets visuais com imagens de exemplo
+- Seleção de estilo para novas gerações
+
+---
+
+## API REST — Rotas principais
+
+### Geração e pipeline
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| POST | `/api/generate` | Cria job de geração (preview ou completo) |
+| POST | `/api/approve-preview` | Aprova storyboard e lança pipeline completo |
+| POST | `/api/jobs/:id/cancel` | Cancela job em execução |
+| POST | `/api/jobs/:id/retry` | Retry de job falhado |
+| POST | `/api/jobs/:id/rerender` | Re-render com nova voz |
+| POST | `/api/jobs/:id/generate-audio` | Prepara áudio sem render |
+| POST | `/api/jobs/:id/render-only` | Render Remotion sem regenerar áudio |
+| POST | `/api/jobs/:id/validate-only` | Executa QA sem re-render |
+| POST | `/api/jobs/:id/regenerate-missing-scene` | Regenera cena específica |
+
+### Consulta
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/api/config` | Configuração da UI (vozes, modelos, canais, tons, perfis) |
+| GET | `/api/jobs` | Lista todos os jobs |
+| GET | `/api/jobs/:id` | Detalhes de um job |
+| GET | `/api/jobs/:id/stream` | SSE streaming de logs |
+| GET | `/api/jobs/:id/storyboard` | Storyboard JSON do job |
+| GET | `/api/jobs/:id/render-props` | Render props JSON |
+| GET | `/api/jobs/:id/voiceover` | Voiceover metadata JSON |
+
+### Biblioteca e publicação
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/api/videos` | Lista vídeos exportados |
+| GET | `/api/videos/failed-jobs` | Jobs falhados sem recovery |
+| POST | `/api/videos/:id/metadata` | Atualiza metadados do vídeo |
+| POST | `/api/videos/:id/publish` | Publica via agendador.online |
+| POST | `/api/videos/:id/schedule` | Agenda publicação |
+| GET | `/api/videos/:id/tiktok-helper` | Página HTML para upload TikTok |
+
+### Ficheiros
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/api/file` | Serve ficheiro por path (áudio, vídeo, imagem) |
+
+---
+
+## Infraestrutura
+
+### Serviço systemd
 
 ```ini
 [Service]
+Type=simple
 WorkingDirectory=/root/repo/videos-flux2
 Environment=WEB_HOST=0.0.0.0
 Environment=WEB_PORT=3210
@@ -81,268 +335,213 @@ RestartSec=5
 User=root
 ```
 
-## Google Cloud Platform
+- TMPDIR redirecionado para `.tmp/system` (evita saturação do /tmp com frames Remotion)
+- REMOTION_CONCURRENCY=1 em produção (override do .env)
+- Auto-restart com 5s de delay
 
-Toda a geração de conteúdo passa pelo GCP:
+### Traefik (via Coolify)
 
-| Serviço | Endpoint | Uso |
-|---------|----------|-----|
-| Vertex AI Gemini | `{location}-aiplatform.googleapis.com/.../models/{model}:generateContent` | Storyboard, plano visual, auditoria Vision, repair JSON |
-| Vertex AI Imagen | `{location}-aiplatform.googleapis.com/.../models/{model}:predict` | Geração de imagens (Imagen 4 Fast, Imagen 4, Ultra) |
-| Vertex AI Gemini Image | `{location}-aiplatform.googleapis.com/.../models/{model}:generateContent` | Geração de imagens via Gemini 2.5 Flash Image |
-| Cloud TTS | `texttospeech.googleapis.com/v1/text:synthesize` | Voz (Gemini TTS + Chirp3-HD fallback) |
-| Cloud STT | `speech.googleapis.com/v1/speech:recognize` | Timestamps palavra-a-palavra |
-| Gemini API (público) | `generativelanguage.googleapis.com/v1beta/...` | Fallback LLM, fallback STT, TTS legacy |
-
-Configuração:
-
-```
-Projeto:    project-79978184-3df0-40b2-b9f
-Location:   us-central1
-Auth:       Service account JSON → google-auth-library → OAuth2 Bearer tokens
-LLM:        gemini-2.5-flash (Vertex)
-TTS:        gemini-2.5-flash-tts (Cloud TTS) → Chirp3-HD fallback
-Imagem:     imagen-4.0-fast-generate-001 (default) com fallbacks configuráveis
-Vision:     gemini-2.5-flash (auditoria semântica de imagens)
+```yaml
+# /data/coolify/proxy/dynamic/video-vamostestar.yml
+http:
+  routers:
+    video-vamostestar-https:
+      rule: Host(`video.vamostestar.online`)
+      entryPoints: [https]
+      service: video-vamostestar-svc
+      tls: {}
+      middlewares: [secure-headers@file]
+  services:
+    video-vamostestar-svc:
+      loadBalancer:
+        servers:
+          - url: 'http://host.docker.internal:3210'
 ```
 
-APIs habilitadas: `aiplatform.googleapis.com`, `texttospeech.googleapis.com`, `speech.googleapis.com`, `cloudbilling.googleapis.com`
+Middlewares: HSTS (1 ano), X-Frame-Options DENY, X-Content-Type-Options nosniff, XSS filter.
 
-## Pipeline de vídeo
+---
 
-### Fluxo completo (heavy job)
+## Fila dual-lane (job-queue.mjs)
 
-```
-1. UI: POST /api/generate
-   └─ server.mjs cria job, enfileira na lane "heavy"
+| Lane | Concorrência | Uso |
+|------|-------------|-----|
+| `preview` | 1 | Storyboard-only (rápido, ~30s) |
+| `heavy` | 1 | Pipeline completo (lento, 5–15min) |
 
-2. foiumaideia.mjs (orquestrador)
-   ├─ 2a. Storyboard preview
-   │   └─ make-plan1-video.mjs --preview-only
-   │       └─ Gemini gera storyboard → QA local → repair automático (até 3x)
-   │
-   ├─ 2b. Assets visuais
-   │   └─ generate-flux2-assets.mjs
-   │       ├─ Para cada cena: Gemini planeja 1-8 shots
-   │       ├─ Para cada shot: Vertex Imagen gera PNG
-   │       ├─ Auditoria local + Gemini Vision por imagem
-   │       ├─ Retry com directives progressivas (até 9 tentativas/shot)
-   │       ├─ ffmpeg: PNG → clip estático MP4
-   │       └─ ffmpeg: concat segmentos → scene-XX.mp4 (escrita atômica)
-   │
-   └─ 2c. Pipeline core
-       └─ make-plan1-video.mjs
-           ├─ Carrega storyboard aprovado
-           ├─ Cloud TTS sintetiza narração → voiceover.mp3
-           ├─ Cloud STT extrai timedWords (fallback: Gemini Flash STT → estimativa)
-           ├─ buildTimeline() → frame ranges por cena + legendas karaoke
-           ├─ Remotion renderiza MP4 final (x264, 1400k, 30fps)
-           ├─ validate-run.mjs roda 20+ checks de QA
-           └─ Copia para /root/postar/{canal}/
-```
+- Jobs são enfileirados por lane e processados FIFO
+- Apenas 1 job ativo por lane (sem paralelismo)
+- Recovery automático: jobs `running` sem processo vivo são marcados como `failed`
+- Persistência em `.web-ui/jobs.json`
 
-### Fluxo de preview
+---
 
-O preview gera apenas o storyboard (sem vídeo). Serve para inspeção e aprovação antes do heavy job.
+## QA — Validação (validate-run.mjs)
 
-### Fila e concorrência
+20+ checks executados após cada render:
 
-Duas lanes independentes:
-- `preview` — 1 job ativo por vez
-- `heavy` — 1 job ativo por vez
-- 1 preview + 1 heavy podem rodar em paralelo
-- Jobs extras ficam em fila
+| Check | Descrição |
+|-------|-----------|
+| `outputExists` | MP4 final existe e tem tamanho mínimo |
+| `sceneCountOk` | Número de cenas dentro do range do perfil |
+| `captionsHaveCoverage` | Legendas cobrem ≥80% da duração |
+| `captionTimelineMonotonic` | Timestamps de legendas são monotónicos |
+| `captionWordBoundsOk` | Frames de palavras dentro dos bounds da legenda |
+| `captionsBoundedToSingleScene` | Cada legenda pertence a uma única cena |
+| `visualAuditOk` | Auditoria visual local passou |
+| `karaokeReady` | timedWords disponíveis para karaoke |
+| `wordTimedCaptions` | Legendas têm word-level timing |
+| `alignmentAvailable` | Alignment source disponível |
+| `timedWordsSourceTrusted` | Source é gcloud-speech-stt, azure-word-boundary ou elevenlabs-alignment |
+| `sceneTimelineMonotonic` | Frames de cenas são monotónicos |
+| `sceneStartWordSyncOk` | Início de cena alinhado com primeira palavra |
+| `sceneSpeechPacingOk` | Nenhuma cena com >7 palavras/s |
+| `transitionsOk` | Cross-fades entre cenas corretos |
+| `linkedNarration` | Narração cobre todas as cenas |
+| `audioVideoSyncOk` | Drift áudio/vídeo < 5s |
+| `sttAudioSyncOk` | STT timestamps dentro da duração do áudio |
+| `sceneResolutionOk` | Clips com resolução adequada |
+| `envatoOnly` | Todos os clips são de fonte local/Envato |
+| `noTextFallback` | Nenhuma cena caiu para text-only |
+| `clipCoverageOk` | 100% das cenas têm clip |
+| `voiceProviderOk` | Provider de voz é premium (não macOS local) |
 
-## Render (Remotion)
+---
 
-Versão: Remotion 4.0.434
-
-| Composição | Dimensões | FPS | Uso |
-|------------|-----------|-----|-----|
-| `CodexShort` | 1080×1920 | 30 | Vertical shorts (9:16) — default |
-| `CodexWide` | 1920×1080 | 30 | Horizontal (16:9) |
-| `CaptionStyleDemo` | 1080×1920 | 30 | Preview de estilos de legenda |
-
-O componente `ShortVideo.tsx` renderiza:
-- Backgrounds por cena (imagem com Ken Burns ou vídeo em loop)
-- Overlay gradiente escuro
-- Título/hook com animação spring
-- Legendas karaoke com highlight palavra-a-palavra (5 estilos: `bold-tiktok-block`, `clean-broadcast`, `soft-karaoke`, `outline-punch`, `caption-strip`)
-- Áudio: narração + música de fundo opcional (8% volume)
-
-Encoding: x264 veryfast, 1400k video, 96k audio, timeout 30 min.
-
-## Perfis de saída
-
-| Perfil | Layout | Resolução | Duração default | Cenas |
-|--------|--------|-----------|-----------------|-------|
-| `vertical-short` | 9:16 | 1080×1920 | 100s | 14-18 |
-| `horizontal-5m` | 16:9 | 1920×1080 | 300s | 20-30 |
-| `horizontal-10m` | 16:9 | 1920×1080 | 600s | 30-42 |
-
-## Estilos visuais
-
-10 presets, cada um com ~15 campos de prompt (characterPrompt, stylePrompt, styleLockPrompt, compositionRules, etc.):
-
-| Preset | Descrição |
-|--------|-----------|
-| `claude` | Stick figure flat, fundo branco, editorial corporativo |
-| `kiro` | Stick figure dark/cinematic, contraste forte |
-| `editorial_clean` | Ilustração editorial limpa |
-| `realistic_film` | Look cinematográfico realista |
-| `cartoon_3d` | Estilo cartoon 3D |
-| `urban_sketching` | Sketch urbano / aquarela |
-| `ink` | Ilustração a tinta |
-| `editorial_line_green` | Line art editorial com acentos verdes |
-| `time_split_bold` | Tratamento visual bold com split temporal |
-| `punk` | Estética poster punk |
-
-## Modelos de imagem
-
-| Modelo | Id | Uso |
-|--------|-----|-----|
-| Imagen 4 Fast | `imagen-4.0-fast-generate-001` | padrão atual |
-| Gemini 2.5 Flash Image | `gemini-2.5-flash-image` | iteração rápida |
-| Imagen 4 | `imagen-4.0-generate-001` | qualidade equilibrada |
-| Imagen 4 Ultra | `imagen-4.0-ultra-generate-001` | qualidade máxima |
-
-## Vozes
-
-Conjunto curado para Cloud TTS (Gemini TTS + Chirp3-HD):
-- `Iapetus` (default pt-BR)
-- `Charon` (default en-US)
-- `Kore`
-- `Puck`
-- `Sulafat`
-
-## Canais
-
-| Canal | Idioma | Foco |
-|-------|--------|------|
-| `@foiumaideia` | pt-BR | internet / short-form / tech |
-| `@quiet2min` | en-US | wellness / calm |
-| `@ate2min` | pt-BR | geral |
-
-## UI (Video Studio)
-
-4 abas:
-
-- **Criar** — formulário de criação, job atual, preview, checklist, ações de recovery
-- **Pipeline** — lista de jobs com filtro/busca, log detalhado em tempo real (SSE)
-- **Biblioteca** — grid de vídeos finais, metadados editáveis, publicação/agendamento, helper TikTok
-- **Estilos** — galeria de estilos visuais, comparação de modelos
-
-## Recovery pela UI
-
-O backend analisa o estado em disco de cada job e oferece ações granulares:
-
-| Ação | Quando usar |
-|------|-------------|
-| `Regenerar cena X` | Cena faltante ou corrompida |
-| `Gerar áudio` | Todas as cenas OK, falta voz/timestamps |
-| `Renderizar vídeo` | Áudio + render-props existem, falta MP4 |
-| `Validar vídeo` | MP4 existe, falta QA |
-| `Retomar a partir do ponto salvo` | Storyboard + cenas + áudio existem |
-| `Refazer a partir do storyboard` | Storyboard reaproveitável, estado inconsistente |
-| `Marcar como travado` | Processo preso, liberar fila |
-
-Auto-continue: `Regenerar cena X` encadeia automaticamente → próxima cena faltante → áudio → render → QA.
-
-Ordem preferida: Regenerar cena → Gerar áudio → Renderizar → Validar.
-
-## Filosofia de QA
-
-Bloqueia: storyboard inválido, incoerência estrutural, off-topic, falha técnica.
-Aviso (não bloqueia): hook fraco, final fraco, CTA ruim, tom editorial fraco.
-
-Gemini Vision Audit (`GEMINI_VISION_AUDIT=true` em produção):
-- Bloqueia: assunto errado, imagem corrompida, anatomia impossível, texto legível
-- Permite: estilo simplificado, telas com conteúdo abstrato, cues simbólicos de outage
-
-## Estrutura de artefatos por slug
+## Asset pipeline visual (generate-flux2-assets.mjs)
 
 ```
-video-engine/runs/{slug}/storyboard.json ......... storyboard final
-video-engine/runs/{slug}-preview/storyboard.json .. storyboard preview
-video-engine/runs/{slug}/voiceover.json ........... metadados de voz + timedWords
-video-engine/public/runs/{slug}/audio/voiceover.mp3 áudio final
-video-engine/runs/{slug}/render-props.json ........ props do Remotion
-video-engine/out/{slug}.mp4 ....................... saída do Remotion
-video-engine/assets/envato/{slug}/scene-XX.mp4 .... clips de cena
-video-engine/assets/envato/{slug}/_flux2_images/ ... PNGs e segmentos intermediários
-/root/postar/{canal}/{arquivo}.mp4 ................ export final
+1. Gemini planeja shots por cena → visual-plan.json
+   ├─ Segmentos por cena (1–3 shots)
+   ├─ Prompt detalhado por segmento
+   └─ Guiado pelo visual style preset selecionado
+
+2. Vertex Imagen gera PNGs por segmento
+   ├─ Modelo: imagen-4.0-fast-generate-001 (padrão) ou gemini-2.5-flash-image
+   ├─ Resolução: 1024×1024 (escalado para 1080×1920 ou 1920×1080)
+   └─ Retry com directivas progressivas (até 6 tentativas)
+
+3. Gemini Vision audita cada imagem
+   ├─ Verifica: anatomia, texto legível, props, framing, emoção
+   ├─ Classifica falhas em 12 categorias (scene-failure-taxonomy.mjs)
+   └─ Sugere estratégia de repair (mask_edit, crop_repair, retry_with_constraints)
+
+4. ffmpeg converte PNGs → scene-XX.mp4
+   ├─ Ken Burns motion aplicado via filtro de vídeo
+   ├─ Segmentos concatenados por cena
+   └─ Output: assets/envato/{slug}/scene-XX.mp4
 ```
 
-## Serviço e operação
+### Scene spec compiler (scene-spec.mjs)
 
-```bash
-systemctl status codex-video-ui.service
-systemctl restart codex-video-ui.service
-journalctl -u codex-video-ui.service -f
-```
+Compila especificação estruturada por cena a partir do storyboard:
+- **Subject**: person, device, animal, object, scene
+- **Camera**: framing (closeup→wide), viewpoint (front→back), lens style
+- **Pose**: body pose, hand/face visibility, interaction
+- **Affect**: emotion, intensity, gaze direction
+- **Environment**: location, allowed/forbidden props, clutter level
+- **Risk flags**: 12 weighted flags (0–100+ score), 4 severity levels
 
-Antes de reiniciar, verificar que não há jobs ativos:
+---
 
-```bash
-python3 - <<'PY'
-import urllib.request, json
-with urllib.request.urlopen('http://127.0.0.1:3210/api/jobs') as r:
-    data=json.load(r)
-print({k:data.get(k) for k in ['activeJobId','activePreviewJobId','activeHeavyJobId','queueLength']})
-PY
-```
+## LLM — Providers e funções (llm-provider.mjs)
 
-Só reiniciar quando todos forem `null` / `0`.
+### Providers suportados
+- `vertex` / `gemini` — Vertex AI Gemini (padrão em produção)
+- `openrouter` — OpenRouter API (fallback)
+- `codex` — Codex model (legacy)
+
+### Funções principais
+| Função | Uso |
+|--------|-----|
+| `generateStoryboard()` | Gera JSON com cenas, narração, hook, CTA, hashtags |
+| `evaluateStoryboardQa()` | Valida storyboard pré-visual (word count, scene count, pacing) |
+| `repairStoryboard()` | Reescreve storyboard com base no feedback da QA (até 3 tentativas) |
+| `generateGraphicPlanStrict()` | Gera plano visual com queries de stock por cena |
+| `callJsonProvider()` | Wrapper genérico para chamadas LLM com JSON schema |
+| `pickSceneOverlay()` | Seleciona overlay text para cada cena |
+
+### Tracking de custos (gemini-usage.mjs)
+- Acumula tokens por modelo e contexto (storyboard, graphic-plan, repair)
+- Pricing snapshot 2026-03-30: Flash $0.30/M input, $2.50/M output
+- Persiste em `gemini-usage.json` por run
+
+---
+
+## Variáveis de ambiente
+
+### Essenciais (video-engine/.env)
+
+| Variável | Descrição | Default |
+|----------|-----------|---------|
+| `LLM_PROVIDER` | Provider LLM | `vertex` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path para service account JSON | — |
+| `GOOGLE_CLOUD_PROJECT` | ID do projeto GCP | — |
+| `TTS_PROVIDER` | Provider de voz | `google-gemini-tts` |
+| `TTS_VOICE` | Voz padrão | `Iapetus` |
+| `ELEVENLABS_API_KEY` | API key ElevenLabs | — |
+| `ELEVENLABS_VOICE_ID` | Voice ID ElevenLabs | `TX3LPaxmHKxFdv7VOQHJ` |
+| `AZURE_SPEECH_KEY` | API key Azure Speech | — |
+| `VIDEO_LANGUAGE` | Idioma do vídeo | `pt-BR` |
+| `MIN_SCENE_COUNT` | Mínimo de cenas | `14` |
+| `MAX_SCENE_COUNT` | Máximo de cenas | `18` |
+| `REMOTION_CONCURRENCY` | Threads de render | `2` (.env) / `1` (systemd) |
+| `REMOTION_VIDEO_BITRATE` | Bitrate de vídeo | `1400k` |
+| `CAPTION_WORDS_PER_CHUNK` | Palavras por legenda | `3` |
+
+### ElevenLabs (completo)
+
+| Variável | Default |
+|----------|---------|
+| `ELEVENLABS_API_KEY` | — |
+| `ELEVENLABS_VOICE_ID` | `TX3LPaxmHKxFdv7VOQHJ` |
+| `ELEVENLABS_MODEL_ID` | `eleven_multilingual_v2` |
+| `ELEVENLABS_LANGUAGE_CODE` | `pt` |
+| `ELEVENLABS_STABILITY` | `0.32` |
+| `ELEVENLABS_SIMILARITY_BOOST` | `0.8` |
+| `ELEVENLABS_STYLE` | `0.24` |
+| `ELEVENLABS_USE_SPEAKER_BOOST` | `true` |
+| `ELEVENLABS_SPEED` | `1` |
+
+---
+
+## Dependências principais
+
+| Pacote | Versão | Uso |
+|--------|--------|-----|
+| `remotion` | 4.0.434 | Render de vídeo |
+| `react` | ^19.1.0 | Composições Remotion |
+| `dotenv` | ^16.6.1 | Env vars |
+| `google-auth-library` | ^9.15.1 | Auth GCP |
+| `microsoft-cognitiveservices-speech-sdk` | ^1.48.0 | Azure TTS |
+| `zod` | 4.3.6 | Validação de schemas |
+
+---
 
 ## Comandos úteis
 
 ```bash
-npm run web                                          # subir a UI
-node scripts/foiumaideia.mjs --title "TITULO AQUI"   # gerar vídeo via CLI
-node video-engine/scripts/rerender-voice.mjs --slug SLUG --voice Charon  # re-render voz
-node video-engine/scripts/validate-run.mjs --slug SLUG                   # validação manual
-npm run test:flux2-rules                             # regressão regras de tela
-npm run test:scene-spec                              # regressão scene spec
-npm run test:scene-failure-taxonomy                  # regressão taxonomia de falhas
-```
+# Iniciar o servidor
+node web/server.mjs
 
-## Logs e diagnóstico
+# Gerar vídeo via CLI
+node scripts/foiumaideia.mjs --title "Meu título"
 
-```bash
-curl -s http://127.0.0.1:3210/api/jobs    # ver jobs
-curl -s http://127.0.0.1:3210/api/videos  # ver vídeos
-curl -s http://127.0.0.1:3210/api/config  # ver config
-```
+# Gerar com ElevenLabs
+node scripts/foiumaideia.mjs --title "Meu título" --provider elevenlabs
 
-## Bugs conhecidos
+# Re-render com nova voz
+node video-engine/scripts/rerender-voice.mjs --slug MEU-SLUG --provider elevenlabs
 
-1. **Slug compartilhado** — `runs/`, `assets/envato/`, `out/` são indexados por slug. Tentativas diferentes do mesmo slug compartilham artefatos.
-2. **UI não lista clips de cena** — falta botão nativo para `scene-XX.mp4` no painel do job.
-3. **`/tmp` pode saturar** — Remotion usa /tmp para frames intermediários. Mitigado com TMPDIR redirecionado para `.tmp/system`.
-4. **Quotas 429** — podem acontecer em geração de imagem, Gemini Vision e TTS. Retry com backoff exponencial implementado.
+# Re-render reutilizando áudio existente
+node video-engine/scripts/rerender-voice.mjs --slug MEU-SLUG --reuse-existing-audio
 
-## Próximas ondas
+# Validar run existente
+node video-engine/scripts/validate-run.mjs --slug MEU-SLUG
 
-1. Criar modelo `video_case` + `job_attempt` (eliminar conflitos de slug)
-2. Versionar artefatos por revisão
-3. Listar clips de cena na UI
-4. Tornar `Biblioteca` o cockpit principal
+# Gerar apenas assets visuais
+node scripts/generate-flux2-assets.mjs --slug MEU-SLUG
 
-## Validação rápida
-
-```bash
-python3 - <<'PY'
-import urllib.request, json
-with urllib.request.urlopen('http://127.0.0.1:3210/api/jobs') as r:
-    jobs=json.load(r)
-with urllib.request.urlopen('http://127.0.0.1:3210/api/videos') as r:
-    videos=json.load(r)
-print({
-  'activeJobId': jobs.get('activeJobId'),
-  'queueLength': jobs.get('queueLength'),
-  'jobs': len(jobs.get('jobs', [])),
-  'videos': len(videos.get('videos', [])),
-  'failedJobs': len(videos.get('failedJobs', []))
-})
-PY
+# Reiniciar serviço
+systemctl restart codex-video-ui.service
 ```

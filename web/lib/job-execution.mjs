@@ -153,6 +153,8 @@ export const createGenerateJobCommand = (job) => {
       GENERATION_MODE: job.input.generationMode || DEFAULT_GENERATION_MODE,
       AZURE_TTS_VOICE: job.input.voice,
       GOOGLE_TTS_VOICE: job.input.voice,
+      TTS_PROVIDER: job.input.audioProvider === "elevenlabs" ? "elevenlabs" : (baseChildEnv.TTS_PROVIDER || "auto"),
+      ELEVENLABS_VOICE_ID: job.input.audioProvider === "elevenlabs" ? job.input.voice : "",
       DEFAULT_OPEN: "false"
     }
   };
@@ -184,6 +186,8 @@ export const createRerenderJobCommand = (job) => {
       AZURE_TTS_VOICE: job.input.voice,
       GOOGLE_TTS_VOICE: job.input.voice,
       GOOGLE_TTS_STYLE_PROMPT: job.input.stylePrompt,
+      TTS_PROVIDER: job.input.audioProvider === "elevenlabs" ? "elevenlabs" : (baseChildEnv.TTS_PROVIDER || "auto"),
+      ELEVENLABS_VOICE_ID: job.input.audioProvider === "elevenlabs" ? job.input.voice : "",
       DEFAULT_OPEN: "false"
     }
   };
@@ -216,6 +220,8 @@ export const createAudioPrepJobCommand = (job) => {
       AZURE_TTS_VOICE: job.input.voice,
       GOOGLE_TTS_VOICE: job.input.voice,
       GOOGLE_TTS_STYLE_PROMPT: job.input.stylePrompt,
+      TTS_PROVIDER: job.input.audioProvider === "elevenlabs" ? "elevenlabs" : (baseChildEnv.TTS_PROVIDER || "auto"),
+      ELEVENLABS_VOICE_ID: job.input.audioProvider === "elevenlabs" ? job.input.voice : "",
       DEFAULT_OPEN: "false"
     }
   };

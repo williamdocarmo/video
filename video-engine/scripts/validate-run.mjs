@@ -10,7 +10,7 @@ const MIN_OUTPUT_VIDEO_BYTES = Math.max(
   1024,
   Number.parseInt(process.env.MIN_OUTPUT_VIDEO_BYTES || "131072", 10) || 131072
 );
-const TRUSTED_TIMED_WORD_SOURCES = new Set(["gcloud-speech-stt", "azure-word-boundary"]);
+const TRUSTED_TIMED_WORD_SOURCES = new Set(["gcloud-speech-stt", "azure-word-boundary", "elevenlabs-alignment"]);
 const normalizeTimedWordsSource = (source) => String(source || "").trim().toLowerCase();
 const isTrustedTimedWordsSource = (source) => {
   const normalized = normalizeTimedWordsSource(source);
