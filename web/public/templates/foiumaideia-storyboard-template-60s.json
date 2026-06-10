@@ -1,0 +1,379 @@
+{
+  "videoTitle": "TITULO_DO_VIDEO",
+  "hook": "ABRA COM A CONSEQUENCIA, IRONIA OU ABSURDO PRINCIPAL EM UMA FRASE CURTA.",
+  "postCaption": "RESUMA O TEMA EM 2 OU 3 FRASES CURTAS, COM O FATO MAIS FORTE E O FECHAMENTO MAIS MEMORAVEL.",
+  "hashtags": [
+    "#curiosidades",
+    "#historia",
+    "#tecnologia",
+    "#inovacao",
+    "#fatos",
+    "#shorts"
+  ],
+  "cta": "VOCE TERIA APOSTADO NESSA IDEIA NO COMECO?",
+  "audio": {
+    "provider": "elevenlabs",
+    "voiceName": "Ana Alice BR",
+    "voiceId": "ORgG8rwdAiMYRug8RJwR",
+    "modelId": "eleven_multilingual_v2",
+    "voiceStyle": "Pt-BR documentary short-form delivery: engaged, warm, fast, curious, slightly ironic, crisp diction, natural pauses, high retention."
+  },
+  "thumbnailPrompt": "Vertical 9:16 thumbnail, one dominant subject filling most of the frame, shocked human reaction to the central absurdity of the story, high contrast black white and one strong accent color, dramatic directional lighting, clean negative space in bottom third, same visual style as the video, no readable text, no logos, no watermark.",
+  "styleNotes": "Use one consistent visual identity for the whole video: mobile-first 9:16 editorial documentary illustration, strong silhouettes, high contrast, clean backgrounds, detailed human gestures, one accent color, no readable text, no logos, no watermarks.",
+  "imagePromptRules": {
+    "requiredPerScene": "1 to 4 imagePrompts",
+    "language": "English ASCII",
+    "formula": "subject + precise descriptors; physical action; setting/context; composition/framing; camera angle/lens; lighting; visual style/material/color palette; mood; 9:16 mobile clarity; negative constraints",
+    "negativeConstraints": "readable text, logos, watermarks, UI labels, charts, collage, split-screen, montage, malformed hands, blurry low detail"
+  },
+  "scenes": [
+    {
+      "title": "01 Hook",
+      "duration": "5.0s",
+      "narration": "ABRA COM A IMAGEM MAIS ABSURDA, IRONICA OU CONTRADITORIA DO TEMA.",
+      "overlay": "ABSURDO REAL",
+      "sceneType": "stock",
+      "searchQuery": "replace with one shocking concrete hook frame in english ascii no text no logos",
+      "visualGoal": "Mostrar o conflito principal antes de qualquer contexto longo.",
+      "candidateQueries": [
+        "replace with tight hook image query",
+        "replace with broader hook fallback query"
+      ],
+      "imagePrompts": [
+        "Vertical 9:16 editorial documentary illustration of the central absurdity of the story, one clear human subject reacting to a strange new idea, concrete object in the foreground, simple real-world setting, tight close-up framing, slightly low camera angle, hard directional light, high contrast black white and one accent color, tense curious mood, clean caption-safe negative space, readable at phone size, no readable text, logos, watermarks, UI labels, charts, collage, split-screen, or montage."
+      ],
+      "shots": [
+        {
+          "shotType": "hook close-up",
+          "duration": "1.7s",
+          "visualGoal": "Primeira imagem do absurdo.",
+          "searchQuery": "replace with hook close up query in english ascii",
+          "imagePrompt": "Vertical 9:16 close-up of the strongest absurd object or reaction in the story, one subject, one action, hard contrast, dramatic light, same style identity, no readable text, no logos, no watermark.",
+          "candidateQueries": [
+            "replace with hook close up alt a",
+            "replace with hook close up alt b"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "02 Contexto rapido",
+      "duration": "5.0s",
+      "narration": "MOSTRE ONDE A HISTORIA COMECA, SEM DESACELERAR.",
+      "overlay": "O COMECO",
+      "sceneType": "stock",
+      "searchQuery": "replace with fast context frame in english ascii no text no logos",
+      "visualGoal": "Dar o minimo de epoca, lugar ou situacao.",
+      "candidateQueries": [
+        "replace with context query a",
+        "replace with context query b"
+      ],
+      "imagePrompts": [
+        "Vertical 9:16 editorial documentary illustration of the story origin, one specific place and one main person interacting with a concrete object, medium-wide framing, eye-level camera, crisp foreground-background separation, natural but high-contrast lighting, consistent palette and linework, grounded historical or contemporary mood, no readable text, logos, watermarks, UI labels, charts, collage, split-screen, or montage."
+      ],
+      "shots": [
+        {
+          "shotType": "context wide",
+          "duration": "1.7s",
+          "visualGoal": "Ambiente inicial claro.",
+          "searchQuery": "replace with context wide query in english ascii",
+          "imagePrompt": "Vertical 9:16 wide context image with one dominant location and one visible action, clean composition, same style identity, no readable text, no logos, no watermark.",
+          "candidateQueries": [
+            "replace with context alt a",
+            "replace with context alt b"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "03 Medo ou conflito",
+      "duration": "5.0s",
+      "narration": "MOSTRE O MEDO, A DOR OU A REJEICAO QUE FAZ O TEMA IMPORTAR.",
+      "overlay": "PARECIA LOUCURA",
+      "sceneType": "stock",
+      "searchQuery": "replace with fear conflict frame in english ascii no text no logos",
+      "visualGoal": "Transformar a resistencia inicial em uma imagem fisica.",
+      "candidateQueries": [
+        "replace with fear query a",
+        "replace with fear query b"
+      ],
+      "imagePrompts": [
+        "Vertical 9:16 image of a skeptical person facing the risky or absurd core idea, clear facial reaction and defensive body language, real street or room setting, medium close-up framing, over-the-shoulder tension, sharp directional lighting, editorial short-documentary style, nervous ironic mood, strong mobile readability, no readable text, logos, watermarks, UI labels, charts, collage, split-screen, or montage."
+      ],
+      "shots": [
+        {
+          "shotType": "reaction shot",
+          "duration": "1.7s",
+          "visualGoal": "Reacao de medo ou rejeicao.",
+          "searchQuery": "replace with reaction query in english ascii",
+          "imagePrompt": "Vertical 9:16 reaction shot of one person visibly doubting the idea, concrete prop in frame, high contrast, same style identity, no readable text, no logos, no watermark.",
+          "candidateQueries": [
+            "replace with reaction alt a",
+            "replace with reaction alt b"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "04 Mecanismo",
+      "duration": "5.0s",
+      "narration": "EXPLIQUE COMO A IDEIA FUNCIONA COM UM GESTO, OBJETO OU ACAO VISUAL.",
+      "overlay": "COMO FUNCIONA",
+      "sceneType": "stock",
+      "searchQuery": "replace with mechanism frame in english ascii no text no logos",
+      "visualGoal": "Tornar a tecnologia ou ideia simples de ver.",
+      "candidateQueries": [
+        "replace with mechanism query a",
+        "replace with mechanism query b"
+      ],
+      "imagePrompts": [
+        "Vertical 9:16 detailed image of the mechanism behind the idea, one hand or person using one concrete tool, object, vehicle, app-like blank device, or system, top-down or three-quarter composition, clear cause-and-effect staging, bright focal light, consistent editorial illustration style, practical explainer mood, no readable text, logos, watermarks, UI labels, charts, collage, split-screen, or montage."
+      ],
+      "shots": [
+        {
+          "shotType": "object detail",
+          "duration": "1.7s",
+          "visualGoal": "Detalhe que explica a ideia.",
+          "searchQuery": "replace with mechanism detail query in english ascii",
+          "imagePrompt": "Vertical 9:16 object detail showing how the idea works through one clear action, clean frame, same style identity, no readable text, no logos, no watermark.",
+          "candidateQueries": [
+            "replace with mechanism alt a",
+            "replace with mechanism alt b"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "05 Parecia errado",
+      "duration": "5.0s",
+      "narration": "EXPLIQUE POR QUE A IDEIA PARECIA ESTRANHA, DIFICIL OU SOCIALMENTE ERRADA.",
+      "overlay": "NINGUEM QUERIA",
+      "sceneType": "stock",
+      "searchQuery": "replace with skepticism frame in english ascii no text no logos",
+      "visualGoal": "Mostrar o motivo emocional ou pratico da rejeicao.",
+      "candidateQueries": [
+        "replace with skepticism query a",
+        "replace with skepticism query b"
+      ],
+      "imagePrompts": [
+        "Vertical 9:16 editorial illustration of public skepticism around the idea, one main subject hesitating while others in the background react, clear real-world setting, diagonal composition, handheld documentary feel, harsh side lighting, high contrast with one accent color, awkward tense mood, no readable text, logos, watermarks, UI labels, charts, collage, split-screen, or montage."
+      ],
+      "shots": [
+        {
+          "shotType": "skepticism medium",
+          "duration": "1.7s",
+          "visualGoal": "Estranhamento social claro.",
+          "searchQuery": "replace with skepticism medium query in english ascii",
+          "imagePrompt": "Vertical 9:16 medium shot of skepticism or refusal, one main person and one concrete object, same style identity, no readable text, no logos, no watermark.",
+          "candidateQueries": [
+            "replace with skepticism alt a",
+            "replace with skepticism alt b"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "06 Primeira prova",
+      "duration": "5.0s",
+      "narration": "MOSTRE O PRIMEIRO USO, TESTE OU SINAL DE QUE A IDEIA PODIA FUNCIONAR.",
+      "overlay": "PRIMEIRO SINAL",
+      "sceneType": "stock",
+      "searchQuery": "replace with first validation frame in english ascii no text no logos",
+      "visualGoal": "Criar a primeira virada de credibilidade.",
+      "candidateQueries": [
+        "replace with validation query a",
+        "replace with validation query b"
+      ],
+      "imagePrompts": [
+        "Vertical 9:16 image of the first real validation moment, one person trying the idea with cautious curiosity, concrete object or service interaction in the foreground, medium shot, eye-level camera, soft but focused light, consistent documentary editorial style, hopeful but uncertain mood, no readable text, logos, watermarks, UI labels, charts, collage, split-screen, or montage."
+      ],
+      "shots": [
+        {
+          "shotType": "first use",
+          "duration": "1.7s",
+          "visualGoal": "A ideia sai do papel.",
+          "searchQuery": "replace with first use query in english ascii",
+          "imagePrompt": "Vertical 9:16 first-use image with one person testing the idea, concrete prop, focused light, same style identity, no readable text, no logos, no watermark.",
+          "candidateQueries": [
+            "replace with first use alt a",
+            "replace with first use alt b"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "07 Ganhou tracao",
+      "duration": "5.0s",
+      "narration": "MOSTRE A ADESAO INICIAL, SEM VIRAR GRAFICO OU ABSTRACAO.",
+      "overlay": "GANHOU RUA",
+      "sceneType": "stock",
+      "searchQuery": "replace with growth adoption frame in english ascii no text no logos",
+      "visualGoal": "Mostrar que o uso comecou a se espalhar.",
+      "candidateQueries": [
+        "replace with growth query a",
+        "replace with growth query b"
+      ],
+      "imagePrompts": [
+        "Vertical 9:16 image of early adoption spreading in a city or community, one dominant foreground user and subtle background activity, street-level wide composition, slight push-in feeling, morning or neon urban lighting, consistent editorial illustration style, energetic momentum mood, no readable text, logos, watermarks, UI labels, charts, collage, split-screen, or montage."
+      ],
+      "shots": [
+        {
+          "shotType": "growth wide",
+          "duration": "1.7s",
+          "visualGoal": "Uso se espalhando.",
+          "searchQuery": "replace with growth wide query in english ascii",
+          "imagePrompt": "Vertical 9:16 wide shot of adoption spreading through real people and objects, no charts, same style identity, no readable text, no logos, no watermark.",
+          "candidateQueries": [
+            "replace with growth alt a",
+            "replace with growth alt b"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "08 Backlash",
+      "duration": "5.0s",
+      "narration": "MOSTRE QUEM PERDEU ESPACO, QUEM PROTESTOU OU QUEM TENTOU BARRAR.",
+      "overlay": "VEIO A BRIGA",
+      "sceneType": "stock",
+      "searchQuery": "replace with backlash protest frame in english ascii no text no logos",
+      "visualGoal": "Transformar resistencia organizada em imagem forte.",
+      "candidateQueries": [
+        "replace with backlash query a",
+        "replace with backlash query b"
+      ],
+      "imagePrompts": [
+        "Vertical 9:16 image of organized resistance against the new idea, tense crowd or industry workers confronting the change, one main protester in foreground with non-readable blank sign shapes, urban setting, low angle, hard afternoon light, gritty editorial documentary illustration, conflict mood, no readable text, logos, watermarks, UI labels, charts, collage, split-screen, or montage."
+      ],
+      "shots": [
+        {
+          "shotType": "protest shot",
+          "duration": "1.7s",
+          "visualGoal": "Resistencia organizada.",
+          "searchQuery": "replace with protest query in english ascii",
+          "imagePrompt": "Vertical 9:16 protest or backlash image with blank sign shapes and one clear foreground subject, same style identity, no readable text, no logos, no watermark.",
+          "candidateQueries": [
+            "replace with protest alt a",
+            "replace with protest alt b"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "09 Virada",
+      "duration": "5.0s",
+      "narration": "MOSTRE O MOMENTO EM QUE A IDEIA DEIXA DE PARECER PIADA E VIRA REALIDADE.",
+      "overlay": "A VIRADA",
+      "sceneType": "stock",
+      "searchQuery": "replace with turning point frame in english ascii no text no logos",
+      "visualGoal": "Marcar a mudanca de percepcao.",
+      "candidateQueries": [
+        "replace with turning point query a",
+        "replace with turning point query b"
+      ],
+      "imagePrompts": [
+        "Vertical 9:16 turning point image where the once-ridiculous idea becomes visibly normal, foreground person confidently using it while a skeptic watches, clean urban or workplace setting, balanced composition, three-quarter camera angle, strong rim light, consistent editorial illustration style, reversal mood, no readable text, logos, watermarks, UI labels, charts, collage, split-screen, or montage."
+      ],
+      "shots": [
+        {
+          "shotType": "turning point",
+          "duration": "1.7s",
+          "visualGoal": "Percepcao mudando.",
+          "searchQuery": "replace with turning point query in english ascii",
+          "imagePrompt": "Vertical 9:16 turning point frame with one confident user and one skeptical observer, strong rim light, same style identity, no readable text, no logos, no watermark.",
+          "candidateQueries": [
+            "replace with turning alt a",
+            "replace with turning alt b"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "10 Consequencia",
+      "duration": "5.0s",
+      "narration": "MOSTRE O IMPACTO PERMANENTE QUE A IDEIA DEIXOU NO MUNDO REAL.",
+      "overlay": "MUDOU TUDO",
+      "sceneType": "stock",
+      "searchQuery": "replace with permanent consequence frame in english ascii no text no logos",
+      "visualGoal": "Mostrar mudanca concreta na rotina, mercado ou cidade.",
+      "candidateQueries": [
+        "replace with impact query a",
+        "replace with impact query b"
+      ],
+      "imagePrompts": [
+        "Vertical 9:16 image of the permanent consequence in everyday life, one ordinary person moving through a changed city or routine, recognizable objects showing new behavior without readable text, wide street-level composition, clean depth layers, golden or cool dramatic light, consistent documentary illustration style, irreversible change mood, no logos, watermarks, UI labels, charts, collage, split-screen, or montage."
+      ],
+      "shots": [
+        {
+          "shotType": "impact wide",
+          "duration": "1.7s",
+          "visualGoal": "Mundo depois da mudanca.",
+          "searchQuery": "replace with impact wide query in english ascii",
+          "imagePrompt": "Vertical 9:16 wide image of a real-world routine permanently changed, one dominant subject, same style identity, no readable text, no logos, no watermark.",
+          "candidateQueries": [
+            "replace with impact alt a",
+            "replace with impact alt b"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "11 Hoje parece normal",
+      "duration": "5.0s",
+      "narration": "COMPARE O ABSURDO DO COMECO COM A NORMALIDADE DE HOJE.",
+      "overlay": "HOJE E NORMAL",
+      "sceneType": "stock",
+      "searchQuery": "replace with today normal contrast frame in english ascii no text no logos",
+      "visualGoal": "Fechar o arco antes do payoff final.",
+      "candidateQueries": [
+        "replace with today query a",
+        "replace with today query b"
+      ],
+      "imagePrompts": [
+        "Vertical 9:16 image showing the idea as completely normal today, one relaxed person using it without drama, simple modern environment, calm centered composition, eye-level camera, clean bright light, same editorial documentary illustration style, ironic normality mood, no readable text, logos, watermarks, UI labels, charts, collage, split-screen, or montage."
+      ],
+      "shots": [
+        {
+          "shotType": "normal today",
+          "duration": "1.7s",
+          "visualGoal": "Normalidade atual.",
+          "searchQuery": "replace with normal today query in english ascii",
+          "imagePrompt": "Vertical 9:16 modern normal-use image with one relaxed person and one clear action, same style identity, no readable text, no logos, no watermark.",
+          "candidateQueries": [
+            "replace with normal alt a",
+            "replace with normal alt b"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "12 Payoff final",
+      "duration": "5.0s",
+      "narration": "FECHE COM A IRONIA, CONSEQUENCIA OU COMPARACAO QUE FICA NA CABECA.",
+      "overlay": "E VOCE?",
+      "sceneType": "stock",
+      "searchQuery": "replace with memorable final payoff frame in english ascii no text no logos",
+      "visualGoal": "Deixar uma imagem final memoravel e comentavel.",
+      "candidateQueries": [
+        "replace with payoff query a",
+        "replace with payoff query b"
+      ],
+      "imagePrompts": [
+        "Vertical 9:16 final payoff image, one memorable symbolic object or human reaction that summarizes the whole irony, clean dramatic composition, subject in upper two-thirds, bottom third open for captions, strong directional light, high contrast palette, consistent editorial documentary style, satisfying ironic mood, no readable text, logos, watermarks, UI labels, charts, collage, split-screen, or montage."
+      ],
+      "shots": [
+        {
+          "shotType": "final payoff",
+          "duration": "1.7s",
+          "visualGoal": "Imagem final memoravel.",
+          "searchQuery": "replace with final payoff query in english ascii",
+          "imagePrompt": "Vertical 9:16 final payoff frame with one symbolic object or reaction, caption-safe negative space, same style identity, no readable text, no logos, no watermark.",
+          "candidateQueries": [
+            "replace with payoff alt a",
+            "replace with payoff alt b"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -8,7 +8,9 @@
     "imagen-4.0-fast-generate-001",
     "gemini-2.5-flash-image",
     "imagen-4.0-generate-001",
-    "imagen-4.0-ultra-generate-001"
+    "imagen-4.0-ultra-generate-001",
+    "gemini-3.1-flash-image-preview",
+    "gemini-3-pro-image-preview"
   ],
   "generatedAt": "2026-04-06T10:51:14.837Z",
   "items": [
@@ -195,6 +197,16 @@
       "note": "Melhor qualidade e consistência.",
       "imagePath": "./images/models/imagen-4.0-ultra-generate-001.png",
       "prompt": "Create a clean editorial ink illustration for a vertical 9:16 short video. Show one driver stuck in heavy traffic inside a car, frustrated, checking a wristwatch with one hand while the other hand remains naturally placed near the steering wheel. Show a low-fuel gauge on the dashboard. Keep exactly one human figure, natural human proportions, only two arms and two hands, no extra limbs, no duplicate watches. This is not a macro hardware shot. Use a readable medium-wide in-car composition, not a device close-up. No text, no logos, no watermark, no fake UI."
+    },
+    {
+      "model": "gemini-3.1-flash-image-preview",
+      "label": "Gemini 3.1 Flash Image",
+      "badge": "Novo • Melhor estilo"
+    },
+    {
+      "model": "gemini-3-pro-image-preview",
+      "label": "Gemini 3 Pro Image",
+      "badge": "Novo • Premium"
     }
   ]
 }

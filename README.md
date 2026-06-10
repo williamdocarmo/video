@@ -17,9 +17,11 @@ Traefik v3.6.11 (Docker/Coolify, :443, Let's Encrypt TLS)
   │  └─ secure-headers (HSTS, X-Frame-Options, etc.)
   │
   ▼
-Node.js HTTP server (:3210, 0.0.0.0)
+Node.js runtime (:3210, 0.0.0.0)
   │
-  ├─ web/server.mjs .............. backend: API REST, fila dual-lane, recovery, biblioteca, publicação
+  ├─ web/server.mjs .............. runtime unificado (`VIDEO_STUDIO_ROLE=all`)
+  ├─ web/api-server.mjs .......... entrypoint API/UI (`VIDEO_STUDIO_ROLE=api`)
+  ├─ web/worker-engine.mjs ....... entrypoint worker (`VIDEO_STUDIO_ROLE=worker`)
   ├─ web/public/ ................. frontend: app.js, index.html, styles.css
   │
   ├─ web/lib/
@@ -71,9 +73,24 @@ Node.js HTTP server (:3210, 0.0.0.0)
   │   └─ visual-style-presets.mjs  10 presets visuais com ~17 campos de prompt cada
   │
   ├─ shared/utils.mjs ............ utilitários partilhados (normalizeText, sleep, slugify, extractJson)
-  ├─ .web-ui/ .................... persistência: jobs.json, videos.json, inputs/, tiktok-drafts/
+  ├─ .web-ui/ .................... persistência: jobs.json, videos.json, inputs/, tiktok-drafts/, runtime-auth.json
   └─ /root/postar/{canal}/ ...... export final organizado por canal
 ```
+
+## Runtime modes
+
+O runtime agora suporta 3 papéis:
+
+| Role | Comando | Uso |
+|------|---------|-----|
+| `all` | `node web/server.mjs` | modo histórico: API + worker no mesmo processo |
+| `api` | `node web/api-server.mjs` | expõe UI/API HTTP, sincroniza jobs a partir do snapshot |
+| `worker` | `node web/worker-engine.mjs` | executa a fila sem abrir porta HTTP |
+
+Notas:
+- O split continua a usar `.web-ui/jobs.json` como snapshot partilhado entre processos.
+- `WEB_DATA_DIR` permite isolar o estado local por ambiente ou teste.
+- Ainda não existe coordenação multi-worker distribuída; isto é desacoplamento operacional, não uma fila distribuída completa.
 
 ---
 
@@ -84,11 +101,12 @@ Node.js HTTP server (:3210, 0.0.0.0)
 ```
 1. UI envia POST /api/generate  ─────────────────────────────────────────┐
    { title, sourceText, language, voice, audioProvider,                  │
-     outputProfile, channel, tone, imageModel, generationMode, ... }     │
+     outputProfile, channel, tone, imageModel, generationMode,           │
+     storyboard (opcional — JSON externo), ... }                         │
                                                                          ▼
 2. server.mjs cria job → enqueueAndStart() ──── job-queue.mjs (dual-lane)
-   │  lane "preview" (storyboard only, rápido)
-   │  lane "heavy"   (pipeline completo, lento)
+   │  lane "preview" (storyboard only, rápido, timeout 5min)
+   │  lane "heavy"   (pipeline completo, lento, timeout por tipo de job)
    │
    ▼
 3. job-execution.mjs → spawn("node scripts/foiumaideia.mjs ...")
@@ -103,15 +121,16 @@ Node.js HTTP server (:3210, 0.0.0.0)
    │
    ├─ ASSETS: spawn generate-google-assets.mjs
    │   ├─ Gemini planeja shots por cena (visual-plan.json)
-   │   ├─ Vertex AI Imagen / Gemini 2.5 Flash Image gera PNGs via API remota
+   │   ├─ Gemini Flash Image / Pro Image / Vertex AI Imagen gera PNGs via API remota
    │   ├─ Gemini Vision audita cada imagem
    │   ├─ Retry com directivas progressivas se falhar
+   │   ├─ Fallback: usa melhor tentativa rejeitada se todos os attempts falharem
    │   └─ ffmpeg converte PNGs → scene-XX.mp4 (local, leve)
    │
    └─ HEAVY: spawn make-plan1-video.mjs (pipeline completo)
        │
        ├─ 5a. Storyboard (Gemini LLM)
-       │   ├─ generateStoryboard() → JSON com cenas, narração, hook, CTA
+       │   ├─ generateStoryboard() → JSON com cenas, narração, hook, CTA, thumbnailPrompt
        │   ├─ evaluateStoryboardQa() → validação pré-visual
        │   └─ repairStoryboard() → até 3 tentativas de correção
        │
@@ -148,7 +167,7 @@ Node.js HTTP server (:3210, 0.0.0.0)
        └─ 5g. QA (validate-run.mjs)
            ├─ 20+ checks: output exists, scene count, captions, sync, pacing
            ├─ Extrai frames de amostra para inspeção
-           ├─ Gera thumbnail com overlay de texto
+           ├─ Gera thumbnail AI via Vertex (thumbnailPrompt do storyboard) com fallback para frame do vídeo
            └─ Persiste agent-report.json + orchestration-report.json
 ```
 
@@ -156,11 +175,11 @@ Node.js HTTP server (:3210, 0.0.0.0)
 
 ## TTS — Providers de voz
 
-O sistema suporta 4 providers de TTS, selecionáveis via `TTS_PROVIDER` env var ou dropdown "Provedor de áudio" na UI.
+O engine suporta 4 providers de TTS internamente. No fluxo atual da UI web, o dropdown "Provedor de áudio" expõe `gcp` e `elevenlabs`; os demais providers continuam acessíveis via scripts/engine.
 
 | Provider | Env value | Timestamps | Fallback STT | Notas |
 |----------|-----------|------------|--------------|-------|
-| Cloud Gemini TTS | `google-gemini-tts` / `gemini-tts` / `gemini` | Via Google Cloud STT | `extractTimedWordsFromAudio()` | Provider padrão. Modelo `gemini-2.5-flash-tts`. Fallback para Chirp3-HD se transiente. |
+| Cloud Gemini TTS | `google-gemini-tts` / `gemini-tts` / `gemini` | Via Google Cloud STT | `extractTimedWordsFromAudio()` | Provider padrão. Modelo `gemini-3.1-flash-tts-preview`. Fallback para Chirp3-HD se transiente. |
 | Cloud TTS Chirp3-HD | `gcloud` / `google` / `auto` | Via Google Cloud STT | `extractTimedWordsFromAudio()` | Fallback do Gemini TTS. Vozes `pt-BR-Chirp3-HD-*`. |
 | ElevenLabs | `elevenlabs` | Nativo (`/with-timestamps`) | `extractTimedWordsFromAudio()` se alignment vazio | Alignment character-level convertido para timedWords via `buildTimedWordsFromAlignment()`. |
 | Azure Speech | `azure` | Nativo (word boundaries) | `extractTimedWordsFromAudio()` se cobertura incompleta | `microsoft-cognitiveservices-speech-sdk`. Padding de cauda automático. **Opcional — não configurado por padrão (requer `AZURE_SPEECH_KEY`).** |
@@ -215,7 +234,7 @@ Pós-processamento comum:
 - **Cross-fade**: 12 frames (~400ms) de transição entre cenas
 - **Overlay gradient**: Escurecimento topo/base para legibilidade
 - **Hook/título**: Animação spring nos primeiros 48 frames
-- **Música de fundo**: Volume 8% (`volume={0.08}`)
+- **Música de fundo**: Volume 0.8% (`volume={0.008}`)
 
 ---
 
@@ -223,7 +242,7 @@ Pós-processamento comum:
 
 | Perfil | Layout | Resolução | Composição | Duração padrão | Cenas |
 |--------|--------|-----------|------------|----------------|-------|
-| `vertical-short` | 9:16 | 1080×1920 | CodexShort | 100s | 14–18 |
+| `vertical-short` | 9:16 | 1080×1920 | CodexShort | 100s | 8–18, dinâmico conforme `targetSeconds` |
 | `horizontal-5m` | 16:9 | 1920×1080 | CodexWide | 300s | 20–30 |
 | `horizontal-10m` | 16:9 | 1920×1080 | CodexWide | 600s | 30–42 |
 
@@ -251,7 +270,10 @@ Cada preset define ~17 campos de prompt para guiar a geração de imagens.
 ## Web UI — Tabs e funcionalidades
 
 ### Tab "Criar"
-- Formulário com: título, texto-base, idioma (pt-BR/en-US), perfil de saída, duração, modo de geração, modelo de imagem, estilo visual, tom de roteiro, provedor de áudio (GCP/ElevenLabs), voz, canal, opções (forçar, sem música, auto-aprovar)
+- Formulário centrado em: título, texto-base, storyboard JSON externo, perfil de saída, duração, modo de geração, modelo de imagem, provedor de áudio, voz, canal e opções de execução
+- Idioma, estilo visual e tom deixam de ser knobs primários no fluxo com storyboard pronto; o runtime resolve isso a partir do preset do canal e dos defaults do backend
+- **Storyboard externo**: campo para colar ou carregar ficheiro JSON com storyboard pré-feito — salta a geração pelo Gemini e vai direto para assets + render. Se o storyboard externo incluir visual prompts por cena, o pipeline bypassa o preset visual selecionado. Validação inline mostra erros de JSON e contagem de cenas.
+- **Modo dual-channel**: para `@ate2min` + `@quiet2min`, a UI aceita storyboard em `pt-BR`, cria o job base para `@ate2min`, traduz o pacote textual para inglês e enfileira um segundo job para `@quiet2min`, reaproveitando os mesmos assets visuais
 - Submissão cria job na fila → SSE streaming de logs em tempo real
 - Preview mode: gera só storyboard para aprovação antes do pipeline completo
 
@@ -263,10 +285,10 @@ Cada preset define ~17 campos de prompt para guiar a geração de imagens.
 
 ### Tab "Biblioteca"
 - Lista de vídeos exportados por canal
-- Metadados editáveis: título, caption, hashtags, plataformas
-- Publicação via agendador.online (Facebook, Instagram, YouTube, TikTok)
+- Metadados editáveis: título interno, título de publicação, legenda curta para cross-post fora do YouTube, descrição base, hashtags, plataformas
+- Publicação via agendador.online (Facebook, Instagram, YouTube)
 - Download direto, preview de thumbnail
-- TikTok helper: página HTML standalone para upload manual
+- TikTok helper: página HTML standalone para upload manual usando a legenda curta
 
 ### Tab "Estilos"
 - Preview dos 10 presets visuais com imagens de exemplo
@@ -279,41 +301,61 @@ Cada preset define ~17 campos de prompt para guiar a geração de imagens.
 ### Geração e pipeline
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| POST | `/api/generate` | Cria job de geração (preview ou completo) |
+| POST | `/api/generate` | Cria job de geração (preview ou completo; aceita `storyboard` JSON externo e pode devolver dois jobs em modo dual-channel) |
 | POST | `/api/approve-preview` | Aprova storyboard e lança pipeline completo |
-| POST | `/api/jobs/:id/cancel` | Cancela job em execução |
-| POST | `/api/jobs/:id/retry` | Retry de job falhado |
-| POST | `/api/jobs/:id/rerender` | Re-render com nova voz |
+| POST | `/api/rerender-voice` | Re-render com nova voz/provider |
+| POST | `/api/jobs/:id/retry-from-storyboard` | Retry de job falhado a partir do storyboard existente |
+| POST | `/api/jobs/:id/regenerate-missing-scene` | Regenera cena específica |
+| POST | `/api/jobs/:id/approve-scene-attempt` | Aprova tentativa rejeitada de imagem para uma cena |
 | POST | `/api/jobs/:id/generate-audio` | Prepara áudio sem render |
 | POST | `/api/jobs/:id/render-only` | Render Remotion sem regenerar áudio |
-| POST | `/api/jobs/:id/validate-only` | Executa QA sem re-render |
-| POST | `/api/jobs/:id/regenerate-missing-scene` | Regenera cena específica |
+| POST | `/api/jobs/:id/validate` | Executa QA sem re-render |
+| POST | `/api/jobs/:id/force-fail` | Força job para estado falhado |
+| POST | `/api/jobs/:id/resume` | Retoma job pausado/falhado |
 
 ### Consulta
 | Método | Rota | Descrição |
 |--------|------|-----------|
+| GET | `/api/health` | Snapshot operacional leve do processo/fila |
 | GET | `/api/config` | Configuração da UI (vozes, modelos, canais, tons, perfis) |
-| GET | `/api/jobs` | Lista todos os jobs |
+| GET | `/api/openapi.yaml` | Spec OpenAPI servida pelo runtime |
+| GET | `/api/docs/:name` | Docs markdown do runtime (`api-reference`, `operations-reference`) |
+| GET | `/api/elevenlabs-voices` | Lista vozes ElevenLabs da conta (cache 5min) |
+| GET | `/api/jobs` | Lista jobs (paginado: `?limit=50&offset=0`) |
 | GET | `/api/jobs/:id` | Detalhes de um job |
 | GET | `/api/jobs/:id/stream` | SSE streaming de logs |
-| GET | `/api/jobs/:id/storyboard` | Storyboard JSON do job |
-| GET | `/api/jobs/:id/render-props` | Render props JSON |
-| GET | `/api/jobs/:id/voiceover` | Voiceover metadata JSON |
+| GET | `/api/jobs/:id/scenes` | Lista de cenas com assets do job |
+| GET | `/api/jobs/:id/scene-review` | Galeria de tentativas rejeitadas para revisão manual |
+| GET | `/api/runs` | Lista de runs com artefactos no disco |
 
 ### Biblioteca e publicação
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | GET | `/api/videos` | Lista vídeos exportados |
-| GET | `/api/videos/failed-jobs` | Jobs falhados sem recovery |
-| POST | `/api/videos/:id/metadata` | Atualiza metadados do vídeo |
-| POST | `/api/videos/:id/publish` | Publica via agendador.online |
-| POST | `/api/videos/:id/schedule` | Agenda publicação |
-| GET | `/api/videos/:id/tiktok-helper` | Página HTML para upload TikTok |
+| POST | `/api/videos/meta` | Atualiza metadados do vídeo, incluindo `publishTitle` e `socialCaption` |
+| POST | `/api/videos/refazer` | Refaz vídeo existente |
+| POST | `/api/videos/delete` | Remove vídeo da biblioteca |
+| POST | `/api/videos/publish` | Publica via agendador.online, tentando enviar `title` separado quando suportado |
+| POST | `/api/videos/tiktok-helper` | Gera draft TikTok para upload manual com título curto e legenda curta |
+| POST | `/api/videos/:slug/reset-publish` | Limpa estado de publicação para republicar |
+
+### Simulador
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| POST | `/api/simulador/generate` | Gera simulação de custo |
+| GET | `/api/simulador/jobs` | Lista jobs do simulador |
+| GET | `/api/simulador/video/:id` | Detalhes de vídeo simulado |
+| DELETE | `/api/simulador/jobs/:id` | Remove job do simulador |
 
 ### Ficheiros
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| GET | `/api/file` | Serve ficheiro por path (áudio, vídeo, imagem) |
+| GET | `/api/file` | Serve ficheiro por path (áudio, vídeo, imagem). Bloqueia `.env`, `.key`, `secrets.mjs`, `secrets.json`. |
+| GET | `/tiktok-helper` | Página HTML standalone para upload TikTok |
+
+Notas:
+- O runtime aplica HTTP Basic Auth globalmente antes do dispatch das rotas.
+- Se `VIDEO_STUDIO_PASSWORD` não estiver definido, o runtime gera uma password forte local e persiste em `.web-ui/runtime-auth.json`.
 
 ---
 
@@ -338,6 +380,19 @@ User=root
 - TMPDIR redirecionado para `.tmp/system` (evita saturação do /tmp com frames Remotion)
 - REMOTION_CONCURRENCY=1 em produção (override do .env)
 - Auto-restart com 5s de delay
+
+### Split opcional API + worker
+
+O repo também suporta arranque separado:
+
+- `deploy/codex-video-api.service`
+- `deploy/codex-video-worker.service`
+
+Papéis:
+- `api`: UI/API HTTP, auth, docs, health, leitura/sync de jobs
+- `worker`: execução da fila e child processes
+
+O serviço legado `deploy/codex-video-ui.service` continua válido para modo unificado.
 
 ### Traefik (via Coolify)
 
@@ -364,15 +419,23 @@ Middlewares: HSTS (1 ano), X-Frame-Options DENY, X-Content-Type-Options nosniff,
 
 ## Fila dual-lane (job-queue.mjs)
 
-| Lane | Concorrência | Uso |
-|------|-------------|-----|
-| `preview` | 1 | Storyboard-only (rápido, ~30s) |
-| `heavy` | 1 | Pipeline completo (lento, 5–15min) |
+| Lane | Concorrência | Timeout efetivo | Uso |
+|------|-------------|------------------|-----|
+| `preview` | 1 | 5min | Storyboard-only (rápido, ~30s) |
+| `heavy` | 1 | por tipo de job | Generate, rerender, render-only, validate, recovery |
 
 - Jobs são enfileirados por lane e processados FIFO
 - Apenas 1 job ativo por lane (sem paralelismo)
+- Timeout atual por tipo:
+  - `generate`: 90min
+  - `render-only`: 60min
+  - `scene-regenerate`: 45min
+  - `audio-prep`: 20min
+  - `validate-only`: 15min
+- Além do timeout máximo, existe timeout por inatividade e terminação da árvore inteira do processo
 - Recovery automático: jobs `running` sem processo vivo são marcados como `failed`
 - Persistência em `.web-ui/jobs.json`
+- Em split `api` + `worker`, ambos os processos sincronizam o estado a partir deste snapshot
 
 ---
 
@@ -410,16 +473,17 @@ Middlewares: HSTS (1 ano), X-Frame-Options DENY, X-Content-Type-Options nosniff,
 
 ## Asset pipeline visual (generate-google-assets.mjs)
 
-Geração de imagens é **remota via API Google** (Vertex AI Imagen ou Gemini 2.5 Flash Image). Não há geração local de imagens; o processamento pesado local é o Remotion (render Chromium) e o ffmpeg.
+Geração de imagens é **remota via API Google** (Vertex AI Imagen, Gemini Flash Image ou Gemini Pro Image). Não há geração local de imagens; o processamento pesado local é o Remotion (render Chromium) e o ffmpeg.
 
 ```
 1. Gemini planeja shots por cena → visual-plan.json
    ├─ Segmentos por cena (1–3 shots)
    ├─ Prompt detalhado por segmento
-   └─ Guiado pelo visual style preset selecionado
+   └─ Guiado pelo visual style preset selecionado (bypass se storyboard externo com visual prompts)
 
-2. Vertex AI Imagen / Gemini 2.5 Flash Image gera PNGs por segmento (via API remota)
-   ├─ Modelo: imagen-4.0-fast-generate-001 (padrão) ou gemini-2.5-flash-image
+2. Modelo de imagem gera PNGs por segmento (via API remota)
+   ├─ Modelo padrão: gemini-3.1-flash-image-preview
+   ├─ Alternativas: gemini-3-pro-image-preview, gemini-2.5-flash-image, imagen-4.0-*
    ├─ Resolução: 1024×1024 (escalado para 1080×1920 ou 1920×1080)
    └─ Retry com directivas progressivas (até 6 tentativas)
 
@@ -428,7 +492,12 @@ Geração de imagens é **remota via API Google** (Vertex AI Imagen ou Gemini 2.
    ├─ Classifica falhas em 12 categorias (scene-failure-taxonomy.mjs)
    └─ Sugere estratégia de repair (mask_edit, crop_repair, retry_with_constraints)
 
-4. ffmpeg converte PNGs → scene-XX.mp4
+4. Fallback para tentativas rejeitadas
+   ├─ Se todos os attempts de um segmento falharem no audit, usa a melhor tentativa rejeitada
+   ├─ Evita matar o job inteiro por uma cena com audit marginal
+   └─ Log: "FALLBACK using rejected attempt (audit failed but usable)"
+
+5. ffmpeg converte PNGs → scene-XX.mp4
    ├─ Ken Burns motion aplicado via filtro de vídeo
    ├─ Segmentos concatenados por cena
    └─ Output: assets/envato/{slug}/scene-XX.mp4
@@ -456,7 +525,14 @@ Compila especificação estruturada por cena a partir do storyboard:
 ### Funções principais
 | Função | Uso |
 |--------|-----|
-| `generateStoryboard()` | Gera JSON com cenas, narração, hook, CTA, hashtags |
+| `generateStoryboard()` | Gera JSON com cenas, narração, hook, CTA, hashtags, thumbnailPrompt |
+
+### Thumbnail Policy — TikTok Safe
+- Thumbnail final continua em `1080x1920`, mas o layout assume recorte agressivo no TikTok.
+- Usar apenas um bloco de texto no topo. Não repetir texto em baixo.
+- Evitar texto no rodapé e não encostar headline na borda superior.
+- O sujeito principal deve permanecer no centro visual da capa.
+- Badge/handle de canal não entra mais no overlay final.
 | `evaluateStoryboardQa()` | Valida storyboard pré-visual (word count, scene count, pacing) |
 | `repairStoryboard()` | Reescreve storyboard com base no feedback da QA (até 3 tentativas) |
 | `generateGraphicPlanStrict()` | Gera plano visual com queries de stock por cena |
@@ -517,6 +593,7 @@ Compila especificação estruturada por cena a partir do storyboard:
 | `google-auth-library` | ^9.15.1 | Auth GCP |
 | `microsoft-cognitiveservices-speech-sdk` | ^1.48.0 | Azure TTS |
 | `zod` | 4.3.6 | Validação de schemas |
+| `sharp` | 0.33.5 | Crop/resize de thumbnail AI |
 
 ---
 
@@ -525,6 +602,17 @@ Compila especificação estruturada por cena a partir do storyboard:
 ```bash
 # Iniciar o servidor
 node web/server.mjs
+
+# Subir só a API/UI
+node web/api-server.mjs
+
+# Subir só o worker
+node web/worker-engine.mjs
+
+# Scripts npm equivalentes
+npm run web
+npm run web:api
+npm run web:worker
 
 # Gerar vídeo via CLI
 node scripts/foiumaideia.mjs --title "Meu título"
@@ -547,3 +635,44 @@ node scripts/generate-google-assets.mjs --slug MEU-SLUG
 # Reiniciar serviço
 systemctl restart codex-video-ui.service
 ```
+
+---
+
+## Changelog
+
+### 2026-04-13 — Ajustes no preset `ink` e composição vertical
+
+Contexto: o vídeo "A mulher que inventou o Wi-Fi" (estilo ink, modelo imagen-4.0-generate-001) apresentava fundo cinza degradê em vez de sólido, composição centralizada (rosto no meio do frame em vez do terço superior), e símbolos/ícones pouco legíveis em props.
+
+#### Alterações em `config/visual-style-presets.mjs` (só preset `ink`)
+
+| Campo | Antes | Depois |
+|-------|-------|--------|
+| `stylePrompt` | `...clean paper background...` | `...solid white or solid black background only, no gradient, no gray tones...` |
+| `backgroundDirectives[0]` | `light paper or off-white neutral background...` | `solid white or solid black background only, no gradient, no gray fill, no degradé, no tonal transition` |
+| `plannerGuidance` | (sem menção a ícones) | Adicionado: `When a prop carries a symbol or icon, describe it as large, bold, and immediately recognizable at thumbnail size.` |
+| `scaleGuidance` | (sem menção a composição vertical) | Adicionado: `In vertical 9:16 frames, position the character's face and head in the upper third, leaving the lower third empty for captions.` |
+| `attemptDirectives[4]` | `...clean paper contrast over muddy gray rendering` | `...solid white or solid black background, no gradient, no gray fill` |
+| `refinePromptFinish` | `...clean paper background, no text` | `...solid white or black background, no gradient, no text` |
+
+Nenhum outro preset foi alterado.
+
+#### Alterações em `scripts/generate-google-assets.mjs`
+
+- `buildImagePrompt()`: para layout vertical (9:16), o prompt de imagem agora inclui `Position the character's face and head in the upper third of the frame, leaving the lower third empty for caption overlays.` — esta instrução vai direto no prompt que o modelo de imagem lê.
+
+#### Resultado do teste
+
+Vídeo regenerado com os mesmos parâmetros (job `mnxg8ra1-e7nzca`, slug `-2`). QA passou (20+ checks ok). Resultado visual:
+
+- **Fundo gradiente**: não resolvido. O prompt pede "solid white, no gradient" 3× (stylePrompt, backgroundDirectives, attemptDirectives) e o negative prompt inclui "gradient background", mas o modelo `imagen-4.0-generate-001` ignora e gera gradiente cinza em 16 de 20 imagens. Análise de pixels confirmou spread > 25 entre cantos e centro na maioria das imagens.
+- **Composição vertical**: parcialmente melhor. ~30% das cenas com pessoa posicionaram o rosto no terço superior. As restantes mantiveram composição centralizada ou com sujeito no terço inferior.
+- **Legibilidade de ícones**: sem dados comparativos suficientes para avaliar.
+
+#### Conclusão e próximos passos identificados
+
+O problema de fundo não é do prompt — é do modelo de geração. A galeria de estilos (`/estilos`) mostra que o `gemini-2.5-flash-image` respeita o estilo ink com fundo limpo, enquanto o `imagen-4.0-generate-001` adiciona gradientes. Opções identificadas:
+
+1. **Modelo por preset**: usar `gemini-2.5-flash-image` para presets de ilustração (ink, claude, kiro, editorial_clean, etc.) e `imagen-4.0` para presets fotorealistas (realistic_film). Requer campo `preferredModel` no preset ou lógica de routing.
+2. **Auditoria Gemini Vision**: adicionar check de fundo no bloco `STYLE_IS_INK` da auditoria visual para rejeitar imagens com gradiente e forçar regeneração.
+3. **Pós-processamento**: threshold de fundo nas PNGs antes da conversão para MP4.

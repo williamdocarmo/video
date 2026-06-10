@@ -1,0 +1,2042 @@
+openapi: 3.1.0
+info:
+  title: Video Studio API
+  version: 2026-04-22
+  summary: Formalized reference for the current Node.js HTTP API in web/server.mjs.
+  description: >
+    This specification documents the API currently implemented by the app runtime.
+    It reflects the present Node.js runtime behavior across the supported all/api/worker roles and intentionally includes
+    known gaps where the runtime is not a fully stable public contract.
+servers:
+  - url: http://127.0.0.1:3210
+    description: Local runtime
+  - url: https://video.vamostestar.online
+    description: Production site
+security:
+  - basicAuth: []
+tags:
+  - name: Config
+  - name: Jobs
+  - name: Videos
+  - name: Files
+  - name: Simulator
+paths:
+  /api/config:
+    get:
+      tags: [Config]
+      summary: Return runtime configuration used by the web UI.
+      responses:
+        '200':
+          description: UI bootstrap payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigResponse'
+  /api/health:
+    get:
+      tags: [Config]
+      summary: Return a lightweight process and queue health snapshot.
+      responses:
+        '200':
+          description: Health payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /api/openapi.yaml:
+    get:
+      tags: [Config]
+      summary: Return the current OpenAPI document served by the runtime.
+      responses:
+        '200':
+          description: OpenAPI YAML.
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /api/docs/{name}:
+    get:
+      tags: [Config]
+      summary: Return runtime documentation pages as markdown.
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+            enum: [api-reference, operations-reference]
+      responses:
+        '200':
+          description: Markdown document.
+          content:
+            text/markdown:
+              schema:
+                type: string
+        '404':
+          description: Unknown document name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/elevenlabs-voices:
+    get:
+      tags: [Config]
+      summary: Return ElevenLabs voices from the configured account.
+      description: Returns an empty list when the API key is missing or the upstream request fails.
+      responses:
+        '200':
+          description: Voice list or empty fallback.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  voices:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ElevenLabsVoice'
+                required: [voices]
+  /api/generate:
+    post:
+      tags: [Jobs]
+      summary: Create a generation job.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateRequest'
+      responses:
+        '201':
+          description: Queued job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobEnvelope'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/approve-preview:
+    post:
+      tags: [Jobs]
+      summary: Approve a preview storyboard and enqueue the full job.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovePreviewRequest'
+      responses:
+        '201':
+          description: Queued full generation job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobEnvelope'
+        '400':
+          description: Invalid preview state or invalid storyboard edit.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - type: object
+                    properties:
+                      error:
+                        type: string
+                      validation:
+                        type: object
+                        additionalProperties: true
+                    required: [error]
+        '404':
+          description: Preview job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/rerender-voice:
+    post:
+      tags: [Jobs]
+      summary: Create a voice rerender job for an existing slug.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RerenderVoiceRequest'
+      responses:
+        '201':
+          description: Queued rerender job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobEnvelope'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/jobs:
+    get:
+      tags: [Jobs]
+      summary: List jobs with queue metadata.
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Paginated job list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResponse'
+  /api/jobs/{id}:
+    get:
+      tags: [Jobs]
+      summary: Get one sanitized job.
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      responses:
+        '200':
+          description: Job detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobEnvelope'
+        '404':
+          description: Job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/jobs/{id}/stream:
+    get:
+      tags: [Jobs]
+      summary: Subscribe to live Server-Sent Events updates for a job.
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      responses:
+        '200':
+          description: Text event stream carrying update events with sanitized job payloads.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '404':
+          description: Job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/jobs/{id}/scenes:
+    get:
+      tags: [Jobs]
+      summary: List best-available scene segment PNG assets for a job.
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      responses:
+        '200':
+          description: Scene assets.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scenes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SceneAsset'
+                required: [scenes]
+        '400':
+          description: Job has no slug.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/jobs/{id}/scene-review:
+    get:
+      tags: [Jobs]
+      summary: List failed scene attempts available for manual review.
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      responses:
+        '200':
+          description: Reviewable scene attempts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reviewItems:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SceneReviewItem'
+                required: [reviewItems]
+        '404':
+          description: Job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/jobs/{id}/retry-from-storyboard:
+    post:
+      tags: [Jobs]
+      summary: Retry a failed generation job from an existing storyboard.
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OptionalJobIdRequest'
+      responses:
+        '201':
+          description: Queued retry job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobEnvelope'
+        '400':
+          description: Path/body job mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Source job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Retry is not available for this job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/jobs/{id}/regenerate-missing-scene:
+    post:
+      tags: [Jobs]
+      summary: Create a manual scene regeneration job.
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegenerateSceneRequest'
+      responses:
+        '201':
+          description: Queued scene regeneration job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobEnvelope'
+        '400':
+          description: Path/body job mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Source job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Recovery is unavailable or no missing scene could be resolved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/jobs/{id}/approve-scene-attempt:
+    post:
+      tags: [Jobs]
+      summary: Approve a specific failed scene attempt image.
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveSceneAttemptRequest'
+      responses:
+        '201':
+          description: Completed approval job and optional follow-up job.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job:
+                    $ref: '#/components/schemas/Job'
+                  followUpJob:
+                    oneOf:
+                      - $ref: '#/components/schemas/Job'
+                      - type: 'null'
+                required: [job]
+        '400':
+          description: Invalid payload or approval failure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Source job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Manual approval only works for failed jobs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/jobs/{id}/generate-audio:
+    post:
+      tags: [Jobs]
+      summary: Queue an audio-preparation job for an existing run.
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OptionalJobIdRequest'
+      responses:
+        '201':
+          description: Queued job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobEnvelope'
+        '400':
+          description: Path/body job mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Source job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Required artifacts are missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/jobs/{id}/render-only:
+    post:
+      tags: [Jobs]
+      summary: Queue a render-only job for an existing run.
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OptionalJobIdRequest'
+      responses:
+        '201':
+          description: Queued job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobEnvelope'
+        '400':
+          description: Path/body job mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Source job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Required artifacts are missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/jobs/{id}/validate:
+    post:
+      tags: [Jobs]
+      summary: Queue a validation-only job for an existing final MP4.
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OptionalJobIdRequest'
+      responses:
+        '201':
+          description: Queued job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobEnvelope'
+        '400':
+          description: Path/body job mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Source job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Final output is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/jobs/{id}/force-fail:
+    post:
+      tags: [Jobs]
+      summary: Force a queued or running job into failed state and release its lane.
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OptionalJobIdRequest'
+      responses:
+        '200':
+          description: Updated failed job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobEnvelope'
+        '400':
+          description: Path/body job mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Only queued or running jobs can be force-failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/jobs/{id}/resume:
+    post:
+      tags: [Jobs]
+      summary: Resume a failed generate job after artifact verification.
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OptionalJobIdRequest'
+      responses:
+        '201':
+          description: Queued resumed generate job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobEnvelope'
+        '400':
+          description: Invalid source job or path/body mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Source job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Required artifacts are missing or stale.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/runs:
+    get:
+      tags: [Jobs]
+      summary: Return recent exported runs.
+      responses:
+        '200':
+          description: Recent runs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Video'
+                required: [runs]
+  /api/videos:
+    get:
+      tags: [Videos]
+      summary: List exported videos, failed unrecovered jobs, and publish integration status.
+      responses:
+        '200':
+          description: Video library payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideosListResponse'
+  /api/videos/meta:
+    post:
+      tags: [Videos]
+      summary: Update per-video metadata.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VideoMetaRequest'
+      responses:
+        '200':
+          description: Updated video record.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  video:
+                    $ref: '#/components/schemas/Video'
+                required: [video]
+        '400':
+          description: Invalid target or payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/videos/refazer:
+    post:
+      tags: [Videos]
+      summary: Recreate a generation job from an existing video storyboard.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VideoRefazerRequest'
+      responses:
+        '201':
+          description: Queued generate job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobEnvelope'
+        '400':
+          description: Invalid target or payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Storyboard is not available for redo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/videos/delete:
+    post:
+      tags: [Videos]
+      summary: Delete a video export and local metadata.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VideoTargetRequest'
+      responses:
+        '200':
+          description: Delete result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  slug:
+                    type: string
+                  deletedPath:
+                    type: string
+                required: [ok, slug, deletedPath]
+        '400':
+          description: Invalid target.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/videos/publish:
+    post:
+      tags: [Videos]
+      summary: Publish or schedule a video through the agendador integration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VideoPublishRequest'
+      responses:
+        '200':
+          description: Publish result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  post:
+                    anyOf:
+                      - $ref: '#/components/schemas/LooseObject'
+                      - type: 'null'
+                  video:
+                    $ref: '#/components/schemas/Video'
+                required: [ok, video]
+        '400':
+          description: Invalid target or request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Missing connected social accounts or other publish precondition failure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/videos/tiktok-helper:
+    post:
+      tags: [Videos]
+      summary: Create a TikTok helper draft and return its helper page URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TikTokHelperRequest'
+      responses:
+        '200':
+          description: Draft created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  helperUrl:
+                    type: string
+                  message:
+                    type: string
+                required: [ok, helperUrl, message]
+        '400':
+          description: Invalid target or request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/videos/{slug}/reset-publish:
+    post:
+      tags: [Videos]
+      summary: Clear local publication metadata for a video slug.
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Reset result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+        '400':
+          description: Missing slug.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Metadata not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/simulador/generate:
+    post:
+      tags: [Simulator]
+      summary: Start a simulator run from source text.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SimuladorGenerateRequest'
+      responses:
+        '200':
+          description: Accepted for background processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimuladorGenerateResponse'
+        '400':
+          description: Empty or unparsable input.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/simulador/jobs:
+    get:
+      tags: [Simulator]
+      summary: List simulator jobs.
+      responses:
+        '200':
+          description: Persisted simulator job list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LooseObject'
+  /api/simulador/video/{id}:
+    get:
+      tags: [Simulator]
+      summary: Stream a simulator video file if it exists.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Video file stream.
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Video not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/simulador/jobs/{id}:
+    delete:
+      tags: [Simulator]
+      summary: Delete a simulator job and its local files.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Delete result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+        '404':
+          description: Job not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/file:
+    get:
+      tags: [Files]
+      summary: Serve a file by absolute path if it passes the allowlist checks.
+      parameters:
+        - in: query
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: File contents.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: Partial content when a valid Range header is supplied.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Missing path query parameter.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: File not found or access denied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /tiktok-helper:
+    get:
+      tags: [Files]
+      summary: Return the standalone TikTok helper HTML page for a previously created draft.
+      parameters:
+        - in: query
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: HTML helper page.
+          content:
+            text/html:
+              schema:
+                type: string
+        '400':
+          description: Missing draft id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Draft not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+  parameters:
+    JobIdPath:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+  schemas:
+    LooseObject:
+      type: object
+      additionalProperties: true
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+    StoryboardScene:
+      type: object
+      properties:
+        title:
+          type: string
+        narration:
+          type: string
+        overlay:
+          type: string
+        searchQuery:
+          type: string
+        visualGoal:
+          type: string
+      additionalProperties: true
+    Storyboard:
+      type: object
+      properties:
+        videoTitle:
+          type: string
+        hook:
+          type: string
+        postCaption:
+          type: string
+        styleNotes:
+          type: string
+        cta:
+          type: string
+        scenes:
+          type: array
+          items:
+            $ref: '#/components/schemas/StoryboardScene'
+      required: [scenes]
+      additionalProperties: true
+    OptionalJobIdRequest:
+      type: object
+      properties:
+        jobId:
+          type: string
+    GenerateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        sourceText:
+          type: string
+          maxLength: 50000
+        language:
+          type: string
+          enum: [pt-BR, en-US]
+        outputProfile:
+          type: string
+        targetSeconds:
+          type: number
+        generationMode:
+          type: string
+        imageModel:
+          type: string
+        imageStyle:
+          type: string
+        channel:
+          type: string
+        tone:
+          type: string
+        voice:
+          type: string
+        audioProvider:
+          type: string
+          enum: [gcp, elevenlabs]
+        customVoice:
+          type: string
+          maxLength: 100
+        customStylePrompt:
+          type: string
+          maxLength: 500
+        scriptGuidance:
+          type: string
+        force:
+          type: boolean
+        noMusic:
+          type: boolean
+        previewOnly:
+          type: boolean
+        generateForBothChannels:
+          type: boolean
+        storyboard:
+          $ref: '#/components/schemas/Storyboard'
+      additionalProperties: true
+    ApprovePreviewRequest:
+      type: object
+      properties:
+        jobId:
+          type: string
+        storyboard:
+          $ref: '#/components/schemas/Storyboard'
+      required: [jobId]
+      additionalProperties: false
+    RerenderVoiceRequest:
+      type: object
+      properties:
+        slug:
+          type: string
+        language:
+          type: string
+          enum: [pt-BR, en-US]
+        tone:
+          type: string
+        voice:
+          type: string
+        customVoice:
+          type: string
+        audioProvider:
+          type: string
+          enum: [gcp, elevenlabs]
+        outputProfile:
+          type: string
+        customStylePrompt:
+          type: string
+        scriptGuidance:
+          type: string
+      required: [slug]
+      additionalProperties: true
+    RegenerateSceneRequest:
+      allOf:
+        - $ref: '#/components/schemas/OptionalJobIdRequest'
+        - type: object
+          properties:
+            sceneNumber:
+              type: integer
+              minimum: 1
+            autoContinueAfterSceneRepair:
+              type: boolean
+    ApproveSceneAttemptRequest:
+      type: object
+      properties:
+        jobId:
+          type: string
+        sceneNumber:
+          type: integer
+          minimum: 1
+        segNumber:
+          type: integer
+          minimum: 1
+        attempt:
+          type: integer
+          minimum: 1
+        autoContinue:
+          type: boolean
+      required: [sceneNumber, segNumber, attempt]
+      additionalProperties: false
+    VideoTargetRequest:
+      type: object
+      properties:
+        slug:
+          type: string
+        path:
+          type: string
+        channel:
+          type: string
+      additionalProperties: true
+    VideoMetaRequest:
+      allOf:
+        - $ref: '#/components/schemas/VideoTargetRequest'
+        - type: object
+          properties:
+            title:
+              type: string
+            publishTitle:
+              type: string
+              maxLength: 100
+            caption:
+              type: string
+              maxLength: 5000
+            socialCaption:
+              type: string
+              maxLength: 2200
+            hashtags:
+              type: array
+              items:
+                type: string
+            scheduleAt:
+              type: string
+            platforms:
+              type: array
+              items:
+                type: string
+            isDraft:
+              type: boolean
+    VideoRefazerRequest:
+      allOf:
+        - $ref: '#/components/schemas/VideoTargetRequest'
+        - type: object
+          properties:
+            language:
+              type: string
+              enum: [pt-BR, en-US]
+            outputProfile:
+              type: string
+            targetSeconds:
+              type: number
+            tone:
+              type: string
+            voice:
+              type: string
+            audioProvider:
+              type: string
+              enum: [gcp, elevenlabs]
+            imageModel:
+              type: string
+            generationMode:
+              type: string
+            customStylePrompt:
+              type: string
+    VideoPublishRequest:
+      allOf:
+        - $ref: '#/components/schemas/VideoMetaRequest'
+        - type: object
+          description: >
+            The frontend may also send UI-only fields such as publishMode. The backend currently ignores them.
+    TikTokHelperRequest:
+      allOf:
+        - $ref: '#/components/schemas/VideoTargetRequest'
+        - type: object
+          properties:
+            title:
+              type: string
+            publishTitle:
+              type: string
+              maxLength: 100
+            caption:
+              type: string
+              maxLength: 5000
+            socialCaption:
+              type: string
+              maxLength: 2200
+            hashtags:
+              type: array
+              items:
+                type: string
+    JobState:
+      type: object
+      properties:
+        value:
+          type: string
+        label:
+          type: string
+        severity:
+          type: string
+        terminal:
+          type: boolean
+      additionalProperties: true
+    JobStage:
+      type: object
+      properties:
+        value:
+          type: string
+        label:
+          type: string
+        source:
+          type: string
+        confidence:
+          type: string
+      additionalProperties: true
+    CaseSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        title:
+          type: string
+        slug:
+          type: string
+        channel:
+          oneOf:
+            - type: string
+            - type: 'null'
+        state:
+          $ref: '#/components/schemas/JobState'
+        stage:
+          $ref: '#/components/schemas/JobStage'
+        rca:
+          type: object
+          additionalProperties: true
+        recommendedAction:
+          type: object
+          additionalProperties: true
+        updatedAt:
+          type: string
+          format: date-time
+        extra:
+          type: object
+          additionalProperties: true
+      additionalProperties: true
+    Job:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        title:
+          type: string
+        slug:
+          type: string
+        caseId:
+          oneOf:
+            - type: string
+            - type: 'null'
+        attempt:
+          oneOf:
+            - type: integer
+            - type: 'null'
+        queueLane:
+          oneOf:
+            - type: string
+            - type: 'null'
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        heartbeatAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        startedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        completedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        artifactEpochAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        queuePosition:
+          oneOf:
+            - type: integer
+            - type: 'null'
+        input:
+          type: object
+          additionalProperties: true
+        outputPath:
+          oneOf:
+            - type: string
+            - type: 'null'
+        outputUrl:
+          oneOf:
+            - type: string
+            - type: 'null'
+        storyboardPath:
+          oneOf:
+            - type: string
+            - type: 'null'
+        storyboardUrl:
+          oneOf:
+            - type: string
+            - type: 'null'
+        followUpJobId:
+          oneOf:
+            - type: string
+            - type: 'null'
+        logTail:
+          type: array
+          items:
+            type: string
+        exitCode:
+          oneOf:
+            - type: integer
+            - type: 'null'
+        error:
+          oneOf:
+            - type: string
+            - type: 'null'
+        failureStage:
+          oneOf:
+            - type: string
+            - type: 'null'
+        failureSummary:
+          oneOf:
+            - type: string
+            - type: 'null'
+        resumeAvailable:
+          type: boolean
+        retryFromStoryboardAvailable:
+          type: boolean
+        forceFailAvailable:
+          type: boolean
+        sceneRegenerateAvailable:
+          type: boolean
+        audioPrepAvailable:
+          type: boolean
+        renderOnlyAvailable:
+          type: boolean
+        validateOnlyAvailable:
+          type: boolean
+        nextMissingSceneNumber:
+          oneOf:
+            - type: integer
+            - type: 'null'
+        stepChecklist:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        state:
+          $ref: '#/components/schemas/JobState'
+        stage:
+          $ref: '#/components/schemas/JobStage'
+        rca:
+          type: object
+          additionalProperties: true
+        failureTaxonomy:
+          type: object
+          additionalProperties: true
+        recommendedAction:
+          type: object
+          additionalProperties: true
+        caseSummary:
+          $ref: '#/components/schemas/CaseSummary'
+      required:
+        - id
+        - type
+        - title
+        - slug
+        - status
+        - createdAt
+        - updatedAt
+        - input
+        - logTail
+        - state
+        - stage
+        - rca
+        - recommendedAction
+        - caseSummary
+      additionalProperties: true
+    JobEnvelope:
+      type: object
+      properties:
+        job:
+          $ref: '#/components/schemas/Job'
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Job'
+        dualChannelMode:
+          oneOf:
+            - type: string
+            - type: 'null'
+      required: [job]
+    JobListResponse:
+      type: object
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Job'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseSummary'
+        summary:
+          type: object
+          additionalProperties: true
+        activeJobId:
+          oneOf:
+            - type: string
+            - type: 'null'
+        activePreviewJobId:
+          oneOf:
+            - type: string
+            - type: 'null'
+        activeHeavyJobId:
+          oneOf:
+            - type: string
+            - type: 'null'
+        previewQueueLength:
+          type: integer
+        heavyQueueLength:
+          type: integer
+        queueLength:
+          type: integer
+      required:
+        - jobs
+        - total
+        - limit
+        - offset
+        - cases
+        - summary
+        - activeJobId
+        - activePreviewJobId
+        - activeHeavyJobId
+        - previewQueueLength
+        - heavyQueueLength
+        - queueLength
+    SceneAsset:
+      type: object
+      properties:
+        sceneNumber:
+          type: integer
+        segNumber:
+          type: integer
+        url:
+          type: string
+      required: [sceneNumber, segNumber, url]
+    SceneReviewAttempt:
+      type: object
+      properties:
+        attempt:
+          type: integer
+        file:
+          type: string
+        absolutePath:
+          type: string
+        url:
+          type: string
+        sizeBytes:
+          type: integer
+        updatedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+      required: [attempt, file, absolutePath, url, sizeBytes, updatedAt]
+    SceneReviewItem:
+      type: object
+      properties:
+        sceneNumber:
+          type: integer
+        segNumber:
+          type: integer
+        title:
+          type: string
+        error:
+          type: string
+        coverageText:
+          type: string
+        action:
+          type: string
+        prompt:
+          type: string
+        recommendedAttempt:
+          oneOf:
+            - type: integer
+            - type: 'null'
+        attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/SceneReviewAttempt'
+      required:
+        - sceneNumber
+        - segNumber
+        - title
+        - error
+        - coverageText
+        - action
+        - prompt
+        - attempts
+    VideoState:
+      type: object
+      properties:
+        value:
+          type: string
+        label:
+          type: string
+        severity:
+          type: string
+        terminal:
+          type: boolean
+      additionalProperties: true
+    Video:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+        url:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+        sizeBytes:
+          type: integer
+        durationSeconds:
+          oneOf:
+            - type: number
+            - type: 'null'
+        slug:
+          type: string
+        title:
+          type: string
+        publishTitle:
+          type: string
+        caption:
+          type: string
+        socialCaption:
+          type: string
+        hashtags:
+          type: array
+          items:
+            type: string
+        channel:
+          type: string
+        channelHandle:
+          type: string
+        storyboardPath:
+          oneOf:
+            - type: string
+            - type: 'null'
+        storyboardUrl:
+          oneOf:
+            - type: string
+            - type: 'null'
+        canRefazer:
+          type: boolean
+        canDelete:
+          type: boolean
+        canPublish:
+          type: boolean
+        scheduleAt:
+          type: string
+        platforms:
+          type: array
+          items:
+            type: string
+        isDraft:
+          type: boolean
+        thumbnailPath:
+          oneOf:
+            - type: string
+            - type: 'null'
+        thumbnailUrl:
+          oneOf:
+            - type: string
+            - type: 'null'
+        coverUrl:
+          oneOf:
+            - type: string
+            - type: 'null'
+        thumbnailLabel:
+          oneOf:
+            - type: string
+            - type: 'null'
+        publishedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        publishedPostId:
+          oneOf:
+            - type: string
+            - type: 'null'
+        lastPublishPlatforms:
+          type: array
+          items:
+            type: string
+        lastPublishStatus:
+          oneOf:
+            - type: string
+            - type: 'null'
+        publishedProfile:
+          oneOf:
+            - type: string
+            - type: 'null'
+        jobId:
+          oneOf:
+            - type: string
+            - type: 'null'
+        sourceJobId:
+          oneOf:
+            - type: string
+            - type: 'null'
+        status:
+          oneOf:
+            - type: string
+            - type: 'null'
+        jobStatus:
+          oneOf:
+            - type: string
+            - type: 'null'
+        jobType:
+          oneOf:
+            - type: string
+            - type: 'null'
+        creationParams:
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: 'null'
+        state:
+          $ref: '#/components/schemas/VideoState'
+        stage:
+          $ref: '#/components/schemas/JobStage'
+        rca:
+          type: object
+          additionalProperties: true
+        recommendedAction:
+          type: object
+          additionalProperties: true
+        caseSummary:
+          $ref: '#/components/schemas/CaseSummary'
+      required:
+        - id
+        - name
+        - path
+        - url
+        - updatedAt
+        - sizeBytes
+        - slug
+        - title
+        - caption
+        - hashtags
+        - channel
+        - channelHandle
+        - canRefazer
+        - canDelete
+        - canPublish
+        - scheduleAt
+        - platforms
+        - isDraft
+        - lastPublishPlatforms
+        - state
+        - stage
+        - rca
+        - recommendedAction
+        - caseSummary
+      additionalProperties: true
+    VideosSummary:
+      type: object
+      properties:
+        total:
+          type: integer
+        published:
+          type: integer
+        scheduled:
+          type: integer
+        drafts:
+          type: integer
+        failedJobs:
+          type: integer
+        retryableFailedJobs:
+          type: integer
+        readyCases:
+          type: integer
+      required:
+        - total
+        - published
+        - scheduled
+        - drafts
+        - failedJobs
+        - retryableFailedJobs
+        - readyCases
+    AgendadorProfile:
+      type: object
+      properties:
+        channel:
+          type: string
+        label:
+          type: string
+        configured:
+          type: boolean
+        identifierSource:
+          type: string
+        publicUrl:
+          type: string
+        profileUrlSource:
+          type: string
+      required: [channel, label, configured, identifierSource, publicUrl, profileUrlSource]
+    VideosListResponse:
+      type: object
+      properties:
+        videos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Video'
+        failedJobs:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseSummary'
+        summary:
+          $ref: '#/components/schemas/VideosSummary'
+        agendador:
+          type: object
+          properties:
+            configured:
+              type: boolean
+            keychainBacked:
+              type: boolean
+            siteUrl:
+              type: string
+            apiBase:
+              type: string
+            profiles:
+              type: array
+              items:
+                $ref: '#/components/schemas/AgendadorProfile'
+          required: [configured, keychainBacked, siteUrl, apiBase, profiles]
+      required: [videos, failedJobs, cases, summary, agendador]
+    VoiceOption:
+      type: object
+      properties:
+        label:
+          type: string
+        value:
+          type: string
+        badge:
+          type: string
+        description:
+          type: string
+        languages:
+          type: array
+          items:
+            type: string
+      required: [label, value, badge, description, languages]
+    ElevenLabsVoice:
+      type: object
+      properties:
+        value:
+          type: string
+        label:
+          type: string
+        category:
+          type: string
+        languages:
+          type: array
+          items:
+            type: string
+      required: [value, label, category, languages]
+    SelectOption:
+      type: object
+      properties:
+        value:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+      required: [value, label]
+      additionalProperties: true
+    ConfigResponse:
+      type: object
+      properties:
+        defaults:
+          type: object
+          additionalProperties: true
+        defaultVoicesByLanguage:
+          type: object
+          additionalProperties:
+            type: string
+        voices:
+          type: array
+          items:
+            $ref: '#/components/schemas/VoiceOption'
+        channels:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        channelPresets:
+          type: object
+          additionalProperties: true
+        outputProfiles:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        imageModels:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        generationModes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        imageStyles:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        tones:
+          type: array
+          items:
+            $ref: '#/components/schemas/SelectOption'
+        durations:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        durationsByProfile:
+          type: object
+          additionalProperties: true
+        agendador:
+          type: object
+          properties:
+            siteUrl:
+              type: string
+            apiBase:
+              type: string
+            profiles:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+          required: [siteUrl, apiBase, profiles]
+      required:
+        - defaults
+        - defaultVoicesByLanguage
+        - voices
+        - channels
+        - channelPresets
+        - outputProfiles
+        - imageModels
+        - generationModes
+        - imageStyles
+        - tones
+        - durations
+        - durationsByProfile
+        - agendador
+    HealthResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        service:
+          type: string
+        role:
+          type: string
+          enum: [all, api, worker]
+        now:
+          type: string
+          format: date-time
+        uptimeSeconds:
+          type: integer
+        queue:
+          type: object
+          properties:
+            previewQueueLength:
+              type: integer
+            heavyQueueLength:
+              type: integer
+            queueLength:
+              type: integer
+            activeJobId:
+              oneOf:
+                - type: string
+                - type: 'null'
+            activePreviewJobId:
+              oneOf:
+                - type: string
+                - type: 'null'
+            activeHeavyJobId:
+              oneOf:
+                - type: string
+                - type: 'null'
+          required:
+            - previewQueueLength
+            - heavyQueueLength
+            - queueLength
+            - activeJobId
+            - activePreviewJobId
+            - activeHeavyJobId
+        jobs:
+          type: object
+          properties:
+            total:
+              type: integer
+            running:
+              type: integer
+            queued:
+              type: integer
+            failed:
+              type: integer
+          required: [total, running, queued, failed]
+        retention:
+          type: object
+          properties:
+            days:
+              type: integer
+            count:
+              type: integer
+          required: [days, count]
+        auth:
+          type: object
+          properties:
+            source:
+              type: string
+              enum: [env, runtime-file]
+          required: [source]
+      required: [ok, service, role, now, uptimeSeconds, queue, jobs, retention, auth]
+    SimuladorGenerateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        text:
+          type: string
+      required: [text]
+      additionalProperties: false
+    SimuladorJobPreview:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        questionCount:
+          type: integer
+        status:
+          type: string
+      required: [id, title, questionCount, status]
+    SimuladorGenerateResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        questionCount:
+          type: integer
+        batchCount:
+          type: integer
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimuladorJobPreview'
+      required: [message, questionCount, batchCount, jobs]

@@ -1,0 +1,102 @@
+Gere um storyboard JSON padrao para um video curto vertical de ate 60 segundos.
+
+IMPORTANTE
+- Retorne JSON valido apenas.
+- Nao use markdown.
+- Nao escreva explicacoes fora do JSON.
+- O video deve ter exatamente 12 cenas quando a duracao alvo for ate 60s.
+- Cada cena deve conter imagePrompts com pelo menos 1 prompt detalhado para geracao de imagem.
+
+TEMA
+- Titulo: [COLE O TITULO AQUI]
+- Conteudo/script/base narrativa: [COLE O CONTEUDO AQUI]
+- Fatos obrigatorios: [COLE AQUI DATAS, NUMEROS, NOMES OU CONFLITOS QUE NAO PODEM SUMIR]
+- Direcao visual: [EX.: ink editorial, punk poster, line art, realistic documentary]
+
+REQUISITOS ESTRUTURAIS
+- Duracao total maxima: 60s
+- Duracao alvo: 55s a 60s
+- Exatamente 12 cenas
+- Ritmo rapido: uma ideia por cena, 4s a 5s por cena
+- Cena 1 precisa entregar o absurdo, ironia ou consequencia principal
+- O conflito principal precisa ficar claro antes do contexto longo
+
+ORDEM DAS 12 CENAS
+1. Hook
+2. Contexto rapido
+3. Medo, problema ou conflito
+4. Mecanismo ou ideia central
+5. Por que parecia errado, estranho ou impossivel
+6. Primeiro uso, validacao ou prova
+7. Crescimento inicial
+8. Resistencia, protesto ou backlash
+9. Virada de escala ou legitimidade
+10. Consequencia permanente
+11. Contraste antes/depois ou hoje
+12. Payoff final + CTA curto
+
+REQUISITOS DE TEXTO
+- Narracao em pt-BR natural, falada e direta.
+- Uma ideia por frase.
+- Overlay curto, 2 a 4 palavras sempre que possivel.
+- Sem tom coach.
+- Sem moral da historia.
+- Sem frases genericas.
+- Sem CTA dentro da narracao.
+- Nao comece cenas com "So que", "Mas olha so", "Ao mesmo tempo", "Agora" ou "Na pratica".
+
+REQUISITOS DE IMAGEM
+- Cada cena deve ter imagePrompts: 1 a 4 prompts em ingles ASCII.
+- Cada imagePrompt deve seguir esta anatomia:
+  subject + precise descriptors; physical action; setting/context; composition/framing; camera angle/lens; lighting; visual style/material/color palette; mood; 9:16 mobile clarity; negative constraints.
+- imagePrompts devem ser mais detalhados do que searchQuery.
+- searchQuery e candidateQueries devem estar em ingles ASCII.
+- Nunca pedir texto legivel, logos, watermark, UI labels, placas legiveis, graficos, colagem, split-screen ou montage.
+- Cada imagem deve ter um frame coerente: um lugar, um assunto dominante, uma acao fisica.
+- Variar enquadramento entre cenas: close, wide, reaction, over-the-shoulder, top-down, object detail, crowd/environment.
+
+AUDIO
+- Use audio.provider = "elevenlabs".
+- Use voiceName = "Ana Alice BR" quando disponivel.
+- Use voiceId = "ORgG8rwdAiMYRug8RJwR".
+- Use modelId = "eleven_multilingual_v2".
+- voiceStyle: documentario envolvente em pt-BR, ritmo alto, diccao limpa, tom curioso e levemente ironico.
+
+CHAVES OBRIGATORIAS NO JSON
+- videoTitle
+- hook
+- postCaption
+- hashtags
+- cta
+- audio
+- thumbnailPrompt
+- styleNotes
+- imagePromptRules
+- scenes
+
+CHAVES OBRIGATORIAS EM CADA CENA
+- title
+- duration
+- narration
+- overlay
+- sceneType
+- searchQuery
+- visualGoal
+- candidateQueries
+- imagePrompts
+- shots
+
+CHAVES OBRIGATORIAS EM CADA SHOT
+- shotType
+- duration
+- visualGoal
+- searchQuery
+- imagePrompt
+- candidateQueries
+
+PADRAO DE SAIDA
+- Preencha todas as 12 cenas.
+- Garanta pelo menos 1 imagePrompt detalhado por cena.
+- Use candidateQueries com 2 ou 3 alternativas por cena e por shot.
+- Mantenha o total perto de 60 segundos.
+- SAIA EXATAMENTE COMO JSON.

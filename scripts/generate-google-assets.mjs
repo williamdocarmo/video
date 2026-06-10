@@ -16,7 +16,7 @@
 import {execFileSync, spawnSync} from "node:child_process";
 import {createHash} from "node:crypto";
 import {access, copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile} from "node:fs/promises";
-import {existsSync, readFileSync, writeFileSync, unlinkSync} from "node:fs";
+import {existsSync, readFileSync, statSync, writeFileSync, unlinkSync} from "node:fs";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {resolveVisualStylePreset} from "../config/visual-style-presets.mjs";
@@ -254,7 +254,7 @@ const IMAGE_PROVIDER = "google-cloud";
 const ENABLE_PLANNER_FALLBACK = true;
 const GOOGLE_CLOUD_PROJECT = String(process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0114845839").trim();
 const GOOGLE_CLOUD_LOCATION = String(process.env.GOOGLE_CLOUD_LOCATION || "us-central1").trim();
-const GOOGLE_IMAGE_MODEL = String(process.env.GOOGLE_IMAGE_MODEL || "gemini-2.5-flash-image").trim();
+const GOOGLE_IMAGE_MODEL = String(process.env.GOOGLE_IMAGE_MODEL || "gemini-3.1-flash-image-preview").trim();
 const GOOGLE_IMAGE_MODEL_FALLBACKS = String(
   process.env.GOOGLE_IMAGE_MODEL_FALLBACKS || ""
 ).trim();
@@ -395,6 +395,35 @@ const requireBinary = (name) => {
   return result.stdout.trim();
 };
 
+const normalizeGeneratedImageFile = async (imagePath) => {
+  const tempPath = `${imagePath}.normalized-${process.pid}-${Date.now()}.png`;
+  const filter = [
+    `scale=${CLIP_W}:${CLIP_H}:force_original_aspect_ratio=decrease`,
+    `pad=${CLIP_W}:${CLIP_H}:(ow-iw)/2:(oh-ih)/2:white`,
+    "setsar=1",
+    "format=rgb24"
+  ].join(",");
+
+  try {
+    execFileSync("ffmpeg", [
+      "-y",
+      "-i", imagePath,
+      "-vf", filter,
+      "-threads", "1",
+      "-filter_threads", "1",
+      "-frames:v", "1",
+      "-f", "image2",
+      "-update", "1",
+      tempPath
+    ], {stdio: ["ignore", "pipe", "pipe"]});
+    await rename(tempPath, imagePath);
+  } catch (error) {
+    await rm(tempPath, {force: true}).catch(() => {});
+    const stderr = error?.stderr ? String(error.stderr).trim() : "";
+    throw new Error(`Failed to normalize generated image ${path.basename(imagePath)}: ${stderr || error.message}`);
+  }
+};
+
 const generateGoogleCloudImage = async ({prompt, outputPath}) => {
   const models = [GOOGLE_IMAGE_MODEL, ...GOOGLE_IMAGE_MODEL_FALLBACKS.split(",").map((value) => value.trim()).filter(Boolean)]
     .filter(Boolean);
@@ -417,7 +446,9 @@ const generateGoogleCloudImage = async ({prompt, outputPath}) => {
         });
 
         await writeFile(outputPath, bytes);
-        process.stdout.write(`[vertex-image] ok via ${model}\n`);
+        const sourceFormat = detectImageFormat(bytes) || "unknown";
+        await normalizeGeneratedImageFile(outputPath);
+        process.stdout.write(`[vertex-image] ok via ${model}; normalized ${sourceFormat} to png ${CLIP_W}x${CLIP_H}\n`);
 
         if (GOOGLE_IMAGE_REQUEST_PAUSE_MS > 0) {
           await sleep(GOOGLE_IMAGE_REQUEST_PAUSE_MS);
@@ -565,11 +596,13 @@ const buildReuseMetadata = ({scenePlans}) => ({
   outputHeight: CLIP_H,
   fluxWidth: FLUX2_WIDTH,
   fluxHeight: FLUX2_HEIGHT,
+  // Fingerprint visual-affecting fields only. Narration text drives audio, not
+  // image generation, so trimming a narration shouldn't invalidate ~$1 of
+  // already-rendered images. Title is stable and informational.
   storyboardFingerprint: createHash("sha1")
     .update(JSON.stringify(scenePlans.map((scenePlan) => ({
       scene: scenePlan.scene,
       title: scenePlan.title,
-      narration: scenePlan.narration,
       planner: scenePlan.planner,
       shots: scenePlan.shots
     }))))
@@ -1007,8 +1040,13 @@ const realignShotWithSceneSpec = ({scene, shot, sceneSpec = null}) => {
   const specMustShow = buildSceneSpecMustShow(scene, sceneSpec);
   const specSupporting = buildSceneSpecSupportingDetails(sceneSpec);
 
+  // Preserve shot-specific coverageText when the storyboard supplies it.
+  // Multi-shot scenes use distinct shot.coverageText to describe each beat
+  // (setup → reveal → spread); overwriting them with the scene-level visualGoal
+  // forces every shot to be audited against the scene's headline goal, which
+  // makes Vision audit reject sub-beats that legitimately diverge from it.
   shot.coverageText = truncateText(
-    sanitizeShotTextForSceneSpec(sceneSpec.visualGoal || sceneSpec.searchQuery || sceneSpec.narration || shot.coverageText, sceneSpec),
+    sanitizeShotTextForSceneSpec(shot.coverageText || sceneSpec.visualGoal || sceneSpec.searchQuery || sceneSpec.narration, sceneSpec),
     220
   );
   shot.mustShow = uniqueStrings([
@@ -1321,6 +1359,55 @@ const shotNeedsObjectLedCloseup = (shot) => {
   }
 
   return false;
+};
+
+const shotHasDigitalDeviceContext = (shot) => {
+  const haystack = normalizeForMatch([
+    shot?.coverageText,
+    ...(Array.isArray(shot?.mustShow) ? shot.mustShow : []),
+    ...(Array.isArray(shot?.supportingDetails) ? shot.supportingDetails : []),
+    shot?.setting,
+    shot?.composition,
+    shot?.action
+  ].join(" "));
+
+  return /\bsmartphone\b|\bphone\b|\bmobile\b|\blaptop\b|\bcomputer\b|\bscreen\b|\bdisplay\b|\bmonitor\b|\btablet\b|\bnotifications?\b|\bmessage alerts?\b|\bapp icons?\b/.test(haystack);
+};
+
+const shotNeedsDeviceAsPrimaryProof = (shot) => {
+  const haystack = normalizeForMatch([
+    shot?.coverageText,
+    ...(Array.isArray(shot?.mustShow) ? shot.mustShow : []),
+    ...(Array.isArray(shot?.supportingDetails) ? shot.supportingDetails : []),
+    shot?.setting,
+    shot?.composition,
+    shot?.action
+  ].join(" "));
+
+  return /\bnotifications?\b|\bmessage alerts?\b|\bphone scrolling\b|\bscroll(?:ing)?\b|\bclose up of smartphone\b|\bsmartphone light on face\b|\bglasses reflection\b|\babstract light\b|\bscreen full\b|\bmultiple app icons\b|\bdevice screen\b|\bmonitor glow\b|\balert lights\b/.test(haystack);
+};
+
+const buildNonTextualNarrativeDirective = (shot) => {
+  if (shotHasDigitalDeviceContext(shot)) {
+    if (shotNeedsDeviceAsPrimaryProof(shot)) {
+      return "Translate the beat through posture, light, space, and one concrete device cue only; keep any phone, laptop, or interface unreadable and avoid letting UI details dominate the frame.";
+    }
+
+    return "Translate the beat through posture, space, props, and environment; if a phone, laptop, or screen appears, keep it secondary rather than the hero object.";
+  }
+
+  return "Translate the beat into objects, posture, space, atmosphere, and action only; do not visualize the narration as written words.";
+};
+
+const promptRepeatsCoverageText = ({shot, prompt}) => {
+  const coverage = normalizeForMatch(shot?.coverageText || "");
+  const promptText = normalizeForMatch(prompt || "");
+
+  if (!coverage || countWords(coverage) < 5) {
+    return false;
+  }
+
+  return promptText.includes(coverage);
 };
 
 const shotNeedsFullHumanFigure = (shot) => shotLikelyShowsCharacterHead(shot) && !shotNeedsObjectLedCloseup(shot);
@@ -2054,12 +2141,27 @@ const splitVisualClauses = (narration) => {
 };
 
 const estimateShotTarget = (scene) => {
+  const explicitShotCount = Array.isArray(scene?.shots)
+    ? scene.shots.filter(Boolean).length
+    : 0;
+
+  if (explicitShotCount > 0) {
+    return explicitShotCount;
+  }
+
   const sentenceCount = splitNarration(scene.narration).length;
   const clauseCount = splitVisualClauses(scene.narration).length;
   const anchorDensity = Math.ceil(countWords(`${scene.visualGoal || ""} ${scene.searchQuery || ""}`) / 10);
 
+  // TikTok retention: the scroll decision happens in the first seconds, so the
+  // opening scenes need fast cuts. Scenes 1-3 get a higher shot floor so the
+  // hook never sits on a single static image.
+  const earlySceneFloor = Number(scene?.__sceneNumber) >= 1 && Number(scene.__sceneNumber) <= 3
+    ? Math.max(3, FLUX2_MIN_SHOTS_PER_SCENE)
+    : FLUX2_MIN_SHOTS_PER_SCENE;
+
   return Math.max(
-    FLUX2_MIN_SHOTS_PER_SCENE,
+    earlySceneFloor,
     Math.min(FLUX2_MAX_SHOTS_PER_SCENE, Math.max(sentenceCount, clauseCount, anchorDensity, 1))
   );
 };
@@ -2069,12 +2171,32 @@ const estimateDuration = (words) => {
   return Math.max(3, Math.min(20, seconds));
 };
 
-const withThinkingDisabled = (config = {}) => ({
-  ...config,
-  thinkingConfig: {
-    thinkingBudget: 0
+const parseShotDurationSeconds = (value) => {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) {
+    return null;
   }
-});
+
+  const numeric = Number.parseFloat(normalized.replace(/s$/i, ""));
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+
+  return Math.max(0.5, Math.min(20, numeric));
+};
+
+const supportsThinkingBudgetZero = (model = "") => !/gemini-2\.5-pro/i.test(String(model || "").trim());
+
+const withThinkingDisabled = (config = {}, model = "") =>
+  supportsThinkingBudgetZero(model)
+    ? {
+        ...config,
+        thinkingConfig: {
+          thinkingBudget: 0
+        }
+      }
+    : {...config};
 
 const requestLlmText = async ({prompt, systemInstruction, maxTokens = 900}) => {
   const model = String(process.env.GEMINI_PLANNER_MODEL || GCP_CONFIG.storyModel || "gemini-2.5-flash").trim();
@@ -2090,7 +2212,7 @@ const requestLlmText = async ({prompt, systemInstruction, maxTokens = 900}) => {
           temperature: 0,
           maxOutputTokens: maxTokens,
           responseMimeType: "application/json"
-        })
+        }, model)
       });
       recordGeminiUsage(geminiUsageSummary, {
         model: payload?.modelVersion || model,
@@ -2126,9 +2248,12 @@ const SCENE_PLANNER_SYSTEM_INSTRUCTION = [
   STYLE_ANATOMY_GUIDANCE,
   STYLE_SCALE_GUIDANCE,
   "Describe characters by their role and posture. Keep facial detail minimal and express emotion primarily through body language and posture.",
+  "Never paste, quote, or paraphrase the narration, hook, CTA, or overlay as visible written words inside the image prompt. Convert language into objects, posture, atmosphere, setting, or action only.",
   LAYOUT_PLANNER_GUIDANCE,
   "Across scenes, vary framing and staging. Use a mix of medium-wide, wide, side-profile, over-the-shoulder, top-down desk view, and object-led compositions when they fit the narration.",
   "Do not default to the same straight-on medium shot of a character at a desk in consecutive scenes.",
+  "For reflective, wellness, or mental-overload topics, do not repeat a person with a phone or laptop in every shot. Mix people, empty rooms, windows, hands, objects, hallways, clocks, desks, nature, clutter, silence, and relief cues.",
+  "Keep devices secondary unless the device itself is the unique proof of the beat.",
   "Prefer different environments and props across scenes whenever the narration changes: phone, laptop, payment terminal, router, card, inbox, desk, room, street, office, home, server rack, lock, alert screen, or hands-only detail if relevant.",
   "If a screen or interface is needed, describe it as abstract and unreadable using one or two large soft blank panels, a single abstract map/chart/tactical panel when the scene truly requires it, or empty speech bubbles only.",
   "If a scene implies no signal, GPS unavailable, or broken navigation, represent that only with symbolic cues such as crossed-out signal bars, a crossed-out navigation pin, or a broken route line. Never use readable status words.",
@@ -2236,12 +2361,78 @@ const buildDirectScenePlan = (scene) => {
   ];
 };
 
-const normalizeShot = (scene, rawShot, {sceneSpec = null} = {}) => {
-  const specMustShow = buildSceneSpecMustShow(scene, sceneSpec);
-  const mustShow = uniqueStrings([
-    ...specMustShow,
-    ...filterRenderablePhrases(scene, normalizeStringArray(rawShot?.mustShow).map((item) => sanitizeShotTextForSceneSpec(item, sceneSpec)))
+const buildShotLevelSceneSpec = (scene, rawShot, sceneSpec = null) => {
+  // Fold imagePrompt into the narration corpus so concrete-noun extraction has a
+  // last-resort source when sparse external storyboards omit visualGoal/searchQuery/coverageText.
+  const narrationParts = [
+    rawShot?.coverageText,
+    rawShot?.visualGoal,
+    rawShot?.imagePrompt,
+    scene?.narration
+  ].filter((part) => normalizeText(part).length > 0);
+
+  const shotScene = {
+    ...scene,
+    title: rawShot?.shotType || scene?.title || "",
+    narration: narrationParts.join(" ").trim(),
+    searchQuery: rawShot?.searchQuery || scene?.searchQuery || "",
+    visualGoal: rawShot?.visualGoal || rawShot?.coverageText || rawShot?.imagePrompt || scene?.visualGoal || "",
+    mustShow: Array.isArray(rawShot?.mustShow) ? rawShot.mustShow : [],
+    supportingDetails: Array.isArray(rawShot?.supportingDetails) ? rawShot.supportingDetails : [],
+    forbiddenProps: Array.isArray(rawShot?.avoid) ? rawShot.avoid : [],
+    sceneType: scene?.sceneType || sceneSpec?.sceneType || "unknown"
+  };
+
+  return compileSceneSpecFromStoryboardScene(shotScene, {
+    sceneNumber: sceneSpec?.sceneNumber || null
+  });
+};
+
+const inferShotMustShow = ({scene, rawShot, sceneSpec = null}) => {
+  const explicit = filterRenderablePhrases(
+    scene,
+    normalizeStringArray(rawShot?.mustShow).map((item) => sanitizeShotTextForSceneSpec(item, sceneSpec))
+  );
+
+  if (explicit.length > 0) {
+    return uniqueStrings([
+      ...buildSceneSpecMustShow(scene, sceneSpec),
+      ...explicit
+    ]).slice(0, 8);
+  }
+
+  const shotSpec = buildShotLevelSceneSpec(scene, rawShot, sceneSpec);
+  const inferredShotSpecMustShow = filterRenderablePhrases(
+    scene,
+    Array.isArray(shotSpec?.constraints?.mustShow)
+      ? shotSpec.constraints.mustShow.map((item) => sanitizeShotTextForSceneSpec(item, shotSpec))
+      : []
+  );
+  const inferredPhrases = filterRenderablePhrases(
+    scene,
+    [
+      rawShot?.visualGoal,
+      rawShot?.searchQuery,
+      rawShot?.coverageText,
+      // Scene-level fallbacks so sparse shots inherit the parent scene's anchors.
+      scene?.visualGoal,
+      scene?.searchQuery,
+      // Last resort: imagePrompt itself. Concrete-noun extraction inside shotSpec
+      // already mined this for objects; the raw text is also kept here as a phrase.
+      rawShot?.imagePrompt
+    ].map((item) => sanitizeShotTextForSceneSpec(item, shotSpec))
+  );
+
+  return uniqueStrings([
+    ...buildSceneSpecMustShow(scene, sceneSpec),
+    ...buildSceneSpecMustShow(scene, shotSpec),
+    ...inferredShotSpecMustShow,
+    ...inferredPhrases
   ]).slice(0, 8);
+};
+
+const normalizeShot = (scene, rawShot, {sceneSpec = null} = {}) => {
+  let mustShow = inferShotMustShow({scene, rawShot, sceneSpec});
   const supportingDetails = uniqueStrings([
     ...buildSceneSpecSupportingDetails(sceneSpec),
     ...filterRenderablePhrases(scene, normalizeStringArray(rawShot?.supportingDetails).map((item) => sanitizeShotTextForSceneSpec(item, sceneSpec)))
@@ -2264,10 +2455,14 @@ const normalizeShot = (scene, rawShot, {sceneSpec = null} = {}) => {
   const lighting = truncateText(sanitizeShotTextForSceneSpec(rawShot?.lighting || DEFAULT_LIGHTING, sceneSpec), 180);
 
   if (mustShow.length === 0) {
-    throw new Error("Shot sem mustShow.");
+    process.stderr.write(
+      `[mustShow-fallback] sem âncora apos toda a fallback chain: ${scene?.title || "sem-titulo"} / ${rawShot?.shotType || "sem-shotType"} → usando placeholder generico.\n`
+    );
+    mustShow = ["scene composition"];
   }
 
   return {
+    duration: parseShotDurationSeconds(rawShot?.duration),
     coverageText,
     mustShow,
     supportingDetails,
@@ -2279,6 +2474,8 @@ const normalizeShot = (scene, rawShot, {sceneSpec = null} = {}) => {
     avoid
   };
 };
+
+const hasExplicitStoryboardShots = (scene) => Array.isArray(scene?.shots) && scene.shots.length > 0;
 
 const mergePlannerShotsWithFallback = (plannedShots, fallbackShots) => {
   return fallbackShots.map((fallbackShot, index) => plannedShots[index] ?? fallbackShot);
@@ -2299,6 +2496,13 @@ const buildSdxlRefinePrompt = ({scene, shot}) => {
 };
 
 const planSceneShots = async (scene, {allowFallback = ENABLE_PLANNER_FALLBACK, sceneSpec = null} = {}) => {
+  if (hasExplicitStoryboardShots(scene)) {
+    return {
+      planner: "storyboard-explicit",
+      shots: scene.shots.map((shot) => normalizeShot(scene, shot, {sceneSpec}))
+    };
+  }
+
   if (USE_DIRECT_SCENE_PLANNER) {
     return {
       planner: "direct-scene",
@@ -2373,8 +2577,13 @@ const planSceneShots = async (scene, {allowFallback = ENABLE_PLANNER_FALLBACK, s
 };
 
 const buildNegativePrompt = (shot) => {
+  const allowsIntentionalExtraArms = shotAllowsIntentionalExtraArms(shot);
+  const blockedTerms = allowsIntentionalExtraArms
+    ? new Set(["extra arms", "extra hands", "duplicate limbs", "duplicate hands", "duplicate arms"])
+    : null;
+
   return uniqueStrings([
-    ...DEFAULT_NEGATIVE_TERMS,
+    ...DEFAULT_NEGATIVE_TERMS.filter((term) => !blockedTerms?.has(String(term || "").trim().toLowerCase())),
     ...(FLUX2_NEGATIVE_PROMPT
       ? FLUX2_NEGATIVE_PROMPT.split(",").map((item) => item.trim())
       : []),
@@ -2384,14 +2593,44 @@ const buildNegativePrompt = (shot) => {
     .join(", ");
 };
 
-const buildImagePrompt = ({scene, shot, style, sceneIndex = 0, segmentIndex = 0, sceneSpec = null, sceneLint = null, extraDirectives = []}) => {
+const shotAllowsIntentionalExtraArms = (shot) => {
+  const haystack = normalizeForMatch([
+    shot?.coverageText,
+    shot?.action,
+    ...(Array.isArray(shot?.mustShow) ? shot.mustShow : []),
+    ...(Array.isArray(shot?.supportingDetails) ? shot.supportingDetails : [])
+  ].filter(Boolean).join(" "));
+
+  return /\b(multiple arms|many arms|several arms|extra arms|four arms|six arms|more than two arms)\b/.test(haystack);
+};
+
+const buildRecurringMotifDirective = (recurringMotif) => {
+  if (!recurringMotif || typeof recurringMotif !== "object") {
+    return "";
+  }
+  const name = normalizeText(recurringMotif.name);
+  if (!name) {
+    return "";
+  }
+  const expressions = Array.isArray(recurringMotif.expressions)
+    ? recurringMotif.expressions.map((expression) => normalizeText(expression)).filter(Boolean)
+    : [];
+  const expressionHint = expressions.length > 0
+    ? ` Pick a fitting expression for this beat from: ${expressions.join(", ")}.`
+    : "";
+  return `Include the recurring motif "${name}" somewhere in the frame as a small consistent visual signature across scenes.${expressionHint}`;
+};
+
+const buildImagePrompt = ({scene, shot, style, sceneIndex = 0, segmentIndex = 0, sceneSpec = null, sceneLint = null, extraDirectives = [], recurringMotif = null}) => {
   const humanSubjectPrompt = buildHumanSubjectPrompt(shot);
+  const motifDirective = buildRecurringMotifDirective(recurringMotif);
   const attemptDirectives = normalizePromptDirectives({
     shot,
     directives: [
       ...buildVariationDirectives({shot}),
       ...buildAttemptDirectives({shot, attempt: 0}),
       ...buildSceneSpecPromptDirectives({sceneSpec, sceneLint}),
+      ...(motifDirective ? [motifDirective] : []),
       ...extraDirectives
     ]
   });
@@ -2409,17 +2648,19 @@ const buildImagePrompt = ({scene, shot, style, sceneIndex = 0, segmentIndex = 0,
   const attemptGuidance = attemptDirectives.length > 0
     ? `Extra direction: ${attemptDirectives.join("; ")}.`
     : null;
+  const nonTextualNarrativeDirective = buildNonTextualNarrativeDirective(shot);
 
   return [
     `Create a high-end ${styleGuidance} scene with one clear focal subject and clean anatomy.`,
     humanSubjectPrompt,
-    `Show ${shot.coverageText} with ${shot.mustShow.join(", ")}.`,
+    `Depict a concrete visual moment centered on ${shot.mustShow.join(", ")}.`,
     supportingDetailsText,
     `Set the scene in ${shot.setting}.`,
     `Frame it as ${shot.composition}, with ${shot.camera}.`,
     `The visible action is ${shot.action}.`,
     `Lighting should feel ${shot.lighting}.`,
-    `Keep the subject fully readable in a ${OUTPUT_LAYOUT === "horizontal" ? "horizontal 16:9" : "vertical 9:16"} layout with subtle safe margins for captions and UI.`,
+    nonTextualNarrativeDirective,
+    `Keep the subject fully readable in a ${OUTPUT_LAYOUT === "horizontal" ? "horizontal 16:9" : "vertical 9:16"} layout with subtle safe margins for captions and UI.${OUTPUT_LAYOUT !== "horizontal" ? " Position the character's face and head in the upper third of the frame, leaving the lower third empty for caption overlays." : ""}`,
     `Maintain this visual identity: ${DEFAULT_STYLE_LOCK_PROMPT}.`,
     visualContractText ? `Run-level visual contract: ${visualContractText}.` : null,
     `Composition rules: ${DEFAULT_COMPOSITION_RULES}.`,
@@ -2442,6 +2683,10 @@ const validatePromptCoverage = ({shot, prompt, negativePrompt}) => {
 
   if (missingNegatives.length > 0) {
     throw new Error(`Negative prompt incompleto: ${missingNegatives.join(", ")}`);
+  }
+
+  if (promptRepeatsCoverageText({shot, prompt})) {
+    throw new Error("Prompt repetiu a frase da narracao em vez de traduzi-la visualmente.");
   }
 };
 
@@ -2645,19 +2890,6 @@ const auditLocalFlux2Output = async ({imagePath, shot, validation, seed, dryRun 
             continue;
           }
 
-          if (shotIncludesPaperLikeObject(shot)) {
-            warnings.push(`${prefixedReason} (paper-like object — downgraded to warning)`);
-            continue;
-          }
-
-          /* Downgrade OCR to warning when no detected token is a known-dangerous word */
-          const detectedOcrTokens = parseOcrTokensFromReason(rawReason);
-          const hasBlockedOcrWord = detectedOcrTokens.some((token) => OCR_ALWAYS_BLOCKED_TOKENS.has(token));
-          if (detectedOcrTokens.length > 0 && !hasBlockedOcrWord) {
-            warnings.push(`${prefixedReason} (no blocked keyword found — downgraded to warning)`);
-            continue;
-          }
-
           reasons.push(prefixedReason);
           continue;
         }
@@ -2764,6 +2996,9 @@ const auditWithGeminiVision = async ({imagePath, visualGoal, narration, shot = n
     .replace(/'[^']{1,40}'/g, "[text]")
     .replace(/"[^"]{1,40}"/g, "[text]")
     .replace(/\b(saying|reading|labeled|text|caption|bubble|reads)\s+["""''][^"""'']{1,40}["""'']/gi, "$1 [text]");
+  const allowsIntentionalExtraArms =
+    shotAllowsIntentionalExtraArms(shot) ||
+    /\b(multiple arms|many arms|several arms|extra arms|four arms|six arms|more than two arms)\b/i.test(sanitizedGoal);
 
   const prompt = [
     `You are a visual QA auditor for an automated video pipeline that uses a ${STYLE_AUDIT_DESCRIPTION}.`,
@@ -2777,7 +3012,9 @@ const auditWithGeminiVision = async ({imagePath, visualGoal, narration, shot = n
     "Check ONLY for:",
     "- Completely wrong subject matter (e.g. scene about cooking but image shows a car)",
     "- Image is blank, corrupted, or unrecognizable",
-    "- Impossible anatomy such as extra hands, extra arms, extra legs, duplicate heads, fused limbs, or 3 to 4 hands on one body",
+    allowsIntentionalExtraArms
+      ? "- Impossible anatomy such as extra legs, duplicate heads, fused limbs, or chaotic unreadable limb geometry. Intentional symbolic multiple arms are allowed when the visual goal explicitly asks for them."
+      : "- Impossible anatomy such as extra hands, extra arms, extra legs, duplicate heads, fused limbs, or 3 to 4 hands on one body",
     "- The main person is so tiny, distant, or reduced to a stray line that it does not read as a clear focal subject when the scene needs a person",
     "- SKIP text checking entirely — text on screens, signs, speech bubbles, or surfaces is handled by a separate OCR audit and is NOT your responsibility",
     "",
@@ -2797,9 +3034,13 @@ const auditWithGeminiVision = async ({imagePath, visualGoal, narration, shot = n
         ]
       : []),
     "",
-    EXPECT_STICKMAN_AUDIT
-      ? "If only one stick figure is visible, it must not have more than two hands or more than two arms. Occluded limbs are acceptable, extra limbs are not."
-      : "If only one character is visible, it must not have more than two hands or more than two arms. Occluded limbs are acceptable, extra limbs are not.",
+    allowsIntentionalExtraArms
+      ? "If the goal explicitly calls for multiple arms as a symbolic multitasking device, do NOT reject simply because more than two arms are visible. Reject only if the body becomes unreadable, broken, fused, or no longer reads as one coherent multitasking character."
+      : (
+          EXPECT_STICKMAN_AUDIT
+            ? "If only one stick figure is visible, it must not have more than two hands or more than two arms. Occluded limbs are acceptable, extra limbs are not."
+            : "If only one character is visible, it must not have more than two hands or more than two arms. Occluded limbs are acceptable, extra limbs are not."
+        ),
     EXPECT_STICKMAN_AUDIT
       ? "When the scene narration or visual goal clearly involves a person, reject images where the character is barely visible, too tiny to read, or looks like just a stick line instead of a clear stick figure."
       : "When the scene narration or visual goal clearly involves a person, reject images where the character is barely visible or too tiny to read as a clear focal subject.",
@@ -2817,7 +3058,7 @@ const auditWithGeminiVision = async ({imagePath, visualGoal, narration, shot = n
         generationConfig: withThinkingDisabled({
           temperature: 0,
           responseMimeType: "application/json"
-        })
+        }, GEMINI_VISION_MODEL)
       });
       recordGeminiUsage(geminiUsageSummary, {
         model: payload?.modelVersion || GEMINI_VISION_MODEL,
@@ -2923,15 +3164,38 @@ const imageToStaticClip = ({imagePath, videoPath, duration}) => {
     `format=yuv420p`
   ].join(",");
 
-  execFileSync("ffmpeg", [
+  const args = [
     "-y", "-loop", "1", "-i", imagePath,
     "-vf", filter,
     "-t", String(duration),
     "-r", String(CLIP_FPS),
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+    "-threads", "1", "-filter_threads", "1",
+    "-c:v", "libx264", "-preset", "fast", "-crf", "18",
     "-pix_fmt", "yuv420p", "-movflags", "+faststart",
     "-an", videoPath
-  ], {stdio: "inherit"});
+  ];
+
+  const maxAttempts = 3;
+  const backoffMs = [0, 1500, 4000];
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (backoffMs[attempt - 1] > 0) {
+      try { execFileSync("sleep", [String(backoffMs[attempt - 1] / 1000)], {stdio: "ignore"}); } catch {}
+    }
+    try {
+      try { execFileSync("rm", ["-f", videoPath], {stdio: "ignore"}); } catch {}
+      execFileSync("ffmpeg", args, {stdio: "inherit"});
+      const stat = statSync(videoPath, {throwIfNoEntry: false});
+      if (!stat || stat.size <= 0) {
+        throw new Error(`ffmpeg produced empty output for ${path.basename(videoPath)}`);
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      process.stderr.write(`[vertex-assets] imageToStaticClip attempt ${attempt}/${maxAttempts} failed for ${path.basename(videoPath)}: ${error?.message || error}\n`);
+    }
+  }
+  throw lastError || new Error(`imageToStaticClip failed after ${maxAttempts} attempts`);
 };
 
 // --- Concatenate multiple clips into one ---
@@ -3039,6 +3303,16 @@ const main = async () => {
 
   if (scenes.length === 0) throw new Error("Storyboard sem cenas.");
 
+  /* When the storyboard carries its own styleNotes + searchQuery per scene,
+     use those as the image prompt directly instead of the visual style preset. */
+  const useStoryboardPrompts = Boolean(
+    storyboard.styleNotes &&
+    scenes.every((s) => s.searchQuery && s.visualGoal)
+  );
+  if (useStoryboardPrompts) {
+    process.stdout.write(`[vertex-assets] storyboard has custom visual prompts — bypassing style preset\n`);
+  }
+
   const requestedSceneNumber = Number.isFinite(Number(args.sceneNumber)) ? Math.floor(Number(args.sceneNumber)) : 0;
   if (requestedSceneNumber && (requestedSceneNumber < 1 || requestedSceneNumber > scenes.length)) {
     throw new Error(`Cena invalida para regenerar: ${requestedSceneNumber}. Storyboard tem ${scenes.length} cenas.`);
@@ -3102,6 +3376,7 @@ const main = async () => {
 
   for (const i of targetSceneIndexes) {
     const scene = scenes[i];
+    scene.__sceneNumber = i + 1;
     const sceneNum = String(i + 1).padStart(2, "0");
     const sceneSpec = compileSceneSpecFromStoryboardScene(scene, {sceneNumber: i + 1});
     const sceneLint = lintSceneSpec(sceneSpec);
@@ -3154,23 +3429,35 @@ const main = async () => {
 
   const currentReuseMetadata = buildReuseMetadata({scenePlans});
   const existingReuseMetadata = forceRegenerate ? null : await readReuseMetadata(assetDir);
-  const canReuseExistingAssets =
-    !forceRegenerate &&
+  // Reuse cached per-shot assets whenever the style/layout/dimensions match.
+  // The scene fingerprint is informational — adding shots, trimming narrations,
+  // or rewording a coverageText shouldn't nuke ~$1 of already-rendered images.
+  // Per-shot reuse below still requires both segImage AND segVideo to exist,
+  // so stale shots naturally re-render when their files were deleted.
+  const styleLayoutMatches =
     existingReuseMetadata &&
-    JSON.stringify(existingReuseMetadata) === JSON.stringify(currentReuseMetadata);
+    existingReuseMetadata.stylePreset === currentReuseMetadata.stylePreset &&
+    existingReuseMetadata.outputLayout === currentReuseMetadata.outputLayout &&
+    existingReuseMetadata.outputWidth === currentReuseMetadata.outputWidth &&
+    existingReuseMetadata.outputHeight === currentReuseMetadata.outputHeight;
+  const canReuseExistingAssets = !forceRegenerate && Boolean(styleLayoutMatches);
 
-  if (!forceRegenerate && existingReuseMetadata && !canReuseExistingAssets) {
+  if (!forceRegenerate && existingReuseMetadata && !styleLayoutMatches) {
     if (requestedSceneNumber) {
       process.stdout.write(
-        `[vertex-assets] storyboard/style/layout changed; preserving existing scenes during targeted repair of scene ${requestedSceneNumber}\n`
+        `[vertex-assets] style/layout changed; preserving existing scenes during targeted repair of scene ${requestedSceneNumber}\n`
       );
     } else {
       process.stdout.write(
-        "[vertex-assets] storyboard/style/layout changed; regenerating assets from scratch\n"
+        "[vertex-assets] style/layout changed; regenerating assets from scratch\n"
       );
       await rm(assetDir, {recursive: true, force: true});
       await mkdir(imagesDir, {recursive: true});
     }
+  } else if (!forceRegenerate && existingReuseMetadata && existingReuseMetadata.storyboardFingerprint !== currentReuseMetadata.storyboardFingerprint) {
+    process.stdout.write(
+      "[vertex-assets] storyboard updated; reusing cached shots that still match, regenerating only missing/new ones\n"
+    );
   }
 
   await writeFile(path.join(assetDir, "flux2-meta.json"), JSON.stringify(currentReuseMetadata, null, 2));
@@ -3218,7 +3505,7 @@ const main = async () => {
       const segImagePath = path.join(imagesDir, `scene-${sceneNum}-seg-${segNum}.png`);
       const segVideoPath = path.join(imagesDir, `scene-${sceneNum}-seg-${segNum}.mp4`);
       const coverageWords = countWords(shot.coverageText || scene.narration);
-      const segDuration = estimateDuration(coverageWords);
+      const segDuration = shot.duration || estimateDuration(coverageWords);
       const negativePrompt = buildNegativePrompt(shot);
       const buildValidation = (prompt) => {
         try {
@@ -3233,16 +3520,35 @@ const main = async () => {
           };
         }
       };
-      const prompt = buildImagePrompt({
-        scene,
-        shot,
-        style: args.style || DEFAULT_STYLE,
-        sceneIndex: i,
-        segmentIndex: j,
-        sceneSpec: entry.sceneSpec,
-        sceneLint: entry.sceneLint
-      });
-      const validation = buildValidation(prompt);
+      const explicitShotPrompt = normalizeText(scene?.shots?.[j]?.imagePrompt || scene?.imagePrompts?.[j] || "");
+      const buildExplicitShotPrompt = ({extraDirectives = []} = {}) => [
+        explicitShotPrompt,
+        `Style: ${storyboard.styleNotes || DEFAULT_STYLE}.`,
+        `Keep the subject fully readable in a ${OUTPUT_LAYOUT === "horizontal" ? "horizontal 16:9" : "vertical 9:16"} layout.`,
+        "Use blank or icon-only screens, signs, cards, plates, and surfaces. No visible writing, no watermark, no logo, no numbers, no letter-like marks.",
+        "Do not add artist signatures, calligraphy strokes, decorative initials, scribbles, or signature-like marks anywhere, especially near the bottom edge.",
+        ...extraDirectives
+      ].filter(Boolean).join(" ");
+      const prompt = explicitShotPrompt
+        ? buildExplicitShotPrompt()
+        : useStoryboardPrompts
+        ? [
+            scene.searchQuery || shot.coverageText,
+            `Visual goal: ${scene.visualGoal || shot.coverageText}.`,
+            `Style: ${storyboard.styleNotes}.`,
+            `Keep the subject fully readable in a ${OUTPUT_LAYOUT === "horizontal" ? "horizontal 16:9" : "vertical 9:16"} layout.`,
+            "No text, no watermark, no logo, no distorted anatomy."
+          ].filter(Boolean).join(" ")
+        : buildImagePrompt({
+            scene,
+            shot,
+            style: args.style || DEFAULT_STYLE, recurringMotif: storyboard?.recurringMotif || null,
+            sceneIndex: i,
+            segmentIndex: j,
+            sceneSpec: entry.sceneSpec,
+            sceneLint: entry.sceneLint
+          });
+      const validation = (explicitShotPrompt || useStoryboardPrompts) ? {missingObjects: [], missingNegatives: []} : buildValidation(prompt);
 
       if (validation.missingObjects.length > 0 || validation.missingNegatives.length > 0) {
         throw new Error(`Prompt validation falhou para scene ${sceneNum} seg ${segNum}`);
@@ -3372,10 +3678,23 @@ const main = async () => {
           const attemptOutputPath = path.join(imagesDir, `scene-${sceneNum}-seg-${segNum}__attempt-${attempt + 1}.png`);
           const attemptPrompt = attempt === 0
             ? prompt
+            : explicitShotPrompt
+              ? buildExplicitShotPrompt({
+                  extraDirectives: buildAttemptDirectives({
+                    shot,
+                    attempt,
+                    failureSummary: lastError?.message || ""
+                  }).concat(
+                    buildPositiveRepairDirectives({
+                      shot,
+                      failureSummary: lastError?.message || ""
+                    })
+                  )
+                })
             : buildImagePrompt({
                 scene,
                 shot,
-              style: args.style || DEFAULT_STYLE,
+              style: args.style || DEFAULT_STYLE, recurringMotif: storyboard?.recurringMotif || null,
               sceneIndex: i,
               segmentIndex: j,
               sceneSpec: entry.sceneSpec,
@@ -3391,7 +3710,11 @@ const main = async () => {
                   })
                 )
               });
-          const attemptValidation = attempt === 0 ? validation : buildValidation(attemptPrompt);
+          const attemptValidation = attempt === 0
+            ? validation
+            : explicitShotPrompt
+              ? {missingObjects: [], missingNegatives: []}
+              : buildValidation(attemptPrompt);
 
           if (attemptValidation.missingObjects.length > 0 || attemptValidation.missingNegatives.length > 0) {
             throw new Error(`Prompt validation falhou para scene ${sceneNum} seg ${segNum} na tentativa ${attempt + 1}`);
@@ -3486,7 +3809,7 @@ const main = async () => {
                   const bonusOutput = path.join(imagesDir, `scene-${sceneNum}-seg-${segNum}__attempt-${FLUX2_RENDER_RETRY_COUNT + bonus + 1}.png`);
                   const bonusPrompt = buildImagePrompt({
                     scene, shot,
-                    style: args.style || DEFAULT_STYLE,
+                    style: args.style || DEFAULT_STYLE, recurringMotif: storyboard?.recurringMotif || null,
                     sceneIndex: i, segmentIndex: j,
                     sceneSpec: entry.sceneSpec,
                     sceneLint: entry.sceneLint,
@@ -3541,7 +3864,7 @@ const main = async () => {
                   const bonusOutput = path.join(imagesDir, `scene-${sceneNum}-seg-${segNum}__attempt-${FLUX2_RENDER_RETRY_COUNT + 2 + bonus + 1}.png`);
                   const bonusPrompt = buildImagePrompt({
                     scene, shot,
-                    style: args.style || DEFAULT_STYLE,
+                    style: args.style || DEFAULT_STYLE, recurringMotif: storyboard?.recurringMotif || null,
                     sceneIndex: i, segmentIndex: j,
                     sceneSpec: entry.sceneSpec,
                     sceneLint: entry.sceneLint,
@@ -3596,7 +3919,7 @@ const main = async () => {
                   const bonusPrompt = buildImagePrompt({
                     scene,
                     shot,
-                    style: args.style || DEFAULT_STYLE,
+                    style: args.style || DEFAULT_STYLE, recurringMotif: storyboard?.recurringMotif || null,
                     sceneIndex: i,
                     segmentIndex: j,
                     sceneSpec: entry.sceneSpec,
@@ -3768,14 +4091,55 @@ const main = async () => {
       !args.imagesOnly &&
       (sceneFailed || plannedShots.length === 0 || segmentClips.length !== plannedShots.length)
     ) {
-      await rm(videoPath, {force: true}).catch(() => {}); /* best-effort: remove incomplete scene video */
-      markSceneIncomplete({
-        sceneNum,
-        clipsOk: segmentClips.length,
-        clipsExpected: plannedShots.length,
-        reasons: sceneFailureReasons
-      });
-      continue;
+      /* Fallback: use best rejected attempt for missing segments */
+      if (missingSegments.length > 0 && segmentClips.length > 0) {
+        let recoveredCount = 0;
+        for (const missSeg of missingSegments) {
+          const attemptPrefix = `scene-${sceneNum}-seg-${missSeg}__attempt-`;
+          const dirEntries = await readdir(imagesDir).catch(() => []);
+          const attemptFiles = dirEntries
+            .filter((name) => name.startsWith(attemptPrefix) && name.endsWith(".png"))
+            .sort();
+          if (attemptFiles.length === 0) continue;
+          // Later attempts carry progressively stronger corrective directives
+          // (anatomy lock, background fixes), so the LAST attempt is the best
+          // candidate — not the first.
+          const bestAttempt = attemptFiles[attemptFiles.length - 1];
+          const segFailureReason = sceneFailureReasons.find((reason) => reason.startsWith(`seg ${missSeg} `)) || "";
+          if (/extra arm|extra hand|extra leg|duplicate limb|duplicate hand|duplicate arm|mutated anatomy|deformed anatomy|fused limb|floating limb/i.test(segFailureReason)) {
+            process.stderr.write(
+              `[vertex-assets] scene ${sceneNum} seg ${missSeg}: ANATOMY-FLAGGED fallback (${truncateText(segFailureReason, 120)}) — review this scene before publishing\n`
+            );
+          }
+          const fallbackImage = path.join(imagesDir, `scene-${sceneNum}-seg-${missSeg}.png`);
+          const fallbackClip = path.join(imagesDir, `scene-${sceneNum}-seg-${missSeg}.mp4`);
+          await copyFile(path.join(imagesDir, bestAttempt), fallbackImage);
+          const segIdx = Number.parseInt(missSeg, 10) - 1;
+          const segDur = plannedShots[segIdx]?.duration || 11;
+          try {
+            await imageToStaticClip({imagePath: fallbackImage, videoPath: fallbackClip, duration: segDur});
+            segmentClips.push(fallbackClip);
+            recoveredCount++;
+            process.stderr.write(
+              `[vertex-assets] scene ${sceneNum} seg ${missSeg}: FALLBACK using rejected attempt ${bestAttempt} (audit failed but usable)\n`
+            );
+          } catch {}
+        }
+        if (recoveredCount > 0 && segmentClips.length >= plannedShots.length) {
+          segmentClips.sort();
+          process.stderr.write(
+            `[vertex-assets] scene ${sceneNum}: recovered ${recoveredCount} segment(s) via fallback\n`
+          );
+        } else {
+          await rm(videoPath, {force: true}).catch(() => {});
+          markSceneIncomplete({sceneNum, clipsOk: segmentClips.length, clipsExpected: plannedShots.length, reasons: sceneFailureReasons});
+          continue;
+        }
+      } else {
+        await rm(videoPath, {force: true}).catch(() => {});
+        markSceneIncomplete({sceneNum, clipsOk: segmentClips.length, clipsExpected: plannedShots.length, reasons: sceneFailureReasons});
+        continue;
+      }
     }
 
     // When SDXL is enabled, clip creation is deferred to after batch refinement
@@ -3891,11 +4255,17 @@ if (isDirectRun) {
 export {
   analyzeFailureText,
   buildGeminiVisionAuditGuardrails,
+  buildImagePrompt,
+  buildRecurringMotifDirective,
+  buildReuseMetadata,
+  planSceneShots,
   buildSceneAwareAction,
   buildSceneAwareCamera,
   buildSceneAwareComposition,
   buildSceneSpecPromptDirectives,
   describeAllowedAbstractScreenContent,
+  inferShotMustShow,
+  normalizeShot,
   realignShotWithSceneSpec,
   sanitizeShotText,
   sanitizeShotTextForSceneSpec,

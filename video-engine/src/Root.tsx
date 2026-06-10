@@ -7,7 +7,7 @@ const defaultProps: ShortVideoProps = {
   title: "Exemplo de video vertical",
   hook: "Um formato simples, rapido e nativo para shorts.",
   cta: "Segue para mais videos.",
-  channelHandle: "@teucanal",
+  channelHandle: "",
   durationInFrames: 300,
   narrationPath: null,
   musicPath: null,

@@ -6,6 +6,8 @@ import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {z} from "zod";
 import {resolveOutputProfileConfig} from "../../config/output-profiles.mjs";
+import {resolveVisualStylePreset} from "../../config/visual-style-presets.mjs";
+import {channelPresets} from "../../web/lib/presets.mjs";
 import {normalizeText, slugify, uniqueStrings, sleep as wait, runLoggedCommand as runLoggedCommandBase} from "../../../shared/utils.mjs";
 import {loadSecretsIntoEnv} from "./lib/secrets.mjs";
 import {analyzeSceneSpeechPacing, buildTimeline} from "./lib/timings.mjs";
@@ -29,6 +31,7 @@ import {
 } from "./lib/tts.mjs";
 import {mergeUsedAssetsRegistry, readUsedAssetsRegistry, writeUsedAssetsRegistry} from "./lib/used-assets.mjs";
 import {runStreamingCommand} from "./lib/clean-cli.mjs";
+import {generateVertexImage} from "./lib/gcp-media.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
@@ -37,15 +40,15 @@ const MIN_SCENES = Math.max(1, Number.parseInt(process.env.MIN_SCENE_COUNT || "1
 const MAX_SCENES = Math.max(MIN_SCENES, Number.parseInt(process.env.MAX_SCENE_COUNT || "18", 10) || 18);
 const REMOTION_TIMEOUT_MS = Math.max(
   30000,
-  Number.parseInt(process.env.REMOTION_TIMEOUT_MS || "1800000", 10) || 1800000
+  Number.parseInt(process.env.REMOTION_TIMEOUT_MS || "5400000", 10) || 5400000
 );
 const REMOTION_CONCURRENCY = Math.max(
   1,
   Number.parseInt(process.env.REMOTION_CONCURRENCY || "2", 10) || 2
 );
-const REMOTION_VIDEO_BITRATE = String(process.env.REMOTION_VIDEO_BITRATE || "1400k");
-const REMOTION_AUDIO_BITRATE = String(process.env.REMOTION_AUDIO_BITRATE || "96k");
-const REMOTION_X264_PRESET = String(process.env.REMOTION_X264_PRESET || "veryfast");
+const REMOTION_VIDEO_BITRATE = String(process.env.REMOTION_VIDEO_BITRATE || "6M");
+const REMOTION_AUDIO_BITRATE = String(process.env.REMOTION_AUDIO_BITRATE || "128k");
+const REMOTION_X264_PRESET = String(process.env.REMOTION_X264_PRESET || "fast");
 const REMOTION_SCALE = String(process.env.REMOTION_SCALE || "1");
 const REQUIRE_ENVATO_ALL_SCENES =
   String(process.env.REQUIRE_ENVATO_ALL_SCENES || "true").trim().toLowerCase() === "true";
@@ -80,6 +83,48 @@ const buildProfileContext = (profileValue) => {
     outputHeight: Number(process.env.OUTPUT_HEIGHT || profile.height || 1920),
     compositionId: String(process.env.RENDER_COMPOSITION_ID || profile.compositionId || "CodexShort"),
     targetSeconds: Number(process.env.TARGET_DURATION_SECONDS || profile.defaultTargetSeconds || 100)
+  };
+};
+
+const normalizeHandleKey = (value = "") =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^@/, "");
+
+const resolveChannelPresetFromHandle = (handle = "") => {
+  const handleKey = normalizeHandleKey(handle);
+
+  if (!handleKey) {
+    return channelPresets.foiumaideia || null;
+  }
+
+  return Object.values(channelPresets).find((preset) => normalizeHandleKey(preset?.handle) === handleKey) || null;
+};
+
+const buildConcreteStyleNotesFromPreset = (stylePresetId = "") => {
+  const preset = resolveVisualStylePreset(stylePresetId || "ink");
+
+  if (preset.id === "ink") {
+    return "Consistent high-contrast black and white ink illustration style with bold linework, crisp shadow masses, clean negative space, and monochromatic green accents only where terminal glow helps the story.";
+  }
+
+  if (preset.id === "editorial_line_green") {
+    return "Consistent black and white editorial line art with refined ink contours, subtle monochromatic green accents, detailed but controlled environments, and no readable text anywhere in frame.";
+  }
+
+  return normalizeText(preset.auditStyleDescription || preset.stylePrompt || "Consistent visual style with one readable focal subject per frame.");
+};
+
+const stripGraphicFieldsFromStoryboard = (storyboard) => {
+  const {styleNotes, scenes = [], ...rest} = storyboard || {};
+
+  return {
+    ...rest,
+    scenes: scenes.map((scene) => {
+      const {sceneType, visualGoal, candidateQueries, ...sceneRest} = scene || {};
+      return sceneRest;
+    })
   };
 };
 
@@ -368,6 +413,30 @@ const sanitizeEnglishStockQuery = (value) =>
     .replace(/\s+/g, " ")
     .trim();
 
+const VISUAL_ALIGNMENT_STOPWORDS = new Set([
+  "the", "and", "with", "from", "into", "onto", "over", "under", "near", "that", "this", "these", "those",
+  "into", "around", "style", "illustration", "shot", "scene", "image", "person", "people", "single", "exactly",
+  "visible", "showing", "shows", "look", "looking", "there", "their", "them", "his", "her", "its", "then", "than",
+  "while", "where", "when", "just", "very", "same", "main", "place", "action", "style", "high", "contrast"
+]);
+
+const extractVisualAlignmentTokens = (value) =>
+  sanitizeEnglishStockQuery(value)
+    .split(" ")
+    .filter((token) => token.length >= 3 && !VISUAL_ALIGNMENT_STOPWORDS.has(token));
+
+const isVisualGoalAlignedWithSearchQuery = (visualGoal, searchQuery) => {
+  const goalTokens = uniqueStrings(extractVisualAlignmentTokens(visualGoal));
+  const queryTokens = uniqueStrings(extractVisualAlignmentTokens(searchQuery));
+
+  if (goalTokens.length === 0 || queryTokens.length === 0) {
+    return true;
+  }
+
+  const overlap = goalTokens.filter((token) => queryTokens.includes(token)).length;
+  return overlap >= 2 || overlap >= Math.ceil(Math.min(goalTokens.length, queryTokens.length) * 0.35);
+};
+
 const isLikelyEnglishStockQuery = (value) => {
   const normalized = sanitizeEnglishStockQuery(value);
 
@@ -567,8 +636,10 @@ const callOpenRouter = async ({apiKey, model, temperature, messages}) => {
     : String(content ?? "").trim();
 };
 
-const buildGraphicMessages = ({title, storyboard}) => {
+const buildGraphicMessages = ({title, storyboard, stylePresetId = ""}) => {
   const targetSceneCount = Array.isArray(storyboard?.scenes) ? storyboard.scenes.length : MIN_SCENES;
+  const styleNotesAnchor = buildConcreteStyleNotesFromPreset(stylePresetId);
+  const stylePreset = resolveVisualStylePreset(stylePresetId || "ink");
   const requestedShape = JSON.stringify({
     styleNotes: "string",
     scenes: [
@@ -592,6 +663,8 @@ const buildGraphicMessages = ({title, storyboard}) => {
       role: "user",
       content: [
         `Title: ${title}`,
+        `Style preset: ${stylePreset.label}.`,
+        `Style anchor: ${styleNotesAnchor}`,
         `Task: keep the same scene order and return exactly ${targetSceneCount} scenes.`,
         "For each scene, produce an asset plan with:",
         "- a short overlay in pt-BR",
@@ -602,13 +675,18 @@ const buildGraphicMessages = ({title, storyboard}) => {
         "- 3 candidateQueries ordered from most specific to broader fallback",
         "Rules:",
         "1. Candidate queries must match the narration exactly.",
+        "1b. The storyboard searchQuery is the primary frame reference for each scene. visualGoal and candidateQueries must stay on that same exact shot idea, not reinterpret it into a different device, place, or subject.",
+        "1c. Candidate query 1 should stay very close to the storyboard searchQuery, only simplifying it for stock-footage search if needed.",
         "2. Candidate queries must be practical stock search terms in English.",
         "3. Candidate queries must use ASCII English only, with plain Latin letters, numbers, spaces, and hyphens.",
         "4. Never mix Portuguese, Chinese, emojis, or any non-Latin characters inside candidate queries.",
         "5. Every visualGoal must be a complete concrete shot description, never a fragment.",
+        "5b. Every visualGoal must keep exactly one dominant focal subject, one place, and one main action.",
+        "5c. Every visualGoal must describe the same image as the storyboard searchQuery. Do not drift into a second interpretation of the scene.",
         "6. If narration mentions paper, menu, sign, packaging, label, or translation, describe blank or unreadable layouts instead of readable text.",
         "7. Prefer portrait-friendly, concrete, human scenes that can realistically be found in stock footage for this exact topic.",
         "8. Avoid generic futuristic or abstract visuals.",
+        "8b. Never use split-screen, collage, montage, triptych, or multi-country multi-location compositions inside one single image.",
         "9. If a scene is conceptually hard, translate it into a present-day human proof point of the same idea.",
         "10. Prefer people using devices, engineers in factories, doctors with scans, solar panels, wind turbines, warehouses, offices, homes, transport and city footage.",
         "11. Overlays should be short and clear, 2 to 4 words when possible.",
@@ -617,6 +695,7 @@ const buildGraphicMessages = ({title, storyboard}) => {
           ? "12. Never use text-only. Every scene must be solvable with stock video."
           : "12. Use text-only only as a last resort.",
         "13. styleNotes must be a concrete production note with at least 12 characters. Never leave styleNotes empty, generic, or one word only.",
+        "13b. styleNotes must explicitly mention linework or drawing language, contrast, background treatment, and accent color or palette so the image model can stay visually consistent.",
         `14. The scenes array must contain exactly ${targetSceneCount} items. Do not omit or merge scenes.`,
         "Return this JSON shape:",
         requestedShape,
@@ -627,13 +706,13 @@ const buildGraphicMessages = ({title, storyboard}) => {
   ];
 };
 
-const fallbackGraphicPlan = (storyboard) => ({
-  styleNotes: "Usar cenas humanas concretas, planos verticais e acoes claras com celular.",
+const fallbackGraphicPlan = (storyboard, stylePresetId = "") => ({
+  styleNotes: buildConcreteStyleNotesFromPreset(stylePresetId),
   scenes: storyboard.scenes.map((scene) => ({
     title: scene.title,
     overlay: scene.overlay,
     sceneType: "stock",
-    visualGoal: scene.narration,
+    visualGoal: scene.searchQuery,
     candidateQueries: buildQueryVariants(scene.searchQuery)
   }))
 });
@@ -694,7 +773,7 @@ const runLlmStageWithRetries = async ({stageLabel, task}) => {
   throw lastError || new Error(`${stageLabel} falhou sem detalhes.`);
 };
 
-const generateGraphicPlanStrict = async ({title, storyboard, llmProvider, apiKey, model, cwd}) => {
+const generateGraphicPlanStrict = async ({title, storyboard, llmProvider, apiKey, model, cwd, stylePresetId = ""}) => {
   let lastError = null;
   const expectedSceneCount = Array.isArray(storyboard?.scenes) ? storyboard.scenes.length : MIN_SCENES;
   const graphicPlanSchema = createGraphicPlanSchema(expectedSceneCount);
@@ -712,13 +791,13 @@ const generateGraphicPlanStrict = async ({title, storyboard, llmProvider, apiKey
         model,
         messages: retryInstruction
           ? [
-              ...buildGraphicMessages({title, storyboard}),
+              ...buildGraphicMessages({title, storyboard, stylePresetId}),
               {
                 role: "user",
                 content: retryInstruction
               }
             ]
-          : buildGraphicMessages({title, storyboard}),
+          : buildGraphicMessages({title, storyboard, stylePresetId}),
         schema: graphicPlanOutputSchema,
         cwd,
         usageContext: attempt === 0 ? "graphic-plan" : "graphic-plan-repair"
@@ -733,16 +812,23 @@ const generateGraphicPlanStrict = async ({title, storyboard, llmProvider, apiKey
   throw lastError;
 };
 
-const alignGraphicPlan = (storyboard, graphicPlan) => {
+const alignGraphicPlan = (storyboard, graphicPlan, stylePresetId = "") => {
   return {
-    styleNotes: normalizeText(graphicPlan?.styleNotes) || fallbackGraphicPlan(storyboard).styleNotes,
+    styleNotes: normalizeText(graphicPlan?.styleNotes) || fallbackGraphicPlan(storyboard, stylePresetId).styleNotes,
     scenes: storyboard.scenes.map((scene, index) => {
       const draft = graphicPlan?.scenes?.[index];
-      const fallback = fallbackGraphicPlan(storyboard).scenes[index];
-      const visualGoal = normalizeText(draft?.visualGoal) || fallback.visualGoal;
+      const fallback = fallbackGraphicPlan(storyboard, stylePresetId).scenes[index];
+      const storyboardSearchQuery = normalizeText(scene.searchQuery) || fallback.visualGoal || "";
+      const storyboardQueryAnchor = sanitizeEnglishStockQuery(scene.searchQuery) || fallback.candidateQueries[0] || "";
+      const draftVisualGoal = normalizeText(draft?.visualGoal);
+      const visualGoal =
+        draftVisualGoal && isVisualGoalAlignedWithSearchQuery(draftVisualGoal, storyboardSearchQuery)
+          ? draftVisualGoal
+          : storyboardSearchQuery || fallback.visualGoal;
       const heuristicQueries = buildQueryVariants(visualGoal);
       const candidateQueries = uniqueStrings(
         [
+          storyboardQueryAnchor,
           ...(Array.isArray(draft?.candidateQueries)
             ? draft.candidateQueries
                 .map((value) => sanitizeEnglishStockQuery(value))
@@ -751,7 +837,7 @@ const alignGraphicPlan = (storyboard, graphicPlan) => {
           ...heuristicQueries,
           ...fallback.candidateQueries
         ]
-      ).slice(0, 6);
+      ).slice(0, 3);
 
       return {
         ...scene,
@@ -814,13 +900,20 @@ const isRemotionNetworkFetchError = (error) => {
   );
 };
 
-const buildRemotionRenderArgs = ({compositionId, outPath, renderProps, concurrency, scale, videoBitrate, audioBitrate, x264Preset}) => [
+const createRemotionPropsFile = async ({outPath, renderProps}) => {
+  await mkdir(path.dirname(outPath), {recursive: true});
+  const propsPath = `${outPath}.render-props.json`;
+  await writeFile(propsPath, JSON.stringify(renderProps, null, 2));
+  return propsPath;
+};
+
+const buildRemotionRenderArgs = ({compositionId, outPath, propsPath, concurrency, scale, videoBitrate, audioBitrate, x264Preset}) => [
   "remotion",
   "render",
   "src/index.ts",
   compositionId,
   outPath,
-  `--props=${JSON.stringify(renderProps)}`,
+  `--props=${propsPath}`,
   `--timeout=${REMOTION_TIMEOUT_MS}`,
   `--concurrency=${concurrency}`,
   `--scale=${scale}`,
@@ -830,77 +923,82 @@ const buildRemotionRenderArgs = ({compositionId, outPath, renderProps, concurren
 ];
 
 const renderWithRemotion = async ({compositionId, outPath, renderProps}) => {
-  const attempts = [
-    {
-      label: "padrao",
-      concurrency: REMOTION_CONCURRENCY,
-      scale: REMOTION_SCALE,
-      videoBitrate: REMOTION_VIDEO_BITRATE,
-      audioBitrate: REMOTION_AUDIO_BITRATE,
-      x264Preset: REMOTION_X264_PRESET
-    }
-  ];
+  const propsPath = await createRemotionPropsFile({outPath, renderProps});
+  try {
+    const attempts = [
+      {
+        label: "padrao",
+        concurrency: REMOTION_CONCURRENCY,
+        scale: REMOTION_SCALE,
+        videoBitrate: REMOTION_VIDEO_BITRATE,
+        audioBitrate: REMOTION_AUDIO_BITRATE,
+        x264Preset: REMOTION_X264_PRESET
+      }
+    ];
 
-  if (REMOTION_CONCURRENCY > 1) {
-    attempts.push({
-      label: "fallback",
-      concurrency: 1,
-      scale: REMOTION_SCALE,
-      videoBitrate: REMOTION_VIDEO_BITRATE,
-      audioBitrate: REMOTION_AUDIO_BITRATE,
-      x264Preset: REMOTION_X264_PRESET
-    });
-  }
-
-  let lastError = null;
-
-  for (let index = 0; index < attempts.length; index += 1) {
-    const attempt = attempts[index];
-
-    if (index > 0) {
-      process.stdout.write(
-        `[editor] Remotion retry ${index + 1}/${attempts.length} com concurrency=${attempt.concurrency} apos falha de fetch local.\n`
-      );
+    if (REMOTION_CONCURRENCY > 1) {
+      attempts.push({
+        label: "fallback",
+        concurrency: 1,
+        scale: REMOTION_SCALE,
+        videoBitrate: REMOTION_VIDEO_BITRATE,
+        audioBitrate: REMOTION_AUDIO_BITRATE,
+        x264Preset: REMOTION_X264_PRESET
+      });
     }
 
-    try {
-      await runLoggedCommand(
-        "npx",
-        buildRemotionRenderArgs({
-          compositionId,
-          outPath,
-          renderProps,
-          concurrency: attempt.concurrency,
-          scale: attempt.scale,
-          videoBitrate: attempt.videoBitrate,
-          audioBitrate: attempt.audioBitrate,
-          x264Preset: attempt.x264Preset
-        }),
-        {
-          compactProgress: true,
-          env: {
-            CI: "1",
-            NO_COLOR: "1",
-            FORCE_COLOR: "0"
-          }
-        }
-      );
-      return;
-    } catch (error) {
-      lastError = error;
+    let lastError = null;
 
-      if (!isRemotionNetworkFetchError(error) || index === attempts.length - 1) {
-        throw error;
+    for (let index = 0; index < attempts.length; index += 1) {
+      const attempt = attempts[index];
+
+      if (index > 0) {
+        process.stdout.write(
+          `[editor] Remotion retry ${index + 1}/${attempts.length} com concurrency=${attempt.concurrency} apos falha de fetch local.\n`
+        );
       }
 
-      process.stdout.write(
-        "[editor] Remotion perdeu um asset local durante o fetch. Vou reduzir a concorrencia e tentar de novo.\n"
-      );
-    }
-  }
+      try {
+        await runLoggedCommand(
+          "npx",
+          buildRemotionRenderArgs({
+            compositionId,
+            outPath,
+            propsPath,
+            concurrency: attempt.concurrency,
+            scale: attempt.scale,
+            videoBitrate: attempt.videoBitrate,
+            audioBitrate: attempt.audioBitrate,
+            x264Preset: attempt.x264Preset
+          }),
+          {
+            compactProgress: true,
+            env: {
+              CI: "1",
+              NO_COLOR: "1",
+              FORCE_COLOR: "0"
+            }
+          }
+        );
+        return;
+      } catch (error) {
+        lastError = error;
 
-  if (lastError) {
-    throw lastError;
+        if (!isRemotionNetworkFetchError(error) || index === attempts.length - 1) {
+          throw error;
+        }
+
+        process.stdout.write(
+          "[editor] Remotion perdeu um asset local durante o fetch. Vou reduzir a concorrencia e tentar de novo.\n"
+        );
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+  } finally {
+    await rm(propsPath, {force: true}).catch(() => {});
   }
 };
 
@@ -1017,9 +1115,9 @@ const materializeOverrideAsset = async ({sourcePath, outputPath, width, height})
       "-c:v",
       "libx264",
       "-preset",
-      "veryfast",
+      "fast",
       "-crf",
-      "24",
+      "18",
       "-pix_fmt",
       "yuv420p",
       "-movflags",
@@ -1039,9 +1137,9 @@ const materializeOverrideAsset = async ({sourcePath, outputPath, width, height})
       "-c:v",
       "libx264",
       "-preset",
-      "veryfast",
+      "fast",
       "-crf",
-      "24",
+      "18",
       "-pix_fmt",
       "yuv420p",
       "-movflags",
@@ -1061,9 +1159,9 @@ const materializeOverrideAsset = async ({sourcePath, outputPath, width, height})
       "-c:v",
       "libx264",
       "-preset",
-      "veryfast",
+      "fast",
       "-crf",
-      "24",
+      "18",
       "-pix_fmt",
       "yuv420p",
       "-movflags",
@@ -1083,9 +1181,9 @@ const materializeOverrideAsset = async ({sourcePath, outputPath, width, height})
       "-c:v",
       "libx264",
       "-preset",
-      "veryfast",
+      "fast",
       "-crf",
-      "24",
+      "18",
       "-pix_fmt",
       "yuv420p",
       "-movflags",
@@ -1294,6 +1392,59 @@ const extractQaFrames = async ({slug, outPath, seconds}) => {
 
 const THUMBNAIL_WIDTH = 1080;
 const THUMBNAIL_HEIGHT = 1920;
+
+const generateThumbnail = async ({slug, runDir, publicRunDir, thumbnailPrompt, aspectRatio, stylePresetId}) => {
+  if (!thumbnailPrompt || typeof thumbnailPrompt !== "string" || thumbnailPrompt.trim().length < 10) {
+    return null;
+  }
+
+  const preset = resolveVisualStylePreset(stylePresetId || process.env.IMAGE_STYLE_PRESET || "ink");
+  const fullPrompt = [
+    preset.stylePrompt || "",
+    thumbnailPrompt.trim(),
+    preset.styleLockPrompt || "",
+    "No text, no watermark, no logo, no labels, no numbers, no letters."
+  ].filter(Boolean).join(" ");
+  const model = process.env.THUMBNAIL_IMAGE_MODEL || "gemini-2.5-flash-image";
+  const ratio = aspectRatio || "9:16";
+
+  process.stderr.write(`Gerando thumbnail AI com ${model} (${ratio})...\n`);
+  const result = await generateVertexImage({model, prompt: fullPrompt, aspectRatio: ratio, numberOfImages: 1});
+
+  if (!result?.bytes || result.bytes.length < 1024) {
+    process.stderr.write("Thumbnail AI: imagem retornada vazia ou muito pequena.\n");
+    return null;
+  }
+
+  const aiPath = path.join(runDir, "thumbnail-ai.png");
+  await mkdir(runDir, {recursive: true});
+  await writeFile(aiPath, result.bytes);
+
+  /* Crop: remove bottom 25% to force subject into upper portion of frame */
+  try {
+    const sharp = (await import("sharp")).default;
+    const meta = await sharp(aiPath).metadata();
+
+    if (meta.width && meta.height) {
+      const cropHeight = Math.round(meta.height * 0.75);
+      const cropped = await sharp(aiPath)
+        .extract({left: 0, top: 0, width: meta.width, height: cropHeight})
+        .resize(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, {fit: "cover", position: "top"})
+        .png()
+        .toBuffer();
+      await writeFile(aiPath, cropped);
+    }
+  } catch (cropError) {
+    process.stderr.write(`Thumbnail AI: crop falhou (${cropError.message}), usando imagem original.\n`);
+  }
+
+  await mkdir(publicRunDir, {recursive: true});
+  const publicAiPath = path.join(publicRunDir, "thumbnail-ai.png");
+  await copyFile(aiPath, publicAiPath);
+  process.stderr.write(`Thumbnail AI salva em ${aiPath}\n`);
+
+  return aiPath;
+};
 const THUMBNAIL_FONT_CANDIDATES = [
   "DejaVu Sans:style=Bold",
   "DejaVu Sans",
@@ -1398,7 +1549,7 @@ const createThumbnailPoster = async ({
   sourceFramePath,
   title,
   hook,
-  channelHandle = "@foiumaideia"
+  channelHandle = ""
 }) => {
   const thumbnailDir = path.join(runDir, ".thumbnail-work");
   const runThumbnailPath = path.join(runDir, "thumbnail.png");
@@ -1406,18 +1557,12 @@ const createThumbnailPoster = async ({
   const metadataPath = path.join(runDir, "thumbnail.json");
   const publicMetadataPath = path.join(publicRunDir, "thumbnail.json");
   const headlineFile = path.join(thumbnailDir, "headline.txt");
-  const sublineFile = path.join(thumbnailDir, "subline.txt");
-  const badgeFile = path.join(thumbnailDir, "badge.txt");
   const fontFile = resolveThumbnailFontFile();
-  const headline = wrapThumbnailText(hook || title, {maxCharsPerLine: 18, maxLines: 4}).toUpperCase();
-  const subline = wrapThumbnailText(title || "", {maxCharsPerLine: 22, maxLines: 2});
-  const badge = wrapThumbnailText(channelHandle || "@foiumaideia", {maxCharsPerLine: 16, maxLines: 1}).toUpperCase();
+  const headline = wrapThumbnailText(hook || title, {maxCharsPerLine: 20, maxLines: 3}).toUpperCase();
 
   await mkdir(thumbnailDir, {recursive: true});
   await mkdir(publicRunDir, {recursive: true});
   await writeFile(headlineFile, headline || "");
-  await writeFile(sublineFile, subline || "");
-  await writeFile(badgeFile, badge || "");
 
   if (!sourceFramePath || !existsSync(sourceFramePath)) {
     throw new Error(`Nao consegui localizar o frame-base da thumbnail para ${slug}.`);
@@ -1426,13 +1571,7 @@ const createThumbnailPoster = async ({
   const filter = [
     `scale=${THUMBNAIL_WIDTH}:${THUMBNAIL_HEIGHT}:force_original_aspect_ratio=increase`,
     `crop=${THUMBNAIL_WIDTH}:${THUMBNAIL_HEIGHT}`,
-    "format=yuv420p",
-    "drawbox=x=0:y=0:w=iw:h=220:color=black@0.42:t=fill",
-    "drawbox=x=0:y=ih-540:w=iw:h=540:color=black@0.52:t=fill",
-    "drawbox=x=0:y=0:w=24:h=ih:color=0x22c55e@0.95:t=fill",
-    `drawtext=fontfile='${escapeFfmpegFilterPath(fontFile)}':textfile='${escapeFfmpegFilterPath(badgeFile)}':expansion=none:fontcolor=0x22c55e:fontsize=34:line_spacing=0:x=56:y=56:shadowcolor=black@0.85:shadowx=3:shadowy=3:fix_bounds=1`,
-    `drawtext=fontfile='${escapeFfmpegFilterPath(fontFile)}':textfile='${escapeFfmpegFilterPath(headlineFile)}':expansion=none:fontcolor=white:fontsize=78:line_spacing=10:x=56:y=128:shadowcolor=black@0.92:shadowx=4:shadowy=4:fix_bounds=1`,
-    `drawtext=fontfile='${escapeFfmpegFilterPath(fontFile)}':textfile='${escapeFfmpegFilterPath(sublineFile)}':expansion=none:fontcolor=white:fontsize=44:line_spacing=8:x=56:y=h-430:shadowcolor=black@0.92:shadowx=3:shadowy=3:fix_bounds=1`
+    "format=yuv420p"
   ].join(",");
 
   try {
@@ -1443,6 +1582,8 @@ const createThumbnailPoster = async ({
       "-vf",
       filter,
       "-frames:v",
+      "1",
+      "-update",
       "1",
       runThumbnailPath
     ]);
@@ -1462,7 +1603,6 @@ const createThumbnailPoster = async ({
     publicThumbnailPath: path.relative(projectRoot, publicThumbnailPath),
     title,
     hook,
-    badge
   };
 
   await writeFile(metadataPath, JSON.stringify(metadata, null, 2));
@@ -1617,6 +1757,11 @@ const main = async () => {
   if (!title) {
     throw new Error("Nao consegui derivar um titulo valido a partir da entrada fornecida.");
   }
+
+  const channelPreset = resolveChannelPresetFromHandle(process.env.CHANNEL_HANDLE || "@foiumaideia") || channelPresets.foiumaideia || null;
+  const channelHandle = "";
+  const scriptGuidance = process.env.VIDEO_SCRIPT_GUIDANCE || channelPreset?.scriptGuidance || "";
+  const stylePresetId = process.env.IMAGE_STYLE_PRESET || process.env.FLUX2_STYLE_PRESET || channelPreset?.imageStyle || "ink";
   const llmProvider = resolveLlmProvider(process.env.LLM_PROVIDER || process.env.STORY_PROVIDER || "codex");
   const ttsProvider = String(process.env.TTS_PROVIDER || "auto").trim().toLowerCase();
   const llmModel =
@@ -1624,7 +1769,18 @@ const main = async () => {
       ? process.env.OPENROUTER_MODEL || "google/gemini-2.0-flash-001"
       : llmProvider === "vertex"
         ? process.env.STORY_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash"
+        : llmProvider === "gemini"
+          ? process.env.STORY_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-pro"
         : process.env.CODEX_MODEL || "";
+  const graphicProvider = resolveLlmProvider(process.env.GRAPHIC_PROVIDER || llmProvider);
+  const graphicModel =
+    graphicProvider === "openrouter"
+      ? process.env.GRAPHIC_OPENROUTER_MODEL || process.env.GRAPHIC_MODEL || process.env.OPENROUTER_MODEL || "google/gemini-2.0-flash-001"
+      : graphicProvider === "vertex"
+        ? process.env.GRAPHIC_MODEL || process.env.STORY_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash"
+        : graphicProvider === "gemini"
+          ? process.env.GRAPHIC_MODEL || process.env.GEMINI_GRAPHIC_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash"
+          : llmModel;
   const profileContext = buildProfileContext(args.outputProfile || process.env.OUTPUT_PROFILE || "vertical-short");
   const requestedTargetSeconds = Number.isFinite(args.targetSeconds)
     ? args.targetSeconds
@@ -1673,7 +1829,9 @@ const main = async () => {
     provider: llmProvider,
     model: llmModel || "default",
     hasSourceText: Boolean(sourceText.trim()),
-    scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || ""
+    scriptGuidance,
+    imageStylePreset: stylePresetId,
+    channelHandle
   };
   appendAgentNote(report, "dev", "Diretorio de run, audio e video preparado.");
 
@@ -1698,8 +1856,8 @@ const main = async () => {
           provider: llmProvider,
           cwd: projectRoot,
           sourceText,
-          scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || "",
-          imageStyleHint: process.env.IMAGE_STYLE_PRESET || ""
+          scriptGuidance,
+          imageStyleHint: stylePresetId
         })
       });
     } catch (error) {
@@ -1711,25 +1869,33 @@ const main = async () => {
     }
   }
 
+  const baseStoryboard = args.storyboardFile ? storyboard : stripGraphicFieldsFromStoryboard(storyboard);
   let linkedStoryboard = {
-    ...storyboard,
-    scenes: storyboard.scenes
+    ...baseStoryboard,
+    scenes: baseStoryboard.scenes
   };
+  const skipStoryboardQa = Boolean(args.storyboardFile);
+
+  if (skipStoryboardQa) {
+    logAgent("roteirista", "storyboard externo fornecido — a saltar QA e repair automatico");
+  }
   logAgent("roteirista", "a validar storyboard final antes das imagens");
-  let storyboardQa = evaluateStoryboardQa({
-    storyboard: linkedStoryboard,
-    title,
-    language: videoLanguage,
-    desiredDurationSeconds: targetSeconds,
-    scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || ""
-  });
+  let storyboardQa = skipStoryboardQa
+    ? {passed: true, issues: [], warnings: [], metrics: {}, profile: "external"}
+    : evaluateStoryboardQa({
+        storyboard: linkedStoryboard,
+        title,
+        language: videoLanguage,
+        desiredDurationSeconds: targetSeconds,
+        scriptGuidance
+      });
   const initialStoryboard = linkedStoryboard;
   const initialStoryboardQa = storyboardQa;
   const storyboardPreviewRepairHistory = [];
 
   for (
     let repairAttempt = 0;
-    !storyboardQa.passed && repairAttempt < STORYBOARD_PREVIEW_QA_REPAIR_MAX_ATTEMPTS;
+    !skipStoryboardQa && !storyboardQa.passed && repairAttempt < STORYBOARD_PREVIEW_QA_REPAIR_MAX_ATTEMPTS;
     repairAttempt += 1
   ) {
     const attemptLabel = `${repairAttempt + 1}/${STORYBOARD_PREVIEW_QA_REPAIR_MAX_ATTEMPTS}`;
@@ -1757,8 +1923,9 @@ const main = async () => {
           cwd: projectRoot,
           storyboard: linkedStoryboard,
           sourceText,
-          scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || "",
+          scriptGuidance,
           issues: beforeRepairQa.issues,
+          issueObjects: beforeRepairQa.issueObjects,
           warnings: beforeRepairQa.warnings
         })
     });
@@ -1768,7 +1935,7 @@ const main = async () => {
       title,
       language: videoLanguage,
       desiredDurationSeconds: targetSeconds,
-      scriptGuidance: process.env.VIDEO_SCRIPT_GUIDANCE || ""
+      scriptGuidance
     });
     storyboardPreviewRepairHistory.push({
       attempt: repairAttempt + 1,
@@ -1808,6 +1975,7 @@ const main = async () => {
       2
     )
   );
+  await writeFile(path.join(runsDir, "storyboard-base.json"), JSON.stringify(baseStoryboard, null, 2));
 
   report.agents.roteirista.sceneCount = linkedStoryboard.scenes.length;
   report.agents.roteirista.wordCount = linkedStoryboard.scenes
@@ -1827,7 +1995,7 @@ const main = async () => {
     appendAgentNote(report, "roteirista", `QA pre-visual avisos: ${storyboardQa.warnings.join(" | ")}`);
   }
 
-  if (!storyboardQa.passed) {
+  if (!skipStoryboardQa && !storyboardQa.passed) {
     report.agents.roteirista.status = "failed";
     appendAgentNote(report, "roteirista", `QA pre-visual reprovou o storyboard: ${storyboardQa.issues.join(" | ")}`);
     report.completedAt = new Date().toISOString();
@@ -1841,10 +2009,10 @@ const main = async () => {
   logAgent("grafico", "a criar o plano visual com queries alternativas para stock");
   let graphicPlan;
 
-  if (args.storyboardFile && canReuseGraphicPlan(linkedStoryboard)) {
+  if (args.storyboardFile && canReuseGraphicPlan(storyboard)) {
     graphicPlan = {
-      styleNotes: normalizeText(linkedStoryboard.styleNotes) || fallbackGraphicPlan(linkedStoryboard).styleNotes,
-      scenes: linkedStoryboard.scenes.map((scene) => ({
+      styleNotes: normalizeText(storyboard.styleNotes) || fallbackGraphicPlan(linkedStoryboard, stylePresetId).styleNotes,
+      scenes: storyboard.scenes.map((scene) => ({
         title: scene.title,
         overlay: scene.overlay,
         sceneType: REQUIRE_ENVATO_ALL_SCENES ? "stock" : scene.sceneType === "text-only" ? "text-only" : "stock",
@@ -1853,32 +2021,33 @@ const main = async () => {
       }))
     };
     appendAgentNote(report, "grafico", "Plano visual reaproveitado do storyboard existente.");
-  } else if (["codex", "openrouter", "gemini", "zai", "vertex"].includes(llmProvider) || process.env.OPENROUTER_API_KEY) {
+  } else if (["codex", "openrouter", "gemini", "zai", "vertex"].includes(graphicProvider) || process.env.OPENROUTER_API_KEY) {
     try {
       graphicPlan = await runLlmStageWithRetries({
         stageLabel: "grafico",
         task: async () => generateGraphicPlanStrict({
           title,
           storyboard: linkedStoryboard,
-          llmProvider,
+          llmProvider: graphicProvider,
           apiKey: process.env.OPENROUTER_API_KEY || "",
-          model: llmModel,
-          cwd: projectRoot
+          model: graphicModel,
+          cwd: projectRoot,
+          stylePresetId
         })
       });
     } catch (error) {
-      if (requirePrimaryProviderSuccess(llmProvider)) {
+      if (requirePrimaryProviderSuccess(graphicProvider)) {
         throw new Error(`Gemini falhou ao gerar o plano visual: ${error.message}`);
       }
 
       throw error;
     }
   } else {
-    graphicPlan = fallbackGraphicPlan(linkedStoryboard);
+    graphicPlan = fallbackGraphicPlan(linkedStoryboard, stylePresetId);
     appendAgentNote(report, "grafico", "Sem provider estruturado disponivel; queries graficas geradas por heuristica.");
   }
 
-  const aligned = alignGraphicPlan(linkedStoryboard, graphicPlan);
+  const aligned = alignGraphicPlan(linkedStoryboard, graphicPlan, stylePresetId);
   const enrichedStoryboard = {
     ...linkedStoryboard,
     styleNotes: aligned.styleNotes,
@@ -2325,7 +2494,7 @@ const main = async () => {
     title: enrichedStoryboard.videoTitle,
     hook: enrichedStoryboard.hook,
     cta: enrichedStoryboard.cta,
-    channelHandle: process.env.CHANNEL_HANDLE || "@teucanal",
+    channelHandle,
     outputProfile: profileContext.profile.id,
     compositionId: profileContext.compositionId,
     videoWidth: profileContext.outputWidth,
@@ -2425,15 +2594,35 @@ const main = async () => {
   });
   let thumbnailAsset = null;
 
+  /* --- AI-generated thumbnail (silent fallback to QA frame if absent/failed) --- */
+  let thumbnailSourceFrame = qaFramePaths[0];
+
+  try {
+    const aiThumbPath = await generateThumbnail({
+      slug,
+      runDir: runsDir,
+      publicRunDir,
+      thumbnailPrompt: enrichedStoryboard.thumbnailPrompt,
+      aspectRatio: profileContext.profile.aspectRatio || "9:16",
+      stylePresetId
+    });
+
+    if (aiThumbPath && existsSync(aiThumbPath)) {
+      thumbnailSourceFrame = aiThumbPath;
+      appendAgentNote(report, "qa", "Thumbnail AI gerada com sucesso.");
+    }
+  } catch {
+    /* silent fallback — pipeline continues with QA frame */
+  }
+
   try {
     thumbnailAsset = await createThumbnailPoster({
       slug,
       runDir: runsDir,
       publicRunDir,
-      sourceFramePath: qaFramePaths[0],
+      sourceFramePath: thumbnailSourceFrame,
       title: enrichedStoryboard.videoTitle || title,
       hook: enrichedStoryboard.hook || title,
-      channelHandle: process.env.CHANNEL_HANDLE || "@foiumaideia"
     });
     report.thumbnail = {
       ...thumbnailAsset,

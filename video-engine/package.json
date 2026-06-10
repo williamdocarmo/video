@@ -8,8 +8,6 @@
     "make": "node scripts/make-video.mjs",
     "make:plan1": "node scripts/make-plan1-video.mjs",
     "preview": "node scripts/make-plan1-video.mjs --preview-only",
-    "envato:session": "node scripts/ensure-envato-session.mjs",
-    "envato:download": "node scripts/download-envato-asset.mjs",
     "envato:fetch": "node scripts/fetch-envato-overrides.mjs",
     "secrets:keychain": "node scripts/store-secrets-in-keychain.mjs",
     "publish:retry": "node scripts/retry-agendador-failed-posts.mjs",
@@ -24,6 +22,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "remotion": "4.0.434",
+    "sharp": "^0.33.5",
     "zod": "4.3.6"
   }
 }

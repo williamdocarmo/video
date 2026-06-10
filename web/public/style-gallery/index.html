@@ -63,6 +63,7 @@
       }
       .meta-line { color: var(--muted); }
       .text-link { color: var(--accent); text-decoration: none; font-weight: 700; }
+      .hidden { display: none; }
       .error-box {
         border: 1px solid rgba(198,91,43,.2);
         background: rgba(198,91,43,.08);
@@ -70,6 +71,19 @@
         border-radius: 16px;
         padding: 14px;
       }
+      .pill-row { display: flex; gap: 8px; flex-wrap: wrap; }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: .78rem;
+        color: var(--muted);
+        background: rgba(255,255,255,.7);
+      }
+      .audio-player { width: 100%; }
+      .soft-note { color: var(--muted); font-size: .92rem; }
       details { border-top: 1px solid var(--line); padding-top: 10px; }
       summary { cursor: pointer; font-weight: 700; }
       pre {
@@ -83,6 +97,27 @@
     <main>
       <h1>Galeria de estilos e modelos reais</h1>
       <p class="lede">As imagens abaixo são geradas pelo próprio app. A primeira seção compara presets visuais com a mesma cena-base. A segunda compara modelos de imagem usando o mesmo prompt do caso do GPS.</p>
+
+      <section class="section-block">
+        <div class="section-head">
+          <h2>Comparação de vozes para o @foiumaideia</h2>
+          <p class="lede">Amostras reais com o mesmo texto de stress: 5 vozes Gemini e 5 vozes ElevenLabs. A ideia aqui é comparar timbre, dicção em pt-BR e como cada voz lida com palavras em inglês no ritmo curto do canal.</p>
+          <details open>
+            <summary>Texto de teste</summary>
+            <pre id="voiceSampleText">Carregando texto de teste...</pre>
+          </details>
+        </div>
+        <div id="voiceSamplesError" class="error-box hidden">Não consegui carregar as amostras de voz.</div>
+        <section class="grid" id="voiceSamplesGrid">
+          <article class="card">
+            <div class="card-copy">
+              <p class="kicker">voice samples</p>
+              <h2>Carregando amostras</h2>
+              <p class="soft-note">Os players de voz aparecem aqui assim que o report é encontrado.</p>
+            </div>
+          </article>
+        </section>
+      </section>
 
       <section class="section-block">
         <div class="section-head">
@@ -322,9 +357,128 @@
         <pre>Create a clean editorial ink illustration for a vertical 9:16 short video. Show one driver stuck in heavy traffic inside a car, frustrated, checking a wristwatch with one hand while the other hand remains naturally placed near the steering wheel. Show a low-fuel gauge on the dashboard. Keep exactly one human figure, natural human proportions, only two arms and two hands, no extra limbs, no duplicate watches. This is not a macro hardware shot. Use a readable medium-wide in-car composition, not a device close-up. No text, no logos, no watermark, no fake UI.</pre>
       </details>
     </article>
+
+    <article class="card">
+      <div class="card-copy">
+        <p class="kicker">gemini-3.1-flash-image-preview</p>
+        <h2>Gemini 3.1 Flash Image</h2>
+        <p>Excelente para estilos artísticos (doodle, collage, ink). Segue prompts de estilo muito melhor que Imagen.</p>
+        <p class="meta-line">Modelo real: <code>gemini-3.1-flash-image-preview</code></p>
+        <p class="meta-line">~US$ 0,02 / imagem</p>
+        <p class="meta-line">Rápido, barato, ideal para storyboards com estilo visual definido.</p>
+        <a class="text-link" href="./images/models/gemini-3.1-flash-image-preview.png" target="_blank" rel="noreferrer">Abrir imagem</a>
+      </div>
+      <a href="./images/models/gemini-3.1-flash-image-preview.png" target="_blank" rel="noreferrer"><img src="./images/models/gemini-3.1-flash-image-preview.png" alt="Gemini 3.1 Flash Image"></a>
+    </article>
+
+    <article class="card">
+      <div class="card-copy">
+        <p class="kicker">gemini-3-pro-image-preview</p>
+        <h2>Gemini 3 Pro Image</h2>
+        <p>Modelo mais robusto para raciocínio visual avançado. Melhor fidelidade ao prompt e composição complexa.</p>
+        <p class="meta-line">Modelo real: <code>gemini-3-pro-image-preview</code></p>
+        <p class="meta-line">~US$ 0,05 / imagem</p>
+        <p class="meta-line">Use para cenas que exigem máxima fidelidade ao prompt.</p>
+        <a class="text-link" href="./images/models/gemini-3-pro-image-preview.png" target="_blank" rel="noreferrer">Abrir imagem</a>
+      </div>
+      <a href="./images/models/gemini-3-pro-image-preview.png" target="_blank" rel="noreferrer"><img src="./images/models/gemini-3-pro-image-preview.png" alt="Gemini 3 Pro Image"></a>
+    </article>
+
+    <article class="card">
+      <div class="card-copy">
+        <p class="kicker">gemini-3-pro-image-preview</p>
+        <h2>Gemini 3 Pro Image</h2>
+        <p>Modelo mais robusto para raciocínio visual avançado. Melhor fidelidade ao prompt e composição complexa.</p>
+        <p class="meta-line">Modelo real: <code>gemini-3-pro-image-preview</code></p>
+        <p class="meta-line">~US$ 0,05 / imagem</p>
+        <p class="meta-line">Use para cenas que exigem máxima fidelidade ao prompt.</p>
+      </div>
+      <div style="display:grid;place-items:center;aspect-ratio:9/16;background:#e8e1d5;border-radius:18px;"><p style="color:#5e6d67;text-align:center;padding:20px;">Preview em geração…<br><small>Vídeo de teste a correr agora</small></p></div>
+    </article>
   
         </section>
       </section>
     </main>
+
+    <script>
+      const voiceGrid = document.querySelector("#voiceSamplesGrid");
+      const voiceError = document.querySelector("#voiceSamplesError");
+      const voiceText = document.querySelector("#voiceSampleText");
+
+      const escapeHtml = (value) =>
+        String(value || "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+
+      const renderVoiceCard = (sample) => {
+        const errorBlock = sample.error
+          ? `<div class="error-box">${escapeHtml(sample.error)}</div>`
+          : `<audio class="audio-player" controls preload="none" src="${escapeHtml(sample.audioPath)}"></audio>`;
+
+        const metaPills = [
+          sample.providerLabel,
+          sample.badge,
+          sample.durationSeconds ? `${sample.durationSeconds}s` : "",
+          sample.voiceNameUsed ? `saida: ${sample.voiceNameUsed}` : ""
+        ].filter(Boolean).map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join("");
+
+        const detailsBlock = sample.error
+          ? ""
+          : `
+            <details>
+              <summary>Detalhes técnicos</summary>
+              <pre>provider=${escapeHtml(sample.providerUsed || "")}
+timedWords=${escapeHtml(sample.timedWordsSource || "")}
+arquivo=${escapeHtml(sample.audioPath || "")}</pre>
+            </details>
+          `;
+
+        return `
+          <article class="card">
+            <div class="card-copy">
+              <p class="kicker">${escapeHtml(sample.provider)}</p>
+              <h2>${escapeHtml(sample.label)}</h2>
+              <p>${escapeHtml(sample.note || "")}</p>
+              <div class="pill-row">${metaPills}</div>
+            </div>
+            ${errorBlock}
+            ${detailsBlock}
+          </article>
+        `;
+      };
+
+      fetch("./voice-samples-report.json")
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        })
+        .then((payload) => {
+          const samples = Array.isArray(payload.samples) ? payload.samples : [];
+          voiceText.textContent = payload.text || "Sem texto disponível.";
+
+          if (!samples.length) {
+            voiceGrid.innerHTML = `
+              <article class="card">
+                <div class="card-copy">
+                  <p class="kicker">voice samples</p>
+                  <h2>Nenhuma amostra gerada</h2>
+                  <p class="soft-note">Rode o gerador de voice samples para preencher esta secção.</p>
+                </div>
+              </article>
+            `;
+            return;
+          }
+
+          voiceGrid.innerHTML = samples.map(renderVoiceCard).join("");
+        })
+        .catch((error) => {
+          voiceError.classList.remove("hidden");
+          voiceError.textContent = `Nao consegui carregar as amostras de voz: ${error.message}`;
+          voiceText.textContent = "O texto de teste vai aparecer aqui quando o report for gerado.";
+        });
+    </script>
   </body>
 </html>

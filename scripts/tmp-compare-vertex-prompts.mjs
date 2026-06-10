@@ -67,7 +67,7 @@ const generateImagenImage = async ({
     parameters: {
       sampleCount: 1,
       aspectRatio,
-      sampleImageSize: "1K",
+      sampleImageSize: "2K",
       personGeneration: "allow_all",
       safetySetting: "block_medium_and_above",
       enhancePrompt: false,

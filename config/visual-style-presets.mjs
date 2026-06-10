@@ -266,34 +266,34 @@ export const VISUAL_STYLE_PRESETS = {
     characterPrompt:
       "single ink-drawn human figure when needed, clean human proportions, bold solid silhouette, minimal facial detail, confident continuous outlines, readable hands and limbs",
     stylePrompt:
-      "editorial ink illustration, crisp black brushwork, strong contrast, graphic shadow masses, clean paper background, controlled negative space, subtle accent color only when useful, no text, no logos",
+      "editorial ink illustration, crisp black brushwork, strong contrast, graphic shadow masses, solid white or solid black background only, no gradient, no gray tones, controlled negative space, subtle accent color only when useful, no text, no logos",
     styleLockPrompt:
       "consistent visual identity across all scenes, same ink weight, same contrast ratio, same paper-and-ink treatment, same editorial composition logic",
     compositionRules:
       "one dominant subject performing one clear action, strong figure-ground separation, readable silhouette, restrained props, uncluttered layout, no text, no fake UI",
     backgroundDirectives: [
-      "light paper or off-white neutral background with open negative space and crisp ink contrast",
+      "solid white or solid black background only, no gradient, no gray fill, no degradé, no tonal transition",
       "supporting elements should stay simplified as bold ink shapes or economical brush marks",
       "paper texture should stay subtle and never compete with the main subject"
     ],
     defaultLighting: "translate lighting into flat ink shadow masses and clean negative space instead of realistic shading",
     plannerGuidance:
-      "Every shot must read immediately at thumbnail size as a clean editorial ink illustration with one focal subject, one clear action, strong contrast, and generous negative space.",
+      "Every shot must read immediately at thumbnail size as a clean editorial ink illustration with one focal subject, one clear action, strong contrast, and generous negative space. When a prop carries a symbol or icon, describe it as large, bold, and immediately recognizable at thumbnail size.",
     humanGuidance:
       "Any human should read as a confident ink-drawn person with clean proportions, clear silhouette, minimal facial detail, and decisive linework.",
     anatomyGuidance:
       "If a shot includes a person, keep one head, two arms, two hands, two legs, and two feet with clear limb separation, readable hands, and natural proportions.",
     scaleGuidance:
-      "Keep the main figure or object large and graphic in frame. Avoid tiny low-contrast details that disappear on mobile.",
+      "Keep the main figure or object large and graphic in frame. Avoid tiny low-contrast details that disappear on mobile. In vertical 9:16 frames, position the character's face and head in the upper third, leaving the lower third empty for captions.",
     attemptDirectives: [
       "render the scene as a clean editorial ink illustration with crisp black brushwork and strong figure-ground separation",
       "if a person is present, keep one clear human figure with natural proportions, readable hands, and well-separated limbs",
       "favor one focal subject, one readable action, and generous negative space",
       "keep props simplified and graphic so the frame stays immediately readable on mobile",
-      "prefer crisp black shapes and clean paper contrast over muddy gray rendering"
+      "prefer crisp black shapes on a solid white or solid black background, no gradient, no gray fill"
     ],
     refinePromptLead: "editorial ink illustration",
-    refinePromptFinish: "crisp black brushwork, strong contrast, clean paper background, no text",
+    refinePromptFinish: "crisp black brushwork, strong contrast, solid white or black background, no gradient, no text",
     auditStyleDescription:
       "editorial ink illustration style with crisp black brushwork, strong contrast, clean paper background, negative space, and readable silhouettes"
   },
@@ -376,6 +376,46 @@ export const VISUAL_STYLE_PRESETS = {
     refinePromptFinish: "dominant hero object, clear past-versus-present contrast, high mobile readability, no text",
     auditStyleDescription:
       "bold editorial comparison style with a dominant hero object, strong antique-versus-modern contrast, crisp negative space, and immediate mobile readability"
+  },
+  tiktok: {
+    id: "tiktok",
+    label: "TikTok Doodle",
+    description: "Doodle em papel quadriculado com caneta esferográfica e marca-texto amarelo. Visual handmade, irônico, com cara de caderno escolar.",
+    expectStickman: false,
+    characterPrompt:
+      "single hand-drawn ballpoint doodle character when needed, simple cartoon proportions, expressive face, readable gesture, casual sketchbook personality, blue ink line",
+    stylePrompt:
+      "hand-drawn ballpoint pen doodle on graph paper, blue ink linework, casual cartoon style, yellow highlighter accents on key elements, light handmade imperfections, sketchbook feel, immediate ironic readability, no text, no logos, no watermark",
+    styleLockPrompt:
+      "consistent visual identity across all scenes, same blue ballpoint line weight, same graph paper background, same yellow highlighter accent treatment, same casual doodle proportions, same hand-drawn rhythm",
+    compositionRules:
+      "one dominant doodle subject per shot, one ironic visual idea, generous white space on the graph paper, yellow highlighter only on the key element, no text, no fake UI",
+    backgroundDirectives: [
+      "light graph-paper background with subtle pale-blue grid lines, plenty of negative space",
+      "supporting elements should look hand-drawn with the same blue ballpoint line, never realistic shading",
+      "yellow highlighter accents reserved for the key element of the joke or payoff",
+      "no readable text, no logos, no watermark"
+    ],
+    defaultLighting: "flat handmade illustration, no realistic lighting, just clean ballpoint linework with yellow highlighter accents",
+    plannerGuidance:
+      "Every shot must read as a quick ballpoint doodle on graph paper with one ironic focal idea, blue line linework, and a small yellow highlighter accent on the key element. Keep the hand-drawn humor visible.",
+    humanGuidance:
+      "Any human should read as a casual cartoon doodle with simple round head, expressive face, readable gesture, and clean hand-drawn proportions. Never realistic.",
+    anatomyGuidance:
+      "If a shot includes a person, keep one head, two arms, two hands, two legs, and two feet drawn as simple ballpoint cartoon shapes with clear separation.",
+    scaleGuidance:
+      "Keep the doodle subject large enough to read on a 9:16 phone screen. Avoid tiny scribbles. In vertical frames, position the focal element in the upper two thirds, leaving the bottom third clearer for captions.",
+    attemptDirectives: [
+      "render as a hand-drawn ballpoint doodle on graph paper with blue ink line work",
+      "add small yellow highlighter accents on one or two key elements only — never flood the frame with yellow",
+      "if a person or character is present, keep one cartoon doodle figure with simple proportions and expressive gesture",
+      "favor one ironic visual beat per scene with generous negative space",
+      "preserve handmade imperfection — slightly wobbly lines, small ink marks — instead of vector cleanliness"
+    ],
+    refinePromptLead: "hand-drawn ballpoint doodle on graph paper",
+    refinePromptFinish: "blue ink linework, yellow highlighter accents, sketchbook handmade feel, no text",
+    auditStyleDescription:
+      "ballpoint pen doodle on graph paper style with blue handmade lines, yellow highlighter accents, casual cartoon characters, and ironic short-form readability"
   },
   punk: {
     id: "punk",

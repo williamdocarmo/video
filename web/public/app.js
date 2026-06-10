@@ -19,11 +19,15 @@ const state = {
   streamReconnectTimer: null,
   previewCache: new Map(),
   storyboardCache: new Map(),
+  sceneReviewCache: new Map(),
   previewEditorDrafts: new Map(),
   loadingPreviewIds: new Set(),
   loadingStoryboardUrls: new Set(),
+  loadingSceneReviewIds: new Set(),
   pendingJobActionIds: new Set(),
   logPageByJobId: new Map(),
+  refreshLoopTimer: null,
+  refreshLoopInFlight: false,
   videoPage: 1,
   videoFilter: 'all',
   videoSearch: '',
@@ -32,8 +36,19 @@ const state = {
   jobSearch: '',
 };
 
-const DEFAULT_REFRESH_INTERVAL_MS = 20000;
-const ACTIVE_JOB_REFRESH_INTERVAL_MS = 5000;
+const showToast = (message, type = "error") => {
+  const container = document.getElementById("toastContainer");
+  if (!container) return;
+  const el = document.createElement("div");
+  el.className = `toast toast-${type}`;
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => { el.remove(); }, 5000);
+};
+
+const DEFAULT_REFRESH_INTERVAL_MS = 30000;
+const ACTIVE_JOB_REFRESH_INTERVAL_MS = 10000;
+const IDLE_REFRESH_INTERVAL_MS = 60000;
 const LOG_PAGE_SIZE = 120;
 const VIDEOS_PER_PAGE = 12;
 const JOBS_PER_PAGE = 20;
@@ -59,6 +74,10 @@ const generationModeOptions = [
 const MIN_TITLE_WORDS_WITHOUT_SOURCE = 6;
 const MIN_TITLE_CHARS_WITHOUT_SOURCE = 32;
 const MIN_SOURCE_TEXT_CHARS = 140;
+const PUBLISH_TITLE_SOFT_LIMIT = 70;
+const PUBLISH_TITLE_HARD_LIMIT = 100;
+const LONG_CAPTION_HARD_LIMIT = 5000;
+const SOCIAL_CAPTION_HARD_LIMIT = 2200;
 const elements = {
   tabButtons: Array.from(document.querySelectorAll("[data-tab-target]")),
   tabPanels: Array.from(document.querySelectorAll("[data-tab-panel]")),
@@ -71,17 +90,20 @@ const elements = {
   durationHint: document.querySelector("#durationHint"),
   imageModelHint: document.querySelector("#imageModelHint"),
   imageModelCost: document.querySelector("#imageModelCost"),
-  imageStyleLabel: document.querySelector("#generateImageStyleLabel"),
-  imageStyleHint: document.querySelector("#imageStyleHint"),
-  imageStylePreview: document.querySelector("#imageStylePreview"),
-  imageStylePreviewLabel: document.querySelector("#imageStylePreviewLabel"),
-  imageStylePreviewDescription: document.querySelector("#imageStylePreviewDescription"),
-  imageStylePreviewLink: document.querySelector("#imageStylePreviewLink"),
-  imageStylePreviewImageLink: document.querySelector("#imageStylePreviewImageLink"),
-  imageStylePreviewImage: document.querySelector("#imageStylePreviewImage"),
-  toneHint: document.querySelector("#toneHint"),
+  imageModelPreview: document.querySelector("#imageModelPreview"),
+  imageModelPreviewLabel: document.querySelector("#imageModelPreviewLabel"),
+  imageModelPreviewDescription: document.querySelector("#imageModelPreviewDescription"),
+  imageModelPreviewImageLink: document.querySelector("#imageModelPreviewImageLink"),
+  imageModelPreviewImage: document.querySelector("#imageModelPreviewImage"),
   voiceHint: document.querySelector("#voiceHint"),
   audioProvider: document.querySelector("#generateAudioProvider"),
+  generateDualChannels: document.querySelector("#generateDualChannels"),
+  generateDualChannelsWrap: document.querySelector("#generateDualChannelsWrap"),
+  dualChannelHint: document.querySelector("#dualChannelHint"),
+  storyboardJsonTextarea: document.querySelector("#generateStoryboardJson"),
+  storyboardFileInput: document.querySelector("#storyboardFileInput"),
+  storyboardFileButton: document.querySelector("#storyboardFileButton"),
+  storyboardClearButton: document.querySelector("#storyboardClearButton"),
   channelHint: document.querySelector("#channelHint"),
   queueCount: document.querySelector("#queueCount"),
   previewQueueCount: document.querySelector("#previewQueueCount"),
@@ -102,6 +124,7 @@ const elements = {
   jobRecommendedDetails: document.querySelector("#jobRecommendedDetails"),
   jobStepChecklist: document.querySelector("#jobStepChecklist"),
   jobActions: document.querySelector("#jobActions"),
+  startJobButton: document.querySelector("#startJobButton"),
   resumeJobButton: document.querySelector("#resumeJobButton"),
   retryFromStoryboardJobButton: document.querySelector("#retryFromStoryboardJobButton"),
   regenerateSceneButton: document.querySelector("#regenerateSceneButton"),
@@ -155,12 +178,16 @@ const elements = {
   videoMetaForm: document.querySelector("#videoMetaForm"),
   videoTargetChannel: document.querySelector("#videoTargetChannel"),
   videoTargetHint: document.querySelector("#videoTargetHint"),
+  videoPublishTitleHint: document.querySelector("#videoPublishTitleHint"),
+  videoSocialCaptionHint: document.querySelector("#videoSocialCaptionHint"),
+  videoCaptionHint: document.querySelector("#videoCaptionHint"),
   videoScheduleField: document.querySelector("#videoScheduleField"),
   saveVideoMetaButton: document.querySelector("#saveVideoMetaButton"),
   redoVideoButton: document.querySelector("#redoVideoButton"),
   publishVideoButton: document.querySelector("#publishVideoButton"),
   resetPublishButton: document.querySelector("#resetPublishButton"),
   openTikTokHelperButton: document.querySelector("#openTikTokHelperButton"),
+  hookVariantsButton: document.querySelector("#hookVariantsButton"),
   deleteVideoButton: document.querySelector("#deleteVideoButton"),
   sceneGallery: document.querySelector("#sceneGallery"),
   sceneGalleryGrid: document.querySelector("#sceneGalleryGrid"),
@@ -168,8 +195,11 @@ const elements = {
   jobSceneGallery: document.querySelector("#jobSceneGallery"),
   jobSceneGalleryGrid: document.querySelector("#jobSceneGalleryGrid"),
   jobSceneGalleryToggle: document.querySelector("#jobSceneGalleryToggle"),
+  jobSceneReview: document.querySelector("#jobSceneReview"),
+  jobSceneReviewGrid: document.querySelector("#jobSceneReviewGrid"),
   videoLibraryHint: document.querySelector("#videoLibraryHint"),
   videoActionHint: document.querySelector("#videoActionHint"),
+  publishStatus: document.querySelector("#publishStatus"),
   videoSearchInput: document.querySelector("#videoSearchInput"),
   videoFilterChips: Array.from(document.querySelectorAll("[data-video-filter]")),
   videosPagination: document.querySelector("#videosPagination"),
@@ -186,6 +216,18 @@ const escapeHtml = (value) =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
+const getElementTextValue = (element) => {
+  if (!element) {
+    return "";
+  }
+
+  if (typeof element.value === "string") {
+    return String(element.value || "");
+  }
+
+  return String(element.textContent || "");
+};
+
 const fetchJson = async (url, options) => {
   const response = await fetch(url, options);
   const payload = await response.json().catch(() => ({})); /* expected: response may not be JSON */
@@ -195,6 +237,70 @@ const fetchJson = async (url, options) => {
   }
 
   return payload;
+};
+
+const fetchTextResource = async (url, options) => {
+  const response = await fetch(url, options);
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(text || "Falha ao carregar recurso de texto.");
+  }
+
+  return text;
+};
+
+const copyTextFromTarget = async (targetId) => {
+  const target = document.getElementById(targetId);
+  const text = getElementTextValue(target).trim();
+
+  if (!text) {
+    throw new Error("Nao encontrei conteudo para copiar.");
+  }
+
+  await navigator.clipboard.writeText(text);
+};
+
+const pasteTemplateIntoStoryboard = (targetId) => {
+  const target = document.getElementById(targetId);
+  const text = getElementTextValue(target).trim();
+
+  if (!text || !elements.storyboardJsonTextarea) {
+    throw new Error("Nao encontrei o template JSON para colar.");
+  }
+
+  elements.storyboardJsonTextarea.value = text;
+  elements.storyboardClearButton?.classList.remove("hidden");
+  elements.storyboardJsonTextarea.dispatchEvent(new Event("input", {bubbles: true}));
+  validateGenerateForm(elements.generateForm);
+  setActiveTab("workspace");
+};
+
+const loadTemplateResources = async () => {
+  const targets = Array.from(document.querySelectorAll("[data-template-src]"));
+
+  await Promise.allSettled(targets.map(async (target) => {
+    const source = String(target.dataset.templateSrc || "").trim();
+    if (!source) {
+      return;
+    }
+
+    try {
+      const text = await fetchTextResource(source);
+      if (typeof target.value === "string") {
+        target.value = text.trim();
+      } else {
+        target.textContent = text.trim();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (typeof target.value === "string") {
+        target.value = `Falha ao carregar template: ${message}`;
+      } else {
+        target.textContent = `Falha ao carregar template: ${message}`;
+      }
+    }
+  }));
 };
 
 const normalizeEditorText = (value, fallback = "", maxLength = 0) => {
@@ -278,6 +384,7 @@ const syncPreviewStoryboardDraft = () => {
 const isJobActionPending = (jobId) => state.pendingJobActionIds.has(jobId);
 
 const ACTION_PRIORITY = [
+  "start-job",
   "regenerate-missing-scene",
   "generate-audio",
   "render-only",
@@ -296,6 +403,12 @@ const getJobActionRequest = (job, actionKey) => {
   const encodedJobId = encodeURIComponent(job.id);
 
   switch (actionKey) {
+    case "start-job":
+      return {
+        url: `/api/jobs/${encodedJobId}/start`,
+        body: {jobId: job.id},
+        connectLogs: false
+      };
     case "resume-rebuild":
       return {
         url: `/api/jobs/${encodedJobId}/resume`,
@@ -349,6 +462,13 @@ const getJobActionAvailability = (job) => {
   const missingSceneNumber = extractMissingSceneNumber(safeJob);
 
   const actions = {
+    "start-job": {
+      key: "start-job",
+      label: "Iniciar job",
+      available: safeJob.startAvailable === true,
+      safe: safeJob.startAvailable === true && status === "queued",
+      blockedReason: "disponível apenas para o primeiro job queued da fila manual"
+    },
     "resume-rebuild": {
       key: "resume-rebuild",
       label: "Retomar a partir do ponto salvo",
@@ -439,6 +559,7 @@ const getJobActionAvailability = (job) => {
       Boolean(recommendedActionValue) &&
       Boolean(recommendedAction?.available) &&
       !recommendedAction.safe,
+    canStartJob: actions["start-job"].safe,
     canResume: actions["resume-rebuild"].safe,
     canRegenerateScene: actions["regenerate-missing-scene"].safe,
     canGenerateAudio: actions["generate-audio"].safe,
@@ -514,7 +635,7 @@ const runJobAction = async ({
     if (typeof onError === "function") {
       onError(error);
     } else {
-      window.alert(error.message);
+      showToast(error.message);
     }
     return null;
   } finally {
@@ -539,7 +660,7 @@ const runSafeRecoveryAction = async ({job, actionKey, onSuccess, onError}) => {
     if (typeof onError === "function") {
       onError(error);
     } else {
-      window.alert(error.message);
+      showToast(error.message);
     }
 
     return null;
@@ -553,7 +674,7 @@ const runSafeRecoveryAction = async ({job, actionKey, onSuccess, onError}) => {
     if (typeof onError === "function") {
       onError(error);
     } else {
-      window.alert(error.message);
+      showToast(error.message);
     }
 
     return null;
@@ -881,6 +1002,39 @@ const getSelectedPublishMode = () => {
   return selected?.value === "scheduled" ? "scheduled" : "now";
 };
 
+const getSelectedGenerateChannelId = () =>
+  String(elements.generateForm?.channel?.value || state.config?.defaults?.channel || "foiumaideia");
+
+const resolveGenerateLanguage = (channelId, preferredLanguage = "") => {
+  const explicitLanguage = String(preferredLanguage || "").trim();
+  if (explicitLanguage) {
+    return explicitLanguage;
+  }
+
+  const preset = getChannelPreset(channelId);
+  return String(preset?.language || state.config?.defaults?.language || "pt-BR");
+};
+
+const resolveGenerateImageStyle = (channelId, preferredImageStyle = "") => {
+  const explicitImageStyle = String(preferredImageStyle || "").trim();
+  if (explicitImageStyle) {
+    return explicitImageStyle;
+  }
+
+  const preset = getChannelPreset(channelId);
+  return String(preset?.imageStyle || state.config?.defaults?.imageStyle || "ink");
+};
+
+const resolveGenerateTone = (channelId, preferredTone = "") => {
+  const explicitTone = String(preferredTone || "").trim();
+  if (explicitTone) {
+    return explicitTone;
+  }
+
+  const preset = getChannelPreset(channelId);
+  return String(preset?.tone || state.config?.defaults?.tone || "shortform_native");
+};
+
 const getVoicesForLanguage = (languageCode) =>
   (state.config?.voices || []).filter((voice) => {
     const languages = Array.isArray(voice.languages) ? voice.languages : [];
@@ -891,6 +1045,10 @@ const getPreferredVoiceForLanguage = (languageCode, fallbackVoice = "") =>
   state.config?.defaultVoicesByLanguage?.[languageCode] || fallbackVoice || state.config?.defaults?.voice || "Iapetus";
 
 let cachedElevenLabsVoices = null;
+const getSelectedAudioProvider = () => elements.audioProvider?.value || "elevenlabs";
+
+// Locked short-form ElevenLabs voice (Liam) — preferred default for every channel.
+const DEFAULT_ELEVENLABS_VOICE_ID = "TX3LPaxmHKxFdv7VOQHJ";
 
 const fetchElevenLabsVoices = async () => {
   if (cachedElevenLabsVoices) return cachedElevenLabsVoices;
@@ -904,12 +1062,14 @@ const fetchElevenLabsVoices = async () => {
   return cachedElevenLabsVoices;
 };
 
-const syncVoiceOptionsForProvider = async () => {
-  const provider = elements.audioProvider?.value || "gcp";
-  const language = elements.generateForm?.language?.value || "pt-BR";
+const syncVoiceOptionsForProvider = async (preferredVoice = "") => {
+  const provider = getSelectedAudioProvider();
+  const language = resolveGenerateLanguage(getSelectedGenerateChannelId());
   const voiceSelect = elements.generateForm?.voice;
+  const customVoiceField = document.querySelector("#generateCustomVoiceField");
   if (!voiceSelect) return;
 
+  const currentValue = String(preferredVoice || voiceSelect.value || "").trim();
   voiceSelect.innerHTML = "";
 
   if (provider === "elevenlabs") {
@@ -924,25 +1084,45 @@ const syncVoiceOptionsForProvider = async () => {
     }
     if (voices.length === 0) {
       voiceSelect.innerHTML = "<option disabled>Nenhuma voz disponível</option>";
+    } else {
+      const hasLiam = voices.some((voice) => String(voice.value) === DEFAULT_ELEVENLABS_VOICE_ID);
+      const selectedVoice = voices.some((voice) => String(voice.value) === currentValue)
+        ? currentValue
+        : (hasLiam ? DEFAULT_ELEVENLABS_VOICE_ID : String(voices[0]?.value || ""));
+      voiceSelect.value = selectedVoice;
     }
-    if (elements.voiceHint) elements.voiceHint.textContent = "Vozes da conta ElevenLabs";
+    if (elements.voiceHint) {
+      elements.voiceHint.textContent = voices.length > 0
+        ? "Vozes da conta ElevenLabs"
+        : "Nenhuma voz disponível na conta ElevenLabs";
+    }
   } else {
     const voices = getVoicesForLanguage(language);
-    for (const v of voices) {
-      const opt = document.createElement("option");
-      opt.value = v.value;
-      opt.textContent = v.label;
-      voiceSelect.appendChild(opt);
-    }
-    voiceSelect.value = getPreferredVoiceForLanguage(language);
-    if (elements.voiceHint) elements.voiceHint.textContent = "";
+    const fallbackVoice = getPreferredVoiceForLanguage(language);
+    const selectedVoice = voices.some((voice) => String(voice.value) === currentValue)
+      ? currentValue
+      : fallbackVoice;
+    fillSelect(voiceSelect, voices, selectedVoice);
+    syncVoiceHint(selectedVoice);
   }
+
+  toggleCustomVoiceField(voiceSelect, customVoiceField);
 };
 
-elements.audioProvider?.addEventListener("change", syncVoiceOptionsForProvider);
+elements.audioProvider?.addEventListener("change", async () => {
+  const currentVoice = elements.generateForm?.voice?.value || "";
+  await syncVoiceOptionsForProvider(currentVoice);
+});
 
 const syncVoiceHint = (voiceId) => {
   if (!elements.voiceHint) {
+    return;
+  }
+
+  if (getSelectedAudioProvider() === "elevenlabs") {
+    elements.voiceHint.textContent = voiceId
+      ? "Vozes da conta ElevenLabs"
+      : "Nenhuma voz disponível na conta ElevenLabs";
     return;
   }
 
@@ -956,9 +1136,19 @@ const syncVoiceHint = (voiceId) => {
   elements.voiceHint.textContent = pieces.join(" • ");
 };
 
-const syncVoiceOptionsForLanguage = (languageCode, preferredVoice = "") => {
+const syncVoiceOptionsForLanguage = async (languageCode, preferredVoice = "") => {
   const voiceSelect = document.querySelector("#generateVoice");
-  if (!voiceSelect || !state.config) {
+  const customVoiceField = document.querySelector("#generateCustomVoiceField");
+  if (!voiceSelect) {
+    return;
+  }
+
+  if (getSelectedAudioProvider() === "elevenlabs") {
+    await syncVoiceOptionsForProvider(preferredVoice);
+    return;
+  }
+
+  if (!state.config) {
     return;
   }
 
@@ -971,6 +1161,7 @@ const syncVoiceOptionsForLanguage = (languageCode, preferredVoice = "") => {
 
   fillSelect(voiceSelect, filteredVoices, selectedVoice);
   syncVoiceHint(selectedVoice);
+  toggleCustomVoiceField(voiceSelect, customVoiceField);
 };
 
 const getVideoArtworkUrl = (video) =>
@@ -1165,6 +1356,156 @@ const renderSceneGallery = async (galleryEl, gridEl, jobId) => {
   }
 };
 
+const loadSceneReviewData = async (jobId) => {
+  if (!jobId || state.sceneReviewCache.has(jobId) || state.loadingSceneReviewIds.has(jobId)) {
+    return;
+  }
+
+  state.loadingSceneReviewIds.add(jobId);
+
+  try {
+    const payload = await fetchJson(`/api/jobs/${encodeURIComponent(jobId)}/scene-review`);
+    state.sceneReviewCache.set(jobId, Array.isArray(payload?.reviewItems) ? payload.reviewItems : []);
+  } catch {
+    state.sceneReviewCache.set(jobId, []);
+  } finally {
+    state.loadingSceneReviewIds.delete(jobId);
+    renderAll();
+  }
+};
+
+const approveSceneReviewAttempt = async ({job, sceneNumber, segNumber, attempt}) => {
+  const actionId = `approve-scene:${job.id}:${sceneNumber}:${segNumber}:${attempt}`;
+
+  if (state.pendingJobActionIds.has(actionId)) {
+    return;
+  }
+
+  state.pendingJobActionIds.add(actionId);
+  renderAll();
+
+  try {
+    const response = await fetchJson(`/api/jobs/${encodeURIComponent(job.id)}/approve-scene-attempt`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        jobId: job.id,
+        sceneNumber,
+        segNumber,
+        attempt,
+        autoContinue: true
+      })
+    });
+
+    state.sceneReviewCache.delete(job.id);
+
+    if (response.job) {
+      upsertJob(response.job);
+    }
+
+    if (response.followUpJob) {
+      upsertJob(response.followUpJob);
+      state.selectedJobId = response.followUpJob.id;
+      connectStream(response.followUpJob.id);
+      setActiveTab("workspace");
+    } else if (response.job?.id) {
+      state.selectedJobId = response.job.id;
+    }
+
+    await Promise.allSettled([refreshJobs(), refreshVideos()]);
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    state.pendingJobActionIds.delete(actionId);
+    renderAll();
+  }
+};
+
+const renderSceneReview = (job) => {
+  if (!elements.jobSceneReview || !elements.jobSceneReviewGrid) {
+    return;
+  }
+
+  if (!job || job.status !== "failed") {
+    elements.jobSceneReview.classList.add("hidden");
+    elements.jobSceneReviewGrid.innerHTML = "";
+    return;
+  }
+
+  const cached = state.sceneReviewCache.get(job.id);
+
+  if (!cached) {
+    elements.jobSceneReview.classList.remove("hidden");
+    elements.jobSceneReviewGrid.innerHTML = '<p class="field-hint">Carregando tentativas reprovadas...</p>';
+    void loadSceneReviewData(job.id);
+    return;
+  }
+
+  if (!Array.isArray(cached) || cached.length === 0) {
+    elements.jobSceneReview.classList.add("hidden");
+    elements.jobSceneReviewGrid.innerHTML = "";
+    return;
+  }
+
+  elements.jobSceneReview.classList.remove("hidden");
+  elements.jobSceneReviewGrid.innerHTML = cached.map((item) => `
+    <article class="scene-review-card">
+      <div class="scene-review-head">
+        <div>
+          <h4 class="scene-review-title">Cena ${escapeHtml(String(item.sceneNumber).padStart(2, "0"))} · seg ${escapeHtml(String(item.segNumber).padStart(2, "0"))}</h4>
+          <p class="scene-review-copy">${escapeHtml(item.title || item.coverageText || "Tentativas disponíveis para revisão manual.")}</p>
+        </div>
+        ${item.recommendedAttempt ? `<span class="scene-review-badge">Attempt ${escapeHtml(item.recommendedAttempt)} sugerido</span>` : ""}
+      </div>
+      ${item.error ? `<p class="scene-review-copy">${escapeHtml(item.error)}</p>` : ""}
+      <div class="scene-review-attempts">
+        ${(Array.isArray(item.attempts) ? item.attempts : []).map((attemptItem) => {
+          const actionId = `approve-scene:${job.id}:${item.sceneNumber}:${item.segNumber}:${attemptItem.attempt}`;
+          const isPending = state.pendingJobActionIds.has(actionId);
+          return `
+            <div class="scene-review-attempt">
+              <a href="${escapeHtml(attemptItem.url)}" target="_blank" rel="noreferrer">
+                <img src="${escapeHtml(attemptItem.url)}" alt="Cena ${escapeHtml(item.sceneNumber)} seg ${escapeHtml(item.segNumber)} attempt ${escapeHtml(attemptItem.attempt)}" loading="lazy">
+              </a>
+              <div class="scene-review-attempt-meta">
+                <span>Attempt ${escapeHtml(attemptItem.attempt)}</span>
+                <span>${escapeHtml(attemptItem.sizeBytes ? `${Math.round(attemptItem.sizeBytes / 1024)} KB` : "")}</span>
+              </div>
+              <button
+                type="button"
+                class="button secondary button-block"
+                data-scene-approve="${escapeHtml(`${item.sceneNumber}:${item.segNumber}:${attemptItem.attempt}`)}"
+                ${isPending ? "disabled" : ""}
+              >
+                ${isPending ? "Aprovando..." : "Aprovar e continuar"}
+              </button>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </article>
+  `).join("");
+
+  elements.jobSceneReviewGrid.querySelectorAll("[data-scene-approve]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const [sceneNumber, segNumber, attempt] = String(button.dataset.sceneApprove || "")
+        .split(":")
+        .map((value) => Number.parseInt(value, 10));
+
+      if (!sceneNumber || !segNumber || !attempt) {
+        return;
+      }
+
+      void approveSceneReviewAttempt({
+        job,
+        sceneNumber,
+        segNumber,
+        attempt
+      });
+    });
+  });
+};
+
 const parseDateTimeLocalToIso = (value) => {
   const raw = String(value || "").trim();
 
@@ -1187,74 +1528,14 @@ const syncVideoTargetHint = (channelId) => {
     : "Escolha o perfil que será usado na edição e na publicação.";
 };
 
-const syncImageStylePreview = (styleId) => {
-  const selected = getImageStyleMeta(styleId);
-
-  if (!elements.imageStylePreview || !elements.imageStylePreviewLabel || !elements.imageStylePreviewDescription || !elements.imageStylePreviewLink) {
-    return;
-  }
-
-  if (!selected) {
-    elements.imageStylePreview.classList.add("hidden");
-    elements.imageStylePreviewLabel.textContent = "";
-    elements.imageStylePreviewDescription.textContent = "";
-    elements.imageStylePreviewLink.setAttribute("href", "#generateImageStyle");
-    if (elements.imageStylePreviewImageLink) {
-      elements.imageStylePreviewImageLink.classList.add("hidden");
-      elements.imageStylePreviewImageLink.setAttribute("href", "#generateImageStyle");
-    }
-    if (elements.imageStylePreviewImage) {
-      elements.imageStylePreviewImage.setAttribute("src", "");
-    }
-    return;
-  }
-
-  elements.imageStylePreview.classList.remove("hidden");
-  elements.imageStylePreviewLabel.textContent = selected.label || "Estilo selecionado";
-  elements.imageStylePreviewDescription.textContent = selected.description || "Sem descrição adicional.";
-  elements.imageStylePreviewLink.textContent = `Abrir referência de ${selected.label || "estilo"}`;
-  elements.imageStylePreviewLink.setAttribute("href", selected.previewLinkUrl || selected.previewUrl || selected.previewPath || "#generateImageStyle");
-
-  const previewHref = selected.previewImageUrl || selected.previewLinkUrl || selected.previewUrl || selected.previewPath || "";
-  if (elements.imageStylePreviewImageLink && elements.imageStylePreviewImage) {
-    if (previewHref) {
-      elements.imageStylePreviewImageLink.classList.remove("hidden");
-      elements.imageStylePreviewImageLink.setAttribute("href", previewHref);
-      elements.imageStylePreviewImage.setAttribute("src", previewHref);
-      elements.imageStylePreviewImage.setAttribute("alt", `Preview do estilo ${selected.label || styleId}`);
-    } else {
-      elements.imageStylePreviewImageLink.classList.add("hidden");
-      elements.imageStylePreviewImageLink.setAttribute("href", "#generateImageStyle");
-      elements.imageStylePreviewImage.setAttribute("src", "");
-    }
-  }
-};
-
 const syncGenerationModeUi = () => {
   const generationModeSelect = document.querySelector("#generateGenerationMode");
-  const imageStyleSelect = document.querySelector("#generateImageStyle");
   const generationMode = generationModeSelect?.value || generationModeOptions[0].value;
   const selectedMode = getGenerationModeMeta(generationMode);
-  const selectedStyle = getImageStyleMeta(imageStyleSelect?.value);
-  const isTextToVideo = generationMode === "text-to-video";
 
   if (elements.generationModeHint) {
     elements.generationModeHint.textContent = selectedMode?.description || "";
   }
-
-  if (elements.imageStyleLabel) {
-    elements.imageStyleLabel.textContent = isTextToVideo ? "Direção visual" : "Estilo de imagem";
-  }
-
-  if (elements.imageStyleHint) {
-    const hintParts = [selectedStyle?.description].filter(Boolean);
-    if (isTextToVideo) {
-      hintParts.push("Usado como direção visual para a geração direta do vídeo.");
-    }
-    elements.imageStyleHint.textContent = hintParts.join(" ");
-  }
-
-  syncImageStylePreview(imageStyleSelect?.value || "");
 };
 
 const syncImageModelHint = (modelId) => {
@@ -1269,6 +1550,31 @@ const syncImageModelHint = (modelId) => {
     const costText = [selected?.costLabel, selected?.costDetail].filter(Boolean).join(" • ");
     elements.imageModelCost.textContent = costText;
     elements.imageModelCost.classList.toggle("hidden", !costText);
+  }
+
+  if (elements.imageModelPreview) {
+    if (!selected) {
+      elements.imageModelPreview.classList.add("hidden");
+      return;
+    }
+    elements.imageModelPreview.classList.remove("hidden");
+    if (elements.imageModelPreviewLabel) {
+      elements.imageModelPreviewLabel.textContent = selected.label || "Modelo selecionado";
+    }
+    if (elements.imageModelPreviewDescription) {
+      elements.imageModelPreviewDescription.textContent = selected.description || "";
+    }
+    const previewUrl = selected.previewImageUrl || "";
+    if (elements.imageModelPreviewImageLink && elements.imageModelPreviewImage) {
+      if (previewUrl) {
+        elements.imageModelPreviewImageLink.classList.remove("hidden");
+        elements.imageModelPreviewImageLink.setAttribute("href", previewUrl);
+        elements.imageModelPreviewImage.setAttribute("src", previewUrl);
+        elements.imageModelPreviewImage.setAttribute("alt", `Exemplo do modelo ${selected.label || modelId}`);
+      } else {
+        elements.imageModelPreviewImageLink.classList.add("hidden");
+      }
+    }
   }
 };
 
@@ -1477,6 +1783,77 @@ const getJobProgressInfo = (job) => {
 };
 
 const isLiveJob = (job) => Boolean(job && (job.status === "queued" || job.status === "running"));
+
+const hasLiveJobs = () => state.jobs.some((job) => isLiveJob(job));
+
+const shouldPollJobs = () => document.visibilityState === "visible";
+
+const shouldPollVideos = () => document.visibilityState === "visible" && state.activeTab === "videos";
+
+const getRefreshLoopDelay = () => {
+  if (!shouldPollJobs() && !shouldPollVideos()) {
+    return null;
+  }
+
+  if (hasLiveJobs()) {
+    return ACTIVE_JOB_REFRESH_INTERVAL_MS;
+  }
+
+  if (state.activeTab === "videos") {
+    return DEFAULT_REFRESH_INTERVAL_MS;
+  }
+
+  return IDLE_REFRESH_INTERVAL_MS;
+};
+
+const scheduleRefreshLoop = (delay = getRefreshLoopDelay()) => {
+  if (state.refreshLoopTimer) {
+    clearTimeout(state.refreshLoopTimer);
+  }
+
+  state.refreshLoopTimer = null;
+
+  if (delay === null) {
+    return;
+  }
+
+  state.refreshLoopTimer = window.setTimeout(() => {
+    void runRefreshLoop();
+  }, delay);
+};
+
+const runRefreshLoop = async () => {
+  state.refreshLoopTimer = null;
+
+  if (state.refreshLoopInFlight) {
+    scheduleRefreshLoop(1000);
+    return;
+  }
+
+  const refreshTasks = [];
+
+  if (shouldPollJobs()) {
+    refreshTasks.push(refreshJobs());
+  }
+
+  if (shouldPollVideos()) {
+    refreshTasks.push(refreshVideos());
+  }
+
+  if (refreshTasks.length === 0) {
+    scheduleRefreshLoop();
+    return;
+  }
+
+  state.refreshLoopInFlight = true;
+
+  try {
+    await Promise.allSettled(refreshTasks);
+  } finally {
+    state.refreshLoopInFlight = false;
+    scheduleRefreshLoop();
+  }
+};
 
 const getJobLogLines = (job) => Array.isArray(job?.logTail) ? job.logTail : [];
 
@@ -1700,6 +2077,17 @@ const setActiveTab = (tabName) => {
   elements.tabPanels.forEach((panel) => {
     panel.classList.toggle("hidden", panel.dataset.tabPanel !== tabName);
   });
+
+  if (document.visibilityState === "visible") {
+    if (tabName === "videos") {
+      void Promise.allSettled([refreshJobs(), refreshVideos()]).finally(() => {
+        scheduleRefreshLoop();
+      });
+      return;
+    }
+
+    scheduleRefreshLoop(hasLiveJobs() ? ACTIVE_JOB_REFRESH_INTERVAL_MS : IDLE_REFRESH_INTERVAL_MS);
+  }
 };
 
 const setVideoActionHint = (message, {error = false} = {}) => {
@@ -1712,6 +2100,100 @@ const setVideoActionHint = (message, {error = false} = {}) => {
   elements.videoActionHint.classList.toggle("error", Boolean(message && error));
 };
 
+const getSelectedVideoPlatforms = () =>
+  Array.from(elements.videoMetaForm?.querySelectorAll('input[name="platforms"]:checked') || [])
+    .map((input) => String(input.value || "").trim().toUpperCase())
+    .filter(Boolean);
+
+const syncVideoPublishLimitsUi = () => {
+  if (!elements.videoMetaForm) {
+    return true;
+  }
+
+  const platforms = getSelectedVideoPlatforms();
+  const publishTitle = String(elements.videoMetaForm.elements.publishTitle?.value || "").trim();
+  const caption = String(elements.videoMetaForm.elements.caption?.value || "").trim();
+  const socialCaption = String(elements.videoMetaForm.elements.socialCaption?.value || "").trim();
+  const includesYt = platforms.includes("YT");
+  const usesShortCaption = platforms.length > 0 && !(platforms.length === 1 && includesYt);
+
+  if (elements.videoPublishTitleHint) {
+    const titleLength = publishTitle.length;
+    const statusMessage = includesYt
+      ? `YouTube aceita até ${PUBLISH_TITLE_HARD_LIMIT} caracteres. Ideal: 55–70. (${titleLength}/${PUBLISH_TITLE_HARD_LIMIT})`
+      : `Campo opcional. Se vazio, o app usa o título interno como fallback. (${titleLength}/${PUBLISH_TITLE_HARD_LIMIT})`;
+    elements.videoPublishTitleHint.textContent = statusMessage;
+    elements.videoPublishTitleHint.classList.toggle("error", includesYt && titleLength > PUBLISH_TITLE_SOFT_LIMIT);
+  }
+
+  if (elements.videoCaptionHint) {
+    const captionLength = caption.length;
+    let message = `Até ${LONG_CAPTION_HARD_LIMIT} caracteres. (${captionLength}/${LONG_CAPTION_HARD_LIMIT})`;
+    if (usesShortCaption && !socialCaption) {
+      message += " Cross-post fora do YouTube usa a legenda curta como copy segura.";
+    }
+    if (usesShortCaption && captionLength > SOCIAL_CAPTION_HARD_LIMIT && !socialCaption) {
+      message += ` Se passar de ${SOCIAL_CAPTION_HARD_LIMIT}, preencha a legenda curta para evitar corte.`;
+    }
+    elements.videoCaptionHint.textContent = message;
+    elements.videoCaptionHint.classList.toggle("error", captionLength > LONG_CAPTION_HARD_LIMIT);
+  }
+
+  if (elements.videoSocialCaptionHint) {
+    const socialLength = socialCaption.length;
+    let message = `Até ${SOCIAL_CAPTION_HARD_LIMIT} caracteres. (${socialLength}/${SOCIAL_CAPTION_HARD_LIMIT})`;
+    if (usesShortCaption) {
+      message += " Publicação fora do YouTube usa este campo como referência segura.";
+    } else {
+      message += " TikTok helper também usa este campo.";
+    }
+    elements.videoSocialCaptionHint.textContent = message;
+    elements.videoSocialCaptionHint.classList.toggle("error", socialLength > SOCIAL_CAPTION_HARD_LIMIT);
+  }
+
+  return true;
+};
+
+const validateSelectedVideoPublishCopy = ({forPublish = false, forTikTok = false} = {}) => {
+  if (!elements.videoMetaForm) {
+    return {ok: false, message: "Formulário do vídeo indisponível."};
+  }
+
+  const platforms = getSelectedVideoPlatforms();
+  const publishTitle = String(elements.videoMetaForm.elements.publishTitle?.value || "").trim();
+  const title = String(elements.videoMetaForm.elements.title?.value || "").trim();
+  const caption = String(elements.videoMetaForm.elements.caption?.value || "").trim();
+  const socialCaption = String(elements.videoMetaForm.elements.socialCaption?.value || "").trim();
+  const effectivePublishTitle = publishTitle || title;
+  const needsShortCaption = forTikTok || (forPublish && platforms.some((platform) => platform !== "YT"));
+
+  if (forPublish && platforms.includes("YT") && !effectivePublishTitle) {
+    return {ok: false, message: "Preencha o título de publicação para o YouTube."};
+  }
+
+  if (forPublish && platforms.includes("YT") && !publishTitle && title.length > PUBLISH_TITLE_HARD_LIMIT) {
+    return {ok: false, message: `O título interno passou de ${PUBLISH_TITLE_HARD_LIMIT} caracteres. Preencha um título de publicação curto para o YouTube.`};
+  }
+
+  if (publishTitle.length > PUBLISH_TITLE_HARD_LIMIT) {
+    return {ok: false, message: `O título de publicação deve ter até ${PUBLISH_TITLE_HARD_LIMIT} caracteres.`};
+  }
+
+  if (caption.length > LONG_CAPTION_HARD_LIMIT) {
+    return {ok: false, message: `A descrição base deve ter até ${LONG_CAPTION_HARD_LIMIT} caracteres.`};
+  }
+
+  if (socialCaption.length > SOCIAL_CAPTION_HARD_LIMIT) {
+    return {ok: false, message: `A legenda curta deve ter até ${SOCIAL_CAPTION_HARD_LIMIT} caracteres.`};
+  }
+
+  if (needsShortCaption && !socialCaption && caption.length > SOCIAL_CAPTION_HARD_LIMIT) {
+    return {ok: false, message: `A descrição atual passou de ${SOCIAL_CAPTION_HARD_LIMIT} caracteres. Preencha a legenda curta para cross-post fora do YouTube.`};
+  }
+
+  return {ok: true, message: ""};
+};
+
 const syncPublishModeUI = () => {
   const publishMode = getSelectedPublishMode();
   const isScheduled = publishMode === "scheduled";
@@ -1722,6 +2204,8 @@ const syncPublishModeUI = () => {
       ? "Agendar no agenda.online"
       : "Publicar agora no agenda.online";
   }
+
+  syncVideoPublishLimitsUi();
 };
 
 const syncVideoTargetSelect = (selectedValue) => {
@@ -1936,6 +2420,7 @@ const renderSelectedJob = () => {
 
   const actionAvailability = getJobActionAvailability(job);
   const {
+    canStartJob,
     canResume,
     canRegenerateScene,
     canGenerateAudio,
@@ -1971,6 +2456,12 @@ const renderSelectedJob = () => {
     disabled: isPending,
     title: isPending ? "Ação em andamento para este job." : "",
     label: actionAvailability.actions["resume-rebuild"].label
+  });
+  setActionButtonState(elements.startJobButton, {
+    available: canStartJob,
+    disabled: isPending,
+    title: isPending ? "Ação em andamento para este job." : "",
+    label: actionAvailability.actions["start-job"].label
   });
   setActionButtonState(elements.retryFromStoryboardJobButton, {
     available: canRetryFromStoryboard,
@@ -2011,7 +2502,7 @@ const renderSelectedJob = () => {
 
   elements.jobActions.classList.toggle(
     "hidden",
-    ![canResume, canRetryFromStoryboard, canRegenerateScene, canGenerateAudio, canRenderOnly, canValidateOnly, canForceFail].some(Boolean)
+    ![canStartJob, canResume, canRetryFromStoryboard, canRegenerateScene, canGenerateAudio, canRenderOnly, canValidateOnly, canForceFail].some(Boolean)
   );
 
   // Show scene picker row only when job is failed
@@ -2023,6 +2514,7 @@ const renderSelectedJob = () => {
   if (elements.jobSceneGallery && job.id) {
     void renderSceneGallery(elements.jobSceneGallery, elements.jobSceneGalleryGrid, job.id);
   }
+  renderSceneReview(job);
 
   const isPreviewReady =
     job.type === "generate" &&
@@ -2309,8 +2801,13 @@ const fillVideoForm = (video) => {
     elements.videoMetaForm.elements.channel.value = video.channel || "";
   }
   elements.videoMetaForm.elements.title.value = video.title || "";
+  elements.videoMetaForm.elements.publishTitle.value = video.publishTitle || "";
   elements.videoMetaForm.elements.caption.value = video.caption || "";
+  elements.videoMetaForm.elements.socialCaption.value = video.socialCaption || "";
   elements.videoMetaForm.elements.hashtags.value = Array.isArray(video.hashtags) ? video.hashtags.join(" ") : "";
+  if (elements.videoMetaForm.elements.hookWinner) {
+    elements.videoMetaForm.elements.hookWinner.value = video.hookWinner || "";
+  }
   elements.videoMetaForm.elements.scheduleAt.value = toDateTimeLocalValue(video.scheduleAt || "");
   elements.videoMetaForm.elements.isDraft.checked = video.isDraft === true;
   const scheduleAtIsFuture = video.scheduleAt && new Date(video.scheduleAt).getTime() > Date.now();
@@ -2324,6 +2821,7 @@ const fillVideoForm = (video) => {
   });
 
   syncPublishModeUI();
+  syncVideoPublishLimitsUi();
 };
 
 const renderSelectedVideo = () => {
@@ -2462,6 +2960,7 @@ const refreshJobs = async () => {
   }
 
   renderAll();
+  scheduleRefreshLoop();
 };
 
 const refreshVideos = async () => {
@@ -2483,6 +2982,7 @@ const refreshVideos = async () => {
 
   renderVideos();
   renderSelectedLibraryItem();
+  scheduleRefreshLoop();
 };
 
 const toggleCustomVoiceField = (select, field) => {
@@ -2498,42 +2998,68 @@ const syncGenerateMode = () => {
     return;
   }
 
+  const hasStoryboard = Boolean(String(elements.storyboardJsonTextarea?.value || "").trim());
+
+  if (hasStoryboard) {
+    elements.generateSubmitButton.textContent = "Gerar vídeo com storyboard";
+    return;
+  }
+
   elements.generateSubmitButton.textContent = elements.autoApproveToggle.checked
     ? "Gerar vídeo direto"
     : "Montar preview para aprovar";
 };
 
-const applyChannelPresetToForm = (channelId) => {
+const syncDualChannelUi = () => {
+  const checkbox = elements.generateDualChannels;
+  const wrap = elements.generateDualChannelsWrap;
+  if (!checkbox || !wrap) {
+    return;
+  }
+
+  const channelId = String(document.querySelector("#generateChannel")?.value || "");
+  const isDualWellnessChannel = channelId === "ate2min" || channelId === "quiet2min";
+
+  if (!isDualWellnessChannel) {
+    checkbox.checked = false;
+  }
+
+  checkbox.disabled = !isDualWellnessChannel;
+  wrap.setAttribute("aria-disabled", isDualWellnessChannel ? "false" : "true");
+
+  if (elements.dualChannelHint) {
+    elements.dualChannelHint.textContent = isDualWellnessChannel
+      ? "Base em pt-BR para @ate2min; Gemini cria a versão em inglês para @quiet2min e reaproveita os mesmos assets visuais. Requer storyboard JSON em pt-BR."
+      : "Disponível só para a dupla @ate2min + @quiet2min.";
+  }
+
+  validateGenerateForm(elements.generateForm);
+};
+
+const applyChannelPresetToForm = async (channelId) => {
   const preset = getChannelPreset(channelId);
 
   if (!preset) {
     return;
   }
 
-  const toneSelect = document.querySelector("#generateTone");
-  const languageSelect = document.querySelector("#generateLanguage");
   const voiceSelect = document.querySelector("#generateVoice");
   const generationModeSelect = document.querySelector("#generateGenerationMode");
   const imageModelSelect = document.querySelector("#generateImageModel");
-  const imageStyleSelect = document.querySelector("#generateImageStyle");
   const profileSelect = document.querySelector("#generateOutputProfile");
   const customStyleInput = elements.generateForm?.querySelector('input[name="customStylePrompt"]');
 
-  if (toneSelect && preset.tone) {
-    toneSelect.value = preset.tone;
-  }
+  const selectedLanguage = resolveGenerateLanguage(channelId, preset.language || "");
 
-  if (languageSelect && preset.language) {
-    languageSelect.value = preset.language;
-  }
-
-  if (voiceSelect && preset.voice) {
-    const language = languageSelect?.value || state.config?.defaults?.language || "pt-BR";
+  if (voiceSelect && getSelectedAudioProvider() === "elevenlabs") {
+    await syncVoiceOptionsForProvider(voiceSelect.value);
+  } else if (voiceSelect) {
     const presetVoice =
-      preset.voiceByLanguage?.[language] ||
+      preset.voiceByLanguage?.[selectedLanguage] ||
       preset.voice ||
-      getPreferredVoiceForLanguage(language);
-    syncVoiceOptionsForLanguage(language, presetVoice);
+      voiceSelect.value ||
+      getPreferredVoiceForLanguage(selectedLanguage);
+    await syncVoiceOptionsForLanguage(selectedLanguage, presetVoice);
   }
 
   if (imageModelSelect && preset.imageModel) {
@@ -2542,10 +3068,6 @@ const applyChannelPresetToForm = (channelId) => {
 
   if (generationModeSelect && preset.generationMode) {
     generationModeSelect.value = preset.generationMode;
-  }
-
-  if (imageStyleSelect && preset.imageStyle) {
-    imageStyleSelect.value = preset.imageStyle;
   }
 
   if (customStyleInput) {
@@ -2593,7 +3115,6 @@ const loadConfig = async () => {
   const payload = await fetchJson("/api/config");
   state.config = payload;
 
-  fillSelect(document.querySelector("#generateLanguage"), languageOptions, payload.defaults.language);
   fillSelect(document.querySelector("#generateOutputProfile"), payload.outputProfiles, payload.defaults.outputProfile);
   fillSelect(
     document.querySelector("#generateGenerationMode"),
@@ -2601,10 +3122,11 @@ const loadConfig = async () => {
     payload.defaults.generationMode || generationModeOptions[0].value
   );
   fillSelect(document.querySelector("#generateImageModel"), payload.imageModels || [], payload.defaults.imageModel);
-  fillSelect(document.querySelector("#generateImageStyle"), payload.imageStyles, payload.defaults.imageStyle);
   fillSelect(document.querySelector("#generateChannel"), payload.channels, payload.defaults.channel);
-  fillSelect(document.querySelector("#generateTone"), payload.tones, payload.defaults.tone);
-  syncVoiceOptionsForLanguage(payload.defaults.language, payload.defaults.voice);
+  await syncVoiceOptionsForLanguage(
+    resolveGenerateLanguage(payload.defaults.channel, payload.defaults.language),
+    payload.defaults.voice
+  );
   syncVideoTargetSelect(document.querySelector("#videoTargetChannel")?.value || payload.defaults.channel);
 
   elements.generateForm.force.checked = Boolean(payload.defaults.force);
@@ -2620,7 +3142,7 @@ const loadConfig = async () => {
   voiceSelect?.addEventListener("change", syncVoiceField);
   syncVoiceField();
 
-  const syncImageStyleHint = () => {
+  const syncGenerationModeField = () => {
     syncGenerationModeUi();
   };
 
@@ -2641,29 +3163,17 @@ const loadConfig = async () => {
       : "";
   };
 
-  const syncToneHint = () => {
-    const selected = getToneMeta(document.querySelector("#generateTone")?.value);
-    elements.toneHint.textContent = selected?.description || "";
-  };
-
   document.querySelector("#generateImageModel")?.addEventListener("change", syncImageModelField);
-  document.querySelector("#generateGenerationMode")?.addEventListener("change", syncImageStyleHint);
-  document.querySelector("#generateImageStyle")?.addEventListener("change", syncImageStyleHint);
+  document.querySelector("#generateGenerationMode")?.addEventListener("change", syncGenerationModeField);
   document.querySelector("#generateOutputProfile")?.addEventListener("change", syncProfileHints);
-  document.querySelector("#generateTone")?.addEventListener("change", syncToneHint);
-  document.querySelector("#generateLanguage")?.addEventListener("change", () => {
-    const language = document.querySelector("#generateLanguage")?.value || payload.defaults.language;
-    const currentVoice = document.querySelector("#generateVoice")?.value || "";
-    syncVoiceOptionsForLanguage(language, currentVoice);
-    syncVoiceField();
-  });
-  document.querySelector("#generateChannel")?.addEventListener("change", () => {
+  document.querySelector("#generateChannel")?.addEventListener("change", async () => {
     const channelId = document.querySelector("#generateChannel")?.value;
-    applyChannelPresetToForm(channelId);
+    await applyChannelPresetToForm(channelId);
+    syncVoiceField();
     syncImageModelField();
-    syncImageStyleHint();
-    syncToneHint();
+    syncGenerationModeField();
     syncChannelHint();
+    syncDualChannelUi();
   });
   document.querySelector("#videoTargetChannel")?.addEventListener("change", () => {
     const selectedChannel = document.querySelector("#videoTargetChannel")?.value;
@@ -2672,17 +3182,57 @@ const loadConfig = async () => {
   elements.videoMetaForm?.querySelectorAll('input[name="publishMode"]').forEach((input) => {
     input.addEventListener("change", syncPublishModeUI);
   });
+  elements.videoMetaForm?.querySelectorAll('input[name="platforms"]').forEach((input) => {
+    input.addEventListener("change", syncVideoPublishLimitsUi);
+  });
+  ["title", "publishTitle", "caption", "socialCaption"].forEach((fieldName) => {
+    elements.videoMetaForm?.elements?.[fieldName]?.addEventListener("input", syncVideoPublishLimitsUi);
+  });
 
   elements.autoApproveToggle?.addEventListener("change", syncGenerateMode);
+  elements.generateDualChannels?.addEventListener("change", () => validateGenerateForm(elements.generateForm));
   elements.generateForm?.querySelector('input[name="title"]')?.addEventListener("input", () => validateGenerateForm(elements.generateForm));
   elements.generateForm?.querySelector('textarea[name="sourceText"]')?.addEventListener("input", () => validateGenerateForm(elements.generateForm));
 
-  applyChannelPresetToForm(payload.defaults.channel);
+  elements.storyboardFileButton?.addEventListener("click", () => elements.storyboardFileInput?.click());
+  elements.storyboardFileInput?.addEventListener("change", () => {
+    const file = elements.storyboardFileInput.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (elements.storyboardJsonTextarea) elements.storyboardJsonTextarea.value = reader.result;
+      elements.storyboardClearButton?.classList.remove("hidden");
+      syncGenerateMode();
+      validateGenerateForm(elements.generateForm);
+    };
+    reader.readAsText(file);
+    elements.storyboardFileInput.value = "";
+  });
+  elements.storyboardClearButton?.addEventListener("click", () => {
+    if (elements.storyboardJsonTextarea) elements.storyboardJsonTextarea.value = "";
+    elements.storyboardClearButton?.classList.add("hidden");
+    syncGenerateMode();
+    validateGenerateForm(elements.generateForm);
+  });
+  elements.storyboardJsonTextarea?.addEventListener("input", () => {
+    const raw = String(elements.storyboardJsonTextarea.value || "").trim();
+    const hint = document.getElementById("storyboardJsonHint");
+    elements.storyboardClearButton?.classList.toggle("hidden", !raw);
+    syncGenerateMode();
+    if (!raw) { if (hint) { hint.textContent = "Se fornecido, o pipeline usa este storyboard em vez de gerar um novo."; hint.classList.remove("error"); } return; }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed?.scenes?.length) { if (hint) { hint.textContent = "JSON válido mas sem scenes[]. Precisa ter pelo menos 1 cena."; hint.classList.add("error"); } return; }
+      if (hint) { hint.textContent = `Storyboard válido: ${parsed.scenes.length} cenas. O app vai usar esse JSON e pular a etapa de preview.`; hint.classList.remove("error"); }
+    } catch { if (hint) { hint.textContent = "JSON inválido. Verifique a sintaxe."; hint.classList.add("error"); } }
+  });
+
+  await applyChannelPresetToForm(payload.defaults.channel);
   syncImageModelField();
-  syncImageStyleHint();
+  syncGenerationModeField();
   syncProfileHints();
-  syncToneHint();
   syncChannelHint();
+  syncDualChannelUi();
   syncGenerateMode();
   syncPublishModeUI();
   syncVideoTargetHint(payload.defaults.channel);
@@ -2692,26 +3242,63 @@ const loadConfig = async () => {
 const buildGeneratePayload = (form, submitter) => {
   const data = new FormData(form);
   const autoApprove = form.autoApprove?.checked === true;
+  const selectedChannel = String(data.get("channel") || state.config?.defaults?.channel || "foiumaideia");
+  const channelPreset = getChannelPreset(selectedChannel) || {};
+  const selectedLanguage = resolveGenerateLanguage(selectedChannel, channelPreset.language || state.config?.defaults?.language || "");
+  const selectedAudioProvider = String(data.get("audioProvider") || "gcp");
+  const selectedVoice = String(data.get("voice") || "").trim();
+  const selectedImageStyle = String(data.get("imageStyle") || "").trim();
+  const fallbackVoice = selectedAudioProvider === "elevenlabs"
+    ? ""
+    : (
+        channelPreset.voiceByLanguage?.[selectedLanguage] ||
+        channelPreset.voice ||
+        getPreferredVoiceForLanguage(selectedLanguage)
+      );
+  const fallbackImageStyle = resolveGenerateImageStyle(
+    selectedChannel,
+    selectedImageStyle || channelPreset.imageStyle || state.config?.defaults?.imageStyle || ""
+  );
+  const fallbackTone = resolveGenerateTone(selectedChannel, channelPreset.tone || state.config?.defaults?.tone || "");
+  const fallbackTargetSeconds = Number(data.get("targetSeconds") || channelPreset.targetSeconds || 60);
+  const fallbackNoMusic =
+    typeof channelPreset.noMusic === "boolean"
+      ? channelPreset.noMusic
+      : selectedChannel === "foiumaideia";
 
-  return {
+  const payload = {
     title: String(data.get("title") || "").trim(),
     sourceText: String(data.get("sourceText") || "").trim(),
-    language: String(data.get("language") || "pt-BR"),
+    language: selectedLanguage,
     outputProfile: String(data.get("outputProfile") || "vertical-short"),
-    targetSeconds: Number(data.get("targetSeconds") || 60),
+    targetSeconds: fallbackTargetSeconds,
     generationMode: String(data.get("generationMode") || state.config?.defaults?.generationMode || generationModeOptions[0].value),
-    imageModel: String(data.get("imageModel") || state.config?.defaults?.imageModel || "gemini-2.5-flash-image"),
-    imageStyle: String(data.get("imageStyle") || "claude"),
-    channel: String(data.get("channel") || "foiumaideia"),
-    tone: String(data.get("tone") || "shortform_native"),
-    voice: String(data.get("voice") || getPreferredVoiceForLanguage(String(data.get("language") || "pt-BR"))),
-    audioProvider: String(data.get("audioProvider") || "gcp"),
+    imageModel: String(data.get("imageModel") || state.config?.defaults?.imageModel || "imagen-4.0-generate-001"),
+    imageStyle: fallbackImageStyle,
+    channel: selectedChannel,
+    tone: fallbackTone,
+    voice: selectedAudioProvider === "elevenlabs" ? selectedVoice : (selectedVoice || fallbackVoice),
+    audioProvider: selectedAudioProvider,
     customVoice: String(data.get("customVoice") || "").trim(),
     customStylePrompt: String(data.get("customStylePrompt") || "").trim(),
+    generateForBothChannels: elements.generateDualChannels?.checked === true,
     force: form.force.checked,
-    noMusic: form.noMusic.checked,
+    noMusic: typeof form.noMusic?.checked === "boolean" ? form.noMusic.checked : fallbackNoMusic,
     previewOnly: autoApprove ? false : submitter?.dataset.previewOnly === "true"
   };
+
+  const storyboardRaw = String(elements.storyboardJsonTextarea?.value || "").trim();
+  if (storyboardRaw) {
+    try {
+      const parsed = JSON.parse(storyboardRaw);
+      if (parsed && Array.isArray(parsed.scenes) && parsed.scenes.length > 0) {
+        payload.storyboard = parsed;
+        payload.previewOnly = false;
+      }
+    } catch {}
+  }
+
+  return payload;
 };
 
 const validateGenerateForm = (form) => {
@@ -2720,11 +3307,16 @@ const validateGenerateForm = (form) => {
   const title = String(titleInput?.value || "").trim();
   const sourceText = String(sourceTextInput?.value || "").trim();
   const titleWords = title.split(/\s+/).filter(Boolean).length;
+  const storyboardText = String(elements.storyboardJsonTextarea?.value || "").trim();
+  const hasStoryboard = storyboardText.length > 10;
+  const generateForBothChannels = elements.generateDualChannels?.checked === true;
   let message = "";
 
-  if (!title && sourceText.length < MIN_SOURCE_TEXT_CHARS) {
+  if (generateForBothChannels && !hasStoryboard) {
+    message = "Para gerar @ate2min + @quiet2min com os mesmos assets, cole o storyboard JSON em pt-BR.";
+  } else if (!hasStoryboard && !title && sourceText.length < MIN_SOURCE_TEXT_CHARS) {
     message = `Preencha um titulo ou cole pelo menos ${MIN_SOURCE_TEXT_CHARS} caracteres de texto-base.`;
-  } else if (!sourceText && (title.length < MIN_TITLE_CHARS_WITHOUT_SOURCE || titleWords < MIN_TITLE_WORDS_WITHOUT_SOURCE)) {
+  } else if (!hasStoryboard && !sourceText && (title.length < MIN_TITLE_CHARS_WITHOUT_SOURCE || titleWords < MIN_TITLE_WORDS_WITHOUT_SOURCE)) {
     message = `Sem texto-base, o titulo precisa ter pelo menos ${MIN_TITLE_WORDS_WITHOUT_SOURCE} palavras e ${MIN_TITLE_CHARS_WITHOUT_SOURCE} caracteres.`;
   }
 
@@ -2761,7 +3353,10 @@ const getSelectedVideoPayload = () => {
     path: String(data.get("path") || selectedVideo.path || "").trim(),
     channel: String(data.get("channel") || selectedVideo.channel || "").trim(),
     title: String(data.get("title") || "").trim(),
+    publishTitle: String(data.get("publishTitle") || "").trim(),
     caption: String(data.get("caption") || "").trim(),
+    socialCaption: String(data.get("socialCaption") || "").trim(),
+    hookWinner: String(data.get("hookWinner") || "").trim(),
     hashtags,
     scheduleAt: parseDateTimeLocalToIso(scheduleAtRaw),
     platforms: Array.from(elements.videoMetaForm.querySelectorAll('input[name="platforms"]:checked')).map((input) => input.value),
@@ -2786,6 +3381,13 @@ const getSelectedVideoPublishPayload = () => {
 
 elements.generateForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const submitButtons = elements.generateForm.querySelectorAll('button[type="submit"]');
+  const submitter = event.submitter;
+  const originalLabel = submitter ? submitter.textContent : "";
+  submitButtons.forEach(b => b.disabled = true);
+  if (submitter) {
+    submitter.textContent = "Enviando…";
+  }
 
   try {
     if (!validateGenerateForm(elements.generateForm)) {
@@ -2800,15 +3402,29 @@ elements.generateForm?.addEventListener("submit", async (event) => {
       body: JSON.stringify(payload)
     });
 
-    upsertJob(response.job);
-    state.selectedJobId = response.job.id;
-    setStoredLogPage(response.job, getDefaultLogPage(response.job));
+    const returnedJobs = Array.isArray(response.jobs) ? response.jobs : (response.job ? [response.job] : []);
+    returnedJobs.forEach((job) => {
+      upsertJob(job);
+      setStoredLogPage(job, getDefaultLogPage(job));
+    });
+    const primaryJob = response.job || returnedJobs[0] || null;
+    if (primaryJob?.id) {
+      state.selectedJobId = primaryJob.id;
+      connectStream(primaryJob.id);
+    }
     state.logAutoFollow = true;
-    connectStream(response.job.id);
+    if (returnedJobs.length > 1) {
+      showToast(`${returnedJobs.length} jobs entraram na fila.`, "success");
+    }
     setActiveTab("workspace");
     await refreshJobs();
   } catch (error) {
-    window.alert(error.message);
+    showToast(error.message);
+  } finally {
+    submitButtons.forEach(b => b.disabled = false);
+    if (submitter) {
+      submitter.textContent = originalLabel;
+    }
   }
 });
 
@@ -2838,9 +3454,11 @@ elements.approvePreviewButton?.addEventListener("click", async () => {
     connectStream(response.job.id);
     await refreshJobs();
   } catch (error) {
-    window.alert(error.message);
+    showToast(error.message);
   }
 });
+
+document.getElementById("approvePreviewButtonBottom")?.addEventListener("click", () => elements.approvePreviewButton?.click());
 
 elements.previewStoryboardForm?.addEventListener("input", () => {
   syncPreviewStoryboardDraft();
@@ -2856,6 +3474,27 @@ elements.resumeJobButton?.addEventListener("click", async () => {
   await runSafeRecoveryAction({
     job: selectedJob,
     actionKey: "resume-rebuild"
+  });
+});
+
+elements.startJobButton?.addEventListener("click", async () => {
+  const selectedJob = getJobById(state.selectedJobId);
+
+  if (!selectedJob) {
+    return;
+  }
+
+  await runSafeRecoveryAction({
+    job: selectedJob,
+    actionKey: "start-job",
+    onSuccess: async (response) => {
+      upsertJob(response.job);
+      state.selectedJobId = response.job.id;
+      setStoredLogPage(response.job, getDefaultLogPage(response.job));
+      state.logAutoFollow = true;
+      connectStream(response.job.id);
+      await refreshJobs();
+    }
   });
 });
 
@@ -2903,7 +3542,7 @@ elements.regenerateScenePickerButton?.addEventListener("click", async () => {
   if (!selectedJob) return;
   const sceneNumber = parseInt(elements.regenerateSceneInput?.value || "0", 10);
   if (!sceneNumber || sceneNumber < 1) {
-    window.alert("Informe um número de cena válido.");
+    showToast("Informe um número de cena válido.");
     return;
   }
   await runJobAction({
@@ -2991,6 +3630,12 @@ elements.videoMetaForm?.addEventListener("submit", async (event) => {
     return;
   }
 
+  const copyValidation = validateSelectedVideoPublishCopy();
+  if (!copyValidation.ok) {
+    setVideoActionHint(copyValidation.message, {error: true});
+    return;
+  }
+
   try {
     const response = await fetchJson("/api/videos/meta", {
       method: "POST",
@@ -3068,10 +3713,113 @@ elements.deleteVideoButton?.addEventListener("click", async () => {
   }
 });
 
+const PLATFORM_LABELS = {FB: "Facebook", IG: "Instagram", YT: "YouTube", TK: "TikTok"};
+
+const renderPublishStatus = (statusData, {slug, channel} = {}) => {
+  const container = elements.publishStatus;
+  if (!container) {
+    return;
+  }
+  const targets = Array.isArray(statusData?.targets) ? statusData.targets : [];
+  if (targets.length === 0) {
+    container.classList.add("hidden");
+    container.innerHTML = "";
+    return;
+  }
+
+  container.classList.remove("hidden");
+  container.innerHTML = "";
+
+  const chips = document.createElement("div");
+  chips.className = "publish-status-chips";
+  const failed = [];
+  for (const target of targets) {
+    const status = String(target.status || "").toUpperCase();
+    const chip = document.createElement("span");
+    const tone = status === "PUBLISHED" ? "ok" : status === "FAILED" ? "fail" : "pending";
+    chip.className = `publish-chip publish-chip--${tone}`;
+    const icon = tone === "ok" ? "✅" : tone === "fail" ? "⚠️" : "⏳";
+    chip.textContent = `${icon} ${PLATFORM_LABELS[target.platform] || target.platform}: ${status || "PENDING"}`;
+    if (target.error) {
+      chip.title = target.error;
+    }
+    chips.appendChild(chip);
+    if (tone === "fail") {
+      failed.push(target.platform);
+    }
+  }
+  container.appendChild(chips);
+
+  if (failed.length > 0) {
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "button secondary";
+    retry.textContent = `Repetir ${failed.map((platform) => PLATFORM_LABELS[platform] || platform).join(", ")}`;
+    retry.addEventListener("click", async () => {
+      retry.disabled = true;
+      try {
+        const base = getSelectedVideoPublishPayload();
+        if (!base) {
+          return;
+        }
+        await fetchJson("/api/videos/publish", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({...base, platforms: failed})
+        });
+        setVideoActionHint(`Republicando em ${failed.join(", ")}…`);
+        pollPublishStatus({slug, channel});
+      } catch (error) {
+        setVideoActionHint(error.message, {error: true});
+      } finally {
+        retry.disabled = false;
+      }
+    });
+    container.appendChild(retry);
+  }
+};
+
+let publishStatusTimer = null;
+const pollPublishStatus = ({slug, channel, attempts = 8} = {}) => {
+  if (!slug) {
+    return;
+  }
+  if (publishStatusTimer) {
+    clearTimeout(publishStatusTimer);
+    publishStatusTimer = null;
+  }
+  let remaining = attempts;
+  const tick = async () => {
+    try {
+      const statusData = await fetchJson("/api/videos/publish-status", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({slug, channel})
+      });
+      renderPublishStatus(statusData, {slug, channel});
+      const targets = Array.isArray(statusData?.targets) ? statusData.targets : [];
+      const stillPending = targets.some((target) => String(target.status || "").toUpperCase() === "PENDING");
+      remaining -= 1;
+      if (stillPending && remaining > 0) {
+        publishStatusTimer = setTimeout(tick, 8000);
+      }
+    } catch {
+      // status is best-effort; stop quietly on error
+    }
+  };
+  tick();
+};
+
 elements.publishVideoButton?.addEventListener("click", async () => {
   const payload = getSelectedVideoPublishPayload();
 
   if (!payload) {
+    return;
+  }
+
+  const copyValidation = validateSelectedVideoPublishCopy({forPublish: true});
+  if (!copyValidation.ok) {
+    setVideoActionHint(copyValidation.message, {error: true});
     return;
   }
 
@@ -3093,8 +3841,15 @@ elements.publishVideoButton?.addEventListener("click", async () => {
       state.selectedVideoId = updatedVideo.id;
     }
     const postId = response.post?.id ? `Post ${response.post.id}` : "Publicação enviada";
-    setVideoActionHint(`${postId} criado no agenda.online.`);
+    setVideoActionHint(`${postId} criado no agenda.online.${response.tiktokHelperUrl ? " TikTok abre em aba separada (upload manual)." : ""}`);
     renderAll();
+
+    if (response.tiktokHelperUrl) {
+      window.open(response.tiktokHelperUrl, "_blank", "noopener,noreferrer");
+    }
+    if (response.post?.id && !response.tiktokOnly) {
+      pollPublishStatus({slug: payload.slug, channel: payload.channel});
+    }
   } catch (error) {
     setVideoActionHint(error.message, {error: true});
   }
@@ -3104,6 +3859,12 @@ elements.openTikTokHelperButton?.addEventListener("click", async () => {
   const payload = getSelectedVideoPayload();
 
   if (!payload) {
+    return;
+  }
+
+  const copyValidation = validateSelectedVideoPublishCopy({forTikTok: true});
+  if (!copyValidation.ok) {
+    setVideoActionHint(copyValidation.message, {error: true});
     return;
   }
 
@@ -3140,9 +3901,98 @@ elements.openTikTokHelperButton?.addEventListener("click", async () => {
   }
 });
 
+elements.hookVariantsButton?.addEventListener("click", async () => {
+  const payload = getSelectedVideoPayload();
+  if (!payload || !payload.slug) {
+    setVideoActionHint("Selecione um vídeo para gerar variantes de hook.", {error: true});
+    return;
+  }
+
+  setVideoActionHint("Gerando variantes de hook (A/B)…");
+  elements.hookVariantsButton.disabled = true;
+
+  try {
+    const response = await fetchJson("/api/videos/hook-variants", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({slug: payload.slug, channel: payload.channel})
+    });
+
+    const variants = Array.isArray(response.variants) ? response.variants : [];
+    const variantStoryboards = Array.isArray(response.variantStoryboards) ? response.variantStoryboards : [];
+    if (variants.length === 0) {
+      setVideoActionHint("Nenhuma variante de hook foi gerada.", {error: true});
+      return;
+    }
+
+    const summary = variants
+      .map((variant, index) => `${String.fromCharCode(65 + index)} [${variant.angle}]: ${variant.narration}`)
+      .join("\n");
+    setVideoActionHint(`Variantes de hook geradas:\n${summary}`);
+
+    const shouldRender = window.confirm(
+      `${variants.length} variantes de hook geradas:\n\n${summary}\n\nRenderizar ${variants.length} vídeos A/B agora (mesmo corpo, hook diferente) no canal @${payload.channel || "foiumaideia"}?`
+    );
+    if (!shouldRender) {
+      return;
+    }
+
+    const baseTitle = payload.title || payload.slug;
+    const jobs = [];
+    for (let index = 0; index < variantStoryboards.length; index += 1) {
+      const job = await fetchJson("/api/generate", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          title: `${baseTitle} — hook ${String.fromCharCode(65 + index)} (${variants[index].angle})`,
+          channel: payload.channel || "foiumaideia",
+          language: response.language || "pt-BR",
+          audioProvider: "elevenlabs",
+          voice: "TX3LPaxmHKxFdv7VOQHJ",
+          imageModel: "gemini-3.1-flash-image-preview",
+          storyboard: variantStoryboards[index]
+        })
+      });
+      if (job?.job?.id) {
+        jobs.push(job.job.id);
+      }
+    }
+
+    setVideoActionHint(`${jobs.length} renders A/B enfileirados. Acompanhe na aba Pipeline e compare a retenção dos 3s.`);
+    await refreshJobs();
+    showToast(`${jobs.length} variantes A/B enfileiradas.`, "success");
+  } catch (error) {
+    setVideoActionHint(error.message, {error: true});
+  } finally {
+    elements.hookVariantsButton.disabled = false;
+  }
+});
+
 elements.tabButtons.forEach((button) => {
   button.addEventListener("click", () => {
     setActiveTab(button.dataset.tabTarget);
+  });
+});
+
+document.querySelectorAll("[data-copy-target]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    try {
+      await copyTextFromTarget(button.dataset.copyTarget);
+      showToast("Conteudo copiado.", "success");
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+});
+
+document.querySelectorAll("[data-paste-storyboard-target]").forEach((button) => {
+  button.addEventListener("click", () => {
+    try {
+      pasteTemplateIntoStoryboard(button.dataset.pasteStoryboardTarget);
+      showToast("Template JSON enviado para o campo Storyboard JSON.", "success");
+    } catch (error) {
+      showToast(error.message);
+    }
   });
 });
 
@@ -3211,6 +4061,7 @@ elements.jobFilterChips.forEach(chip => {
   });
 });
 
+await loadTemplateResources();
 await loadConfig();
 await Promise.allSettled([refreshJobs(), refreshVideos()]);
 setActiveTab(state.activeTab);
@@ -3219,22 +4070,13 @@ if (elements.logsJobLog) {
   elements.logsJobLog.addEventListener("scroll", syncLogAutoFollow);
 }
 
-setInterval(() => {
-  refreshJobs().catch(() => {}); /* polling: next interval will retry */
-  refreshVideos().catch(() => {}); /* polling: next interval will retry */
-}, DEFAULT_REFRESH_INTERVAL_MS);
-
-setInterval(() => {
-  const selectedJob = getJobById(state.selectedJobId);
-  const activeJob = getJobById(state.activeJobId);
-  const targetJob =
-    (selectedJob && (selectedJob.status === "queued" || selectedJob.status === "running") && selectedJob) ||
-    (activeJob && (activeJob.status === "queued" || activeJob.status === "running") && activeJob) ||
-    null;
-
-  if (!targetJob) {
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    void runRefreshLoop();
     return;
   }
 
-  refreshJobs().catch(() => {}); /* polling: next interval will retry */
-}, ACTIVE_JOB_REFRESH_INTERVAL_MS);
+  scheduleRefreshLoop(null);
+});
+
+scheduleRefreshLoop();

@@ -16,3 +16,13 @@ video-engine/assets/envato/
 
 __pycache__/
 .debug-caption-check/
+
+# local-only artifacts / scratch
+.tmp/
+.simulador/
+.codex
+storyboards/
+mac.txt
+todo.md
+web/public/style-gallery/audio/
+web/public/style-gallery/voice-samples-report.json

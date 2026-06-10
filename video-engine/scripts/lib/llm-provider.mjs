@@ -3,40 +3,73 @@ import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import {z} from "zod";
-import {resolveOutputProfileConfig} from "../../../config/output-profiles.mjs";
+import {
+  getRecommendedSceneCountForDuration,
+  getSceneCountRangeForDuration,
+  resolveOutputProfileConfig
+} from "../../../config/output-profiles.mjs";
 import {normalizeText, sleep as wait, uniqueStrings} from "../../../../shared/utils.mjs";
 import {createGeminiUsageSummary, recordGeminiUsage} from "./gemini-usage.mjs";
 import {getGcpAccessToken, resolveGcpConfig} from "./gcp-config.mjs";
 
-const MIN_SCENES = Math.max(10, Number.parseInt(process.env.MIN_SCENE_COUNT || "10", 10) || 10);
-const MAX_SCENES = Math.max(MIN_SCENES, Number.parseInt(process.env.MAX_SCENE_COUNT || "16", 10) || 16);
 const STORYBOARD_REPAIR_MAX_ATTEMPTS = Math.max(
   0,
   Number.parseInt(process.env.STORYBOARD_REPAIR_MAX_ATTEMPTS || "3", 10) || 3
 );
 const OUTPUT_PROFILE = resolveOutputProfileConfig(process.env.OUTPUT_PROFILE || "vertical-short");
+const DEFAULT_STORYBOARD_SCENE_RANGE = getSceneCountRangeForDuration(
+  OUTPUT_PROFILE.id,
+  OUTPUT_PROFILE.defaultTargetSeconds
+);
+const getStoryboardSceneRange = (desiredDurationSeconds) =>
+  getSceneCountRangeForDuration(OUTPUT_PROFILE.id, desiredDurationSeconds);
+const createStoryboardSchemaForDuration = (desiredDurationSeconds) =>
+  createStoryboardSchema(getStoryboardSceneRange(desiredDurationSeconds));
+const createStoryboardOutputSchemaForDuration = (desiredDurationSeconds) =>
+  createStoryboardOutputSchema(getStoryboardSceneRange(desiredDurationSeconds));
 const OUTPUT_FORMAT_DESCRIPTION =
   OUTPUT_PROFILE.layout === "horizontal"
     ? `horizontal long-form video in 16:9 (${OUTPUT_PROFILE.label})`
     : `vertical short-form video in 9:16 (${OUTPUT_PROFILE.label})`;
+const SEARCH_QUERY_MAX_LENGTH = Math.max(
+  160,
+  Number.parseInt(process.env.SEARCH_QUERY_MAX_LENGTH || "220", 10) || 220
+);
+
+const imagePromptSchema = z.string().min(40).max(1200);
+
+const audioPlanSchema = z.object({
+  provider: z.string().min(2).max(40),
+  voiceName: z.string().min(2).max(120),
+  voiceId: z.string().max(120).optional().default(""),
+  modelId: z.string().max(120).optional().default("eleven_multilingual_v2"),
+  voiceStyle: z.string().min(8).max(320)
+});
 
 const sceneSchema = z.object({
   title: z.string().min(2).max(80),
   narration: z.string().min(12).max(520),
-  searchQuery: z.string().min(3).max(140),
-  overlay: z.string().min(2).max(80)
+  searchQuery: z.string().min(3).max(SEARCH_QUERY_MAX_LENGTH),
+  overlay: z.string().min(2).max(80),
+  imagePrompts: z.array(imagePromptSchema).min(1).max(4)
 });
 
-const storyboardSchema = z.object({
-  videoTitle: z.string().min(4).max(160),
-  hook: z.string().min(8).max(220),
-  postCaption: z.string().min(12).max(500),
-  hashtags: z.array(z.string().min(2).max(32)).min(3).max(8),
-  cta: z.string().max(120),
-  scenes: z.array(sceneSchema).min(MIN_SCENES).max(MAX_SCENES)
-});
+const createStoryboardSchema = (sceneRange = DEFAULT_STORYBOARD_SCENE_RANGE) =>
+  z.object({
+    videoTitle: z.string().min(4).max(160),
+    hook: z.string().min(8).max(220),
+    postCaption: z.string().min(12).max(500),
+    hashtags: z.array(z.string().min(2).max(32)).min(3).max(8),
+    cta: z.string().max(120),
+    audio: audioPlanSchema,
+    thumbnailPrompt: z.string().max(2000).optional().default(""),
+    scenes: z
+      .array(sceneSchema)
+      .min(sceneRange.minScenes)
+      .max(sceneRange.maxScenes)
+  });
 
-const storyboardOutputSchema = {
+const createStoryboardOutputSchema = (sceneRange = DEFAULT_STORYBOARD_SCENE_RANGE) => ({
   type: "object",
   additionalProperties: false,
   properties: {
@@ -48,8 +81,23 @@ const storyboardOutputSchema = {
       items: {type: "string"}
     },
     cta: {type: "string"},
+    audio: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        provider: {type: "string"},
+        voiceName: {type: "string"},
+        voiceId: {type: "string"},
+        modelId: {type: "string"},
+        voiceStyle: {type: "string"}
+      },
+      required: ["provider", "voiceName", "voiceId", "modelId", "voiceStyle"]
+    },
+    thumbnailPrompt: {type: "string"},
     scenes: {
       type: "array",
+      minItems: sceneRange.minScenes,
+      maxItems: sceneRange.maxScenes,
       items: {
         type: "object",
         additionalProperties: false,
@@ -57,18 +105,78 @@ const storyboardOutputSchema = {
           title: {type: "string"},
           narration: {type: "string"},
           searchQuery: {type: "string"},
-          overlay: {type: "string"}
+          overlay: {type: "string"},
+          imagePrompts: {
+            type: "array",
+            items: {type: "string"},
+            minItems: 1,
+            maxItems: 4
+          }
         },
-        required: ["title", "narration", "searchQuery", "overlay"]
+        required: ["title", "narration", "searchQuery", "overlay", "imagePrompts"]
       }
     }
   },
-  required: ["videoTitle", "hook", "postCaption", "hashtags", "cta", "scenes"]
-};
+  required: ["videoTitle", "hook", "postCaption", "hashtags", "cta", "audio", "thumbnailPrompt", "scenes"]
+});
 
 const clampText = (value, maxLength) => {
   const normalized = normalizeText(value);
   return normalized.length <= maxLength ? normalized : normalized.slice(0, maxLength).trim();
+};
+
+const clampTextAtWordBoundary = (value, maxLength) => {
+  const normalized = normalizeText(value);
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const trimmed = normalized.slice(0, maxLength).trim();
+  const boundaryIndex = Math.max(trimmed.lastIndexOf(" "), trimmed.lastIndexOf("-"));
+
+  if (boundaryIndex >= Math.floor(maxLength * 0.6)) {
+    return trimmed.slice(0, boundaryIndex).trim();
+  }
+
+  return trimmed;
+};
+
+const clampTextAtSentenceBoundary = (value, maxLength) => {
+  const normalized = normalizeText(value);
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const trimmed = normalized.slice(0, maxLength).trim();
+  const boundaryIndex = Math.max(
+    trimmed.lastIndexOf("."),
+    trimmed.lastIndexOf("!"),
+    trimmed.lastIndexOf("?")
+  );
+
+  if (boundaryIndex >= Math.floor(maxLength * 0.5)) {
+    return trimmed.slice(0, boundaryIndex + 1).trim();
+  }
+
+  return trimmed;
+};
+
+const sanitizeGeminiResponseSchema = (schema) => {
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+
+  if (Array.isArray(schema)) {
+    return schema.map((item) => sanitizeGeminiResponseSchema(item));
+  }
+
+  const entries = Object.entries(schema)
+    .filter(([key]) => key !== "additionalProperties" && key !== "$schema")
+    .map(([key, value]) => [key, sanitizeGeminiResponseSchema(value)]);
+
+  return Object.fromEntries(entries);
 };
 
 const uniqueFindings = (values = []) => {
@@ -97,12 +205,17 @@ const createQaFinding = ({code, message, severity, details = {}}) => ({
   details
 });
 
-const withThinkingDisabled = (config = {}) => ({
-  ...config,
-  thinkingConfig: {
-    thinkingBudget: 0
-  }
-});
+const supportsThinkingBudgetZero = (model = "") => !/gemini-2\.5-pro/i.test(String(model || "").trim());
+
+const withThinkingDisabled = (config = {}, model = "") =>
+  supportsThinkingBudgetZero(model)
+    ? {
+        ...config,
+        thinkingConfig: {
+          thinkingBudget: 0
+        }
+      }
+    : {...config};
 
 const isEnglishLanguage = (language) => String(language || "").trim().toLowerCase().startsWith("en");
 let geminiUsageSummary = createGeminiUsageSummary();
@@ -273,7 +386,7 @@ const sanitizeEnglishSearchQuery = (value) => {
      to prevent the image model from hallucinating text on the device */
   if (/\b(smartphone|phone|tablet|laptop|computer|monitor)\b/i.test(result) &&
       !/\b(blank|glowing|dark|off|turned.off|black screen)\b/i.test(result)) {
-    result = result.replace(/\b(smartphone|phone|tablet|laptop|computer|monitor)\b/i, "$1 with a dark turned-off screen");
+    result = result.replace(/\b(smartphone|phone|tablet|laptop|computer|monitor)\b/i, "$1 with dark screen");
   }
   return result;
 };
@@ -283,6 +396,12 @@ const DESK_LAPTOP_QUERY_RE =
 const TEXTISH_QUERY_RE =
   /\b(access denied|update now|update|click here|bank alert|error message|warning message|declined message|payment declined|password reset|verification code|verify|sign in|login|log in|login page|headline|news alert|breaking news|input fields?|password fields?|form fields?|notification message|message on (a )?(phone|smartphone|screen)|suspicious message|link on (a )?(phone|smartphone|screen)|email copy|button label|email\b|notification bubble|low balance indicator|progress bar animation)\b/i;
 const QUOTED_UI_TEXT_RE = /["'][A-Za-z][A-Za-z0-9 -]{1,24}["']/;
+const MULTI_PANEL_QUERY_RE =
+  /\b(split[\s-]?screen|multi[\s-]?panel|triptych|three[\s-]?way|collage of|grid of|montage of|side by side of three|three countries|multiple countries)\b/i;
+const MULTI_SUBJECT_SEQUENCE_QUERY_RE =
+  /\b(sequence of|different people|several people|multiple people|many people|various people|different hands|multiple devices|several devices|many devices|smartphones and tablets|keyboards smartphones and tablets|phones and tablets)\b/i;
+const DANGLING_SEARCH_QUERY_END_RE =
+  /\b(with|without|the|a|an|of|to|for|in|on|at|from|where|when|while|into|onto|toward|towards|near|around|through|across|inside|outside|behind|before|after|between|among|showing|including|featuring|many|several|multiple|turned-off)\s*$/i;
 
 const normalizeTopicKey = (value) =>
   normalizeText(value)
@@ -321,6 +440,45 @@ const countTextishQueries = (storyboard) =>
     const query = String(scene?.searchQuery || "");
     return TEXTISH_QUERY_RE.test(query) || QUOTED_UI_TEXT_RE.test(query);
   }).length;
+
+const getMultiPanelQueryScenes = (storyboard) =>
+  (storyboard?.scenes ?? []).flatMap((scene, index) => {
+    const query = String(scene?.searchQuery || "");
+
+    return MULTI_PANEL_QUERY_RE.test(query)
+      ? [{
+          index,
+          title: String(scene?.title || "").trim() || `scene ${index + 1}`,
+          searchQuery: query
+        }]
+      : [];
+  });
+
+const getMultiSubjectSequenceQueryScenes = (storyboard) =>
+  (storyboard?.scenes ?? []).flatMap((scene, index) => {
+    const query = String(scene?.searchQuery || "");
+
+    return MULTI_SUBJECT_SEQUENCE_QUERY_RE.test(query)
+      ? [{
+          index,
+          title: String(scene?.title || "").trim() || `scene ${index + 1}`,
+          searchQuery: query
+        }]
+      : [];
+  });
+
+const getDanglingSearchQueryScenes = (storyboard) =>
+  (storyboard?.scenes ?? []).flatMap((scene, index) => {
+    const query = normalizeText(scene?.searchQuery || "");
+
+    return DANGLING_SEARCH_QUERY_END_RE.test(query)
+      ? [{
+          index,
+          title: String(scene?.title || "").trim() || `scene ${index + 1}`,
+          searchQuery: query
+        }]
+      : [];
+  });
 
 const getTitleLeakScenes = (storyboard, title) => {
   const topicKey = normalizeTopicKey(cleanTopic(title) || title);
@@ -478,12 +636,17 @@ const hasOffTopicCaptionLeak = (storyboard, title) => {
   return PRODUCTIVITY_LEAK_RE.test(combined) && fillerTokens.length > 0 && !sharesTitleAnchor;
 };
 
-const VIRAL_SHORTFORM_GUIDANCE_RE = /\b(short-form creator|internet-native|all caps|viral|sarcastic|nao cai nessa|isso da ruim|bad tech idea|fail energy)\b/i;
-const HARD_HOOK_RE = /\b(nao use|não use|pare|pessima ideia|péssima ideia|ruim|perigo|alerta|grave|mito|destruindo|arruinando|erro|nao faca isso|não faça isso)\b/i;
-const COLLOQUIAL_REACTION_RE = /\b(nao cai nessa|não caia nessa|isso da ruim|isso dá ruim|pessima ideia|péssima ideia|mito perigoso|dor de cabeca|dor de cabeça|fortuna a toa|fortuna à toa|essa ideia nao foi uma boa ideia|essa ideia não foi uma boa ideia|nao faca isso|não faça isso|erro grave|cilada)\b/i;
+const VIRAL_SHORTFORM_GUIDANCE_RE = /\b(short-form creator|internet-native|all caps|viral|sarcastic|nao cai nessa|bad tech idea|fail energy|parecia arriscado|muita gente desconfiava)\b/i;
+const HARD_HOOK_RE = /\b(nao use|não use|pare|pessima ideia|péssima ideia|ruim|perigo|alerta|grave|mito|destruindo|arruinando|erro|pior erro|inutil|inútil|descartad|ridiculo|ridículo|absurdo|achou que|considerada)\b/i;
+const CONTRAST_HOOK_RE = /\b(mas\b|so que\b|só que\b|por \d+ anos\b|durante \d+ anos\b|sem vender\b|recusando\b|recusou\b|recusaram\b|achavam que\b|nao queria\b|não queria\b|acabou virando\b|hoje vale\b|virou\b)\b/i;
+const COLLOQUIAL_REACTION_RE = /\b(nao cai nessa|não caia nessa|parecia arriscado|muita gente desconfiava|ninguem sabia se dava para confiar|ninguém sabia se dava para confiar|ninguem queria testar|ninguém queria testar|pessima ideia|péssima ideia|mito perigoso|dor de cabeca|dor de cabeça|fortuna a toa|fortuna à toa|essa ideia nao foi uma boa ideia|essa ideia não foi uma boa ideia|nao faca isso|não faça isso|erro grave|cilada|mano|cara|meu deus|que ideia ruim|que ideia péssima|que avaliacao ruim|que avaliação ruim)\b/i;
+const NO_ENGLISH_VISUAL_TEXT_RULE = "The prompt itself may be written in English, but the generated image must not contain English words, English UI labels, random Latin lettering, fake app copy, or readable signage. Prefer no readable text at all; if in-world text is unavoidable, it must be simple Brazilian Portuguese only.";
+const BLANK_UI_VISUAL_RULE = "Use blank screens, icon-only interface shapes, blank signs, blank placards, route lines, pins, stars, check marks, and abstract symbols instead of words, letters, numbers, button labels, brand marks, or UI copy.";
 const SOFT_ADVICE_START_RE = /^(para|sempre|mantenha|proteja|evite|prefira|use|procure|opte|cuide|lembre|considere)\b/i;
-const ENDING_STING_RE = /\b(caro|custa|custar|fortuna|prejuizo|prejuízo|erro grave|perigo|ruim|estragar|danificar|piorar|irreversivel|irreversível|dor de cabeca|dor de cabeça|cilada|nao faca isso|não faça isso|nao caia nessa|não caia nessa)\b/i;
+const ENDING_STING_RE = /\b(caro|custa|custar|fortuna|prejuizo|prejuízo|erro grave|perigo|ruim|estragar|danificar|piorar|irreversivel|irreversível|dor de cabeca|dor de cabeça|cilada|nao faca isso|não faça isso|nao caia nessa|não caia nessa|lotada|nunca fica vazia|controla a sua vida|controla sua vida)\b/i;
+const MORALIZING_DIRECT_ADVICE_RE = /\b(nao cometa|não cometa|pensa nisso|na proxima vez|na próxima vez|sua proxima ideia|sua próxima ideia|nao subestime|não subestime|aprenda com|licao final|lição final|moral da historia|moral da história|aviso brutal|lembre disso)\b/i;
 const UPPERCASE_EMPHASIS_RE = /(^|[^A-Za-zÀ-ÖØ-öø-ÿ])([A-ZÀ-ÖØ-Þ]{2,})(?=[^A-Za-zÀ-ÖØ-öø-ÿ]|$)/g;
+const CONCRETE_DATA_RE = /\b(\d+|milh(?:ao|ões|oes)|bilh(?:ao|ões|oes)|trilh(?:ao|ões|oes))\b/i;
 
 const isViralShortformGuidance = (scriptGuidance = "") => VIRAL_SHORTFORM_GUIDANCE_RE.test(normalizeText(scriptGuidance));
 
@@ -516,12 +679,36 @@ const countSoftAdviceLines = (storyboard) => {
 
 const hasHardHookStatement = (storyboard) => {
   const opening = normalizeText(`${storyboard?.hook || ""} ${storyboard?.scenes?.[0]?.narration || ""}`);
-  return !hookStartsAsQuestion(storyboard) && HARD_HOOK_RE.test(opening);
+  const hasContrastiveFactHook = hookContainsConcreteDataPoint(storyboard) && CONTRAST_HOOK_RE.test(opening);
+  return !hookStartsAsQuestion(storyboard) && (HARD_HOOK_RE.test(opening) || hasContrastiveFactHook);
 };
 
 const hasViralEndingSting = (storyboard) => {
   const closing = normalizeText(storyboard?.scenes?.at(-1)?.narration || "");
   return !hasSoftGenericEnding(storyboard) && ENDING_STING_RE.test(closing);
+};
+
+const hasMoralizingHookOrEnding = (storyboard) => {
+  const opening = normalizeText(storyboard?.hook || "");
+  const closing = normalizeText(
+    `${storyboard?.scenes?.at(-1)?.title || ""} ${storyboard?.scenes?.at(-1)?.narration || ""} ${storyboard?.postCaption || ""}`
+  );
+
+  return MORALIZING_DIRECT_ADVICE_RE.test(opening) || MORALIZING_DIRECT_ADVICE_RE.test(closing);
+};
+
+const storyboardContainsConcreteDataPoint = (storyboard) => {
+  const combined = [
+    storyboard?.hook || "",
+    storyboard?.postCaption || "",
+    ...(storyboard?.scenes ?? []).map((scene) => `${scene?.narration || ""} ${scene?.overlay || ""}`)
+  ].join(" ");
+
+  return CONCRETE_DATA_RE.test(normalizeText(combined));
+};
+
+const hookContainsConcreteDataPoint = (storyboard) => {
+  return CONCRETE_DATA_RE.test(normalizeText(storyboard?.hook || ""));
 };
 
 const getStoryboardIssueList = ({storyboard, title}) => {
@@ -531,6 +718,9 @@ const getStoryboardIssueList = ({storyboard, title}) => {
   const titleLeakScenes = getTitleLeakScenes(storyboard, title);
   const crossTopicLeakScenes = getCrossTopicLeakScenes(storyboard, title);
   const offTopicQueryScenes = getOffTopicQueryScenes(storyboard, title);
+  const multiPanelQueryScenes = getMultiPanelQueryScenes(storyboard);
+  const multiSubjectSequenceQueryScenes = getMultiSubjectSequenceQueryScenes(storyboard);
+  const danglingSearchQueryScenes = getDanglingSearchQueryScenes(storyboard);
 
   if (deskLaptopScenes > 4) {
     issues.push(createQaFinding({
@@ -547,6 +737,48 @@ const getStoryboardIssueList = ({storyboard, title}) => {
       severity: "issue",
       message: `${textishQueries} searchQuery entries still imply readable interface text. Replace headlines, messages, links, emails, buttons, and form fields with blank panels, warning icons, lock symbols, or abstract alerts.`,
       details: {textishQueries}
+    }));
+  }
+
+  if (multiPanelQueryScenes.length > 0) {
+    issues.push(createQaFinding({
+      code: "multi_panel_search_query",
+      severity: "issue",
+      message: `Some searchQuery entries ask for split-screen, collage, or montage-style images that usually break single-frame generation: ${multiPanelQueryScenes
+        .map((scene) => `scene ${scene.index + 1} (${scene.title})`)
+        .join(", ")}. Rewrite them as one place, one main subject, and one action in a single coherent frame.`,
+      details: {
+        sceneIndexes: multiPanelQueryScenes.map((scene) => scene.index + 1),
+        sceneTitles: multiPanelQueryScenes.map((scene) => scene.title)
+      }
+    }));
+  }
+
+  if (multiSubjectSequenceQueryScenes.length > 0) {
+    issues.push(createQaFinding({
+      code: "multi_subject_sequence_query",
+      severity: "issue",
+      message: `Some searchQuery entries still describe a sequence, several people, or multiple device types inside one scene: ${multiSubjectSequenceQueryScenes
+        .map((scene) => `scene ${scene.index + 1} (${scene.title})`)
+        .join(", ")}. Rewrite them as one single coherent frame with one dominant subject, one place, and one main action.`,
+      details: {
+        sceneIndexes: multiSubjectSequenceQueryScenes.map((scene) => scene.index + 1),
+        sceneTitles: multiSubjectSequenceQueryScenes.map((scene) => scene.title)
+      }
+    }));
+  }
+
+  if (danglingSearchQueryScenes.length > 0) {
+    issues.push(createQaFinding({
+      code: "dangling_search_query",
+      severity: "issue",
+      message: `Some searchQuery entries still end in a dangling connector or incomplete descriptor: ${danglingSearchQueryScenes
+        .map((scene) => `scene ${scene.index + 1} (${scene.title})`)
+        .join(", ")}. Rewrite each query so it ends as one complete image description, not a clipped fragment.`,
+      details: {
+        sceneIndexes: danglingSearchQueryScenes.map((scene) => scene.index + 1),
+        sceneTitles: danglingSearchQueryScenes.map((scene) => scene.title)
+      }
     }));
   }
 
@@ -652,6 +884,9 @@ const getStoryboardIssueList = ({storyboard, title}) => {
 
 const BLOCKING_QA_CODES = new Set([
   "readable_interface_text_in_queries",
+  "multi_panel_search_query",
+  "multi_subject_sequence_query",
+  "dangling_search_query",
   "cross_topic_leak",
   "off_topic_search_query"
 ]);
@@ -714,9 +949,32 @@ export const evaluateStoryboardQa = ({
 
     if (!hasHardHookStatement(storyboard)) {
       viralScore -= 25;
-      addWarningFinding({
-        code: "viral_hook_not_accusatory",
-        message: "The hook still lacks a hard accusatory short-form opening. Rewrite the opening so it hits like a warning, mistake, or immediate danger instead of a soft explainer."
+      if (hookContainsConcreteDataPoint(storyboard)) {
+        addWarningFinding({
+          code: "viral_hook_could_hit_harder",
+          message: "The hook could hit harder for this channel. If possible, sharpen the contradiction or consequence in the opening."
+        });
+      } else {
+        addIssueFinding({
+          code: "viral_hook_not_accusatory",
+          message: "The hook still lacks a hard short-form opening built on irony, contradiction, or consequence. Rewrite it as a surprising factual statement instead of a soft explainer."
+        });
+      }
+    }
+
+    if (storyboardContainsConcreteDataPoint(storyboard) && !hookContainsConcreteDataPoint(storyboard)) {
+      viralScore -= 18;
+      addIssueFinding({
+        code: "viral_hook_missing_data_point",
+        message: "The script contains a strong concrete number or scale fact, but the hook does not use it. Rewrite the opening so it includes the strongest data point together with the irony or contradiction."
+      });
+    }
+
+    if (hasMoralizingHookOrEnding(storyboard)) {
+      viralScore -= 18;
+      addIssueFinding({
+        code: "viral_moralizing_direct_advice",
+        message: "The hook or ending drifts into direct advice, moral-of-the-story framing, or coach-style wording. Rewrite it so the irony and factual consequence speak for themselves without telling the viewer what lesson to take."
       });
     }
 
@@ -862,6 +1120,53 @@ const messagesToPrompt = (messages) => {
 };
 
 const MAX_SOURCE_TEXT_CHARACTERS = 12000;
+const STRUCTURED_SOURCE_SECTION_ALIASES = new Map([
+  ["titulo", "title"],
+  ["title", "title"],
+  ["headline", "title"],
+  ["base factual", "base_facts"],
+  ["fatos base", "base_facts"],
+  ["fatos", "base_facts"],
+  ["nota de precisao historica", "base_facts"],
+  ["nota de precisao", "base_facts"],
+  ["historical note", "base_facts"],
+  ["precision note", "base_facts"],
+  ["cronologia", "timeline"],
+  ["linha do tempo", "timeline"],
+  ["timeline", "timeline"],
+  ["numeros obrigatorios", "required_numbers"],
+  ["numeros obrigatorios e datas", "required_numbers"],
+  ["required numbers", "required_numbers"],
+  ["beats obrigatorios", "required_beats"],
+  ["momentos obrigatorios", "required_beats"],
+  ["beats", "required_beats"],
+  ["required beats", "required_beats"],
+  ["tom", "tone"],
+  ["tone", "tone"],
+  ["evitar", "avoid"],
+  ["avoid", "avoid"],
+  ["nao usar", "avoid"],
+  ["fechamento desejado", "desired_ending"],
+  ["ending desired", "desired_ending"],
+  ["closing desired", "desired_ending"],
+  ["fechamento", "desired_ending"],
+  ["cenas guia", "scene_beats"],
+  ["guia de cenas", "scene_beats"],
+  ["scene beats", "scene_beats"],
+  ["estrutura sugerida", "scene_beats"],
+  ["contexto extra", "extra_context"],
+  ["observacoes", "extra_context"],
+  ["extra context", "extra_context"]
+]);
+
+const normalizeStructuredSourceSectionKey = (value) =>
+  normalizeText(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
 const truncateSourceText = (value) => {
   const text = String(value ?? "").trim();
@@ -877,16 +1182,244 @@ const truncateSourceText = (value) => {
   return `${text.slice(0, MAX_SOURCE_TEXT_CHARACTERS).trim()}\n\n[Source material truncated for prompt size]`;
 };
 
+const parseStructuredNumberStrength = (value) => {
+  const text = normalizeText(value);
+  const matches = Array.from(text.matchAll(/\b(\d+(?:[.,]\d+)?)\b/g));
+
+  if (matches.length === 0) {
+    return 0;
+  }
+
+  const unitMultiplier =
+    /\btrilh(?:ao|ão|oes|ões)\b/i.test(text) ? 1e12
+    : /\bbilh(?:ao|ão|oes|ões)\b/i.test(text) ? 1e9
+    : /\bmilh(?:ao|ão|oes|ões)\b/i.test(text) ? 1e6
+    : /\bmil\b/i.test(text) ? 1e3
+    : 1;
+
+  return matches.reduce((maxValue, match) => {
+    const numericValue = Number.parseFloat(String(match[1] || "").replace(",", "."));
+    if (!Number.isFinite(numericValue)) {
+      return maxValue;
+    }
+
+    return Math.max(maxValue, numericValue * unitMultiplier);
+  }, 0);
+};
+
+const pickStrongestStructuredNumberLine = (items = []) => {
+  const ranked = items
+    .map((item) => ({
+      item,
+      strength: parseStructuredNumberStrength(item)
+    }))
+    .filter((entry) => entry.strength > 0)
+    .sort((left, right) => right.strength - left.strength);
+
+  return ranked[0]?.item || "";
+};
+
+const buildHookNumberFragment = (value) => {
+  const text = normalizeText(value);
+
+  if (!text) {
+    return "";
+  }
+
+  const splitFragment = text.split(/\s+[—-]\s+/)[0]?.trim() || text;
+  const fragment = splitFragment.replace(/[.;:!?]+$/g, "").trim();
+  return fragment ? `${fragment}.` : "";
+};
+
+const buildTitleContradictionFragment = (value) => {
+  const text = normalizeText(value).replace(/[.;:!?]+$/g, "").trim();
+  return text ? `${text}.` : "";
+};
+
+const extractStructuredSourceItems = (value) => {
+  const lines = String(value ?? "")
+    .split(/\r?\n/)
+    .map((line) =>
+      normalizeText(line)
+        .replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "")
+        .trim()
+    )
+    .filter(Boolean);
+
+  return lines.length > 0 ? lines : [normalizeText(value)];
+};
+
+const parseStructuredSourceText = (value) => {
+  const rawText = String(value ?? "").trim();
+
+  if (!rawText) {
+    return null;
+  }
+
+  const lines = rawText.split(/\r?\n/);
+  const sections = [];
+  const introChunks = [];
+  let currentKey = "";
+  let currentLabel = "";
+  let buffer = [];
+
+  const flush = () => {
+    const content = buffer.join("\n").trim();
+    buffer = [];
+
+    if (!content) {
+      return;
+    }
+
+    if (currentKey) {
+      sections.push({key: currentKey, label: currentLabel, content});
+    } else {
+      introChunks.push(content);
+    }
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const unwrapped = trimmed
+      .replace(/^\*\*(.*?)\*\*$/u, "$1")
+      .replace(/^__(.*?)__$/u, "$1")
+      .trim();
+    const match = trimmed.match(
+      /^(?:#{1,3}\s*)?(?:\[\s*([^\]]+?)\s*\]|([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9 _-]{1,48}))\s*:?\s*$/
+    ) || unwrapped.match(
+      /^(?:#{1,3}\s*)?(?:\[\s*([^\]]+?)\s*\]|([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9 _-]{1,48}))\s*:?\s*$/
+    );
+
+    if (match) {
+      const label = String(match[1] || match[2] || "").trim();
+      const canonicalKey = STRUCTURED_SOURCE_SECTION_ALIASES.get(normalizeStructuredSourceSectionKey(label));
+
+      if (canonicalKey) {
+        flush();
+        currentKey = canonicalKey;
+        currentLabel = label;
+        continue;
+      }
+    }
+
+    buffer.push(line);
+  }
+
+  flush();
+
+  if (sections.length < 1) {
+    return null;
+  }
+
+  const grouped = new Map();
+
+  for (const section of sections) {
+    const existing = grouped.get(section.key) || [];
+    grouped.set(section.key, [...existing, ...extractStructuredSourceItems(section.content)]);
+  }
+
+  return {
+    intro: introChunks.join("\n\n").trim(),
+    sections,
+    grouped
+  };
+};
+
 const buildCreativeContextLines = ({sourceText, scriptGuidance}) => {
   const lines = [];
   const normalizedGuidance = normalizeText(scriptGuidance);
+  const structuredSource = parseStructuredSourceText(sourceText);
   const preparedSourceText = truncateSourceText(sourceText);
 
   if (normalizedGuidance) {
     lines.push(`Creative guidance: ${normalizedGuidance}`);
   }
 
+  if (structuredSource) {
+    const getItems = (key) => (structuredSource.grouped.get(key) || []).slice(0, 12);
+    const titleItems = getItems("title");
+    const factItems = getItems("base_facts");
+    const timelineItems = getItems("timeline");
+    const requiredNumberItems = getItems("required_numbers");
+    const requiredBeatItems = getItems("required_beats");
+    const toneItems = getItems("tone");
+    const avoidItems = getItems("avoid");
+    const desiredEndingItems = getItems("desired_ending");
+    const sceneBeatItems = getItems("scene_beats");
+    const extraContextItems = getItems("extra_context");
+
+    lines.push("STRUCTURED SOURCE BRIEF DETECTED:");
+
+    if (titleItems.length > 0) {
+      lines.push(`Source title anchor: ${titleItems[0]}`);
+    }
+
+    if (factItems.length > 0) {
+      lines.push("Base factual anchors:");
+      lines.push(...factItems.map((item) => `- ${item}`));
+    }
+
+    if (timelineItems.length > 0) {
+      lines.push("Chronology anchors to preserve when relevant:");
+      lines.push(...timelineItems.map((item) => `- ${item}`));
+    }
+
+    if (requiredNumberItems.length > 0) {
+      lines.push("Required numbers and dates:");
+      lines.push(...requiredNumberItems.map((item) => `- ${item}`));
+      lines.push("Use the strongest required number or scale fact directly in the hook when it creates irony or contrast.");
+      const strongestNumberLine = pickStrongestStructuredNumberLine(requiredNumberItems);
+      if (strongestNumberLine) {
+        lines.push(`Preferred hook anchor: ${strongestNumberLine}`);
+        lines.push("Hook format preference: sentence 1 states the strongest number or scale fact; sentence 2 states the contradiction, refusal, or irony.");
+      }
+    }
+
+    if (requiredBeatItems.length > 0) {
+      lines.push("Required beats to preserve as concrete scenes or narration beats:");
+      lines.push(...requiredBeatItems.map((item) => `- ${item}`));
+      lines.push("Do not replace required beats with generic abstractions.");
+    }
+
+    if (toneItems.length > 0) {
+      lines.push(`Tone override: ${toneItems.join(" ")}`);
+    }
+
+    if (avoidItems.length > 0) {
+      lines.push("Avoid these patterns explicitly:");
+      lines.push(...avoidItems.map((item) => `- ${item}`));
+    }
+
+    if (desiredEndingItems.length > 0) {
+      lines.push(`Desired ending: ${desiredEndingItems.join(" ")}`);
+    }
+
+    if (sceneBeatItems.length > 0) {
+      lines.push("Optional scene guidance from the source brief:");
+      lines.push(...sceneBeatItems.map((item) => `- ${item}`));
+    }
+
+    if (extraContextItems.length > 0) {
+      lines.push("Additional context:");
+      lines.push(...extraContextItems.map((item) => `- ${item}`));
+    }
+
+    if (structuredSource.intro) {
+      lines.push("Intro context:");
+      lines.push(structuredSource.intro);
+    }
+
+    lines.push("Treat the structured brief above as higher priority than generic storytelling defaults.");
+    lines.push("If there is any conflict, preserve base facts, required numbers, required beats, tone, avoid-list, and desired ending.");
+    return lines;
+  }
+
   if (preparedSourceText) {
+    lines.push("STRICT SCRIPT ADHERENCE:");
+    lines.push("Do NOT invent generic scenes when source material is provided.");
+    lines.push("Extract the most human, ironic, surprising, and memorable beats directly from the source text.");
+    lines.push("Prefer specific actions and props from the source, such as a typed test string, a whispered warning, a note, a gesture, a terminal, or a single symbolic object that the script actually mentions.");
+    lines.push("If the source contains a tiny ironic detail, keep it. Those details are usually the best scenes.");
     lines.push("Use the source material below as the primary factual basis for the short video.");
     lines.push("Distill it into a native video script without inventing details that are not supported by the source.");
     lines.push("Source material:");
@@ -896,13 +1429,64 @@ const buildCreativeContextLines = ({sourceText, scriptGuidance}) => {
   return lines;
 };
 
+const enforceStructuredHookAnchors = ({storyboard, title, sourceText}) => {
+  const structuredSource = parseStructuredSourceText(sourceText);
+
+  if (!structuredSource) {
+    return storyboard;
+  }
+
+  const requiredNumberItems = (structuredSource.grouped.get("required_numbers") || []).slice(0, 12);
+  const strongestNumberLine = pickStrongestStructuredNumberLine(requiredNumberItems);
+
+  if (!strongestNumberLine) {
+    return storyboard;
+  }
+
+  if (hookContainsConcreteDataPoint(storyboard) && hasHardHookStatement(storyboard)) {
+    return storyboard;
+  }
+
+  const structuredTitle = (structuredSource.grouped.get("title") || [])[0] || title;
+  const numberFragment = buildHookNumberFragment(strongestNumberLine);
+  const titleFragment = buildTitleContradictionFragment(structuredTitle || title);
+  const rebuiltHook = clampTextAtSentenceBoundary(`${numberFragment} ${titleFragment}`.trim(), 220);
+
+  if (!rebuiltHook) {
+    return storyboard;
+  }
+
+  return {
+    ...storyboard,
+    hook: rebuiltHook
+  };
+};
+
+const normalizeStoryboardWithSource = (
+  input,
+  title,
+  language = "pt-BR",
+  sceneRange = DEFAULT_STORYBOARD_SCENE_RANGE,
+  desiredDurationSeconds = OUTPUT_PROFILE.defaultTargetSeconds,
+  sourceText = ""
+) =>
+  enforceStructuredHookAnchors({
+    storyboard: normalizeStoryboard(input, title, language, sceneRange, desiredDurationSeconds),
+    title,
+    sourceText
+  });
+
 export const resolveLlmProvider = (value) => {
   const normalized = String(value ?? process.env.LLM_PROVIDER ?? process.env.STORY_PROVIDER ?? "vertex")
     .trim()
     .toLowerCase();
 
-  if (["vertex", "vertexai", "gemini", "google"].includes(normalized)) {
+  if (["vertex", "vertexai"].includes(normalized)) {
     return "vertex";
+  }
+
+  if (["gemini", "google", "googleai"].includes(normalized)) {
+    return "gemini";
   }
 
   if (["codex", "openrouter", "kiro", "zai"].includes(normalized)) {
@@ -924,197 +1508,288 @@ const buildJsonRepairMessages = (rawText) => [
   }
 ];
 
-const fallbackScenes = (title, language = "pt-BR") => {
+const expandFallbackScenes = (baseScenes, desiredSceneCount) => {
+  const targetCount = Math.max(1, Number(desiredSceneCount) || baseScenes.length || 1);
+
+  return Array.from({length: targetCount}, (_, index) => {
+    const template = baseScenes[index % baseScenes.length] || baseScenes[0];
+    const cycle = Math.floor(index / baseScenes.length);
+
+    if (!template) {
+      return {
+        title: `Scene ${index + 1}`,
+        narration: "This scene keeps the topic moving with a concrete visual beat.",
+        searchQuery: "person using smartphone at home vertical",
+        overlay: "Scene"
+      };
+    }
+
+    if (cycle === 0) {
+      return template;
+    }
+
+    return {
+      ...template,
+      title: `${template.title} ${cycle + 1}`,
+      overlay: `${template.overlay} ${cycle + 1}`
+    };
+  });
+};
+
+const DEFAULT_AUDIO_PLAN = {
+  provider: "elevenlabs",
+  voiceName: "Liam",
+  voiceId: "TX3LPaxmHKxFdv7VOQHJ",
+  modelId: "eleven_multilingual_v2",
+  voiceStyle:
+    "Pt-BR documentary short-form delivery: engaged, warm, fast, curious, slightly ironic, with crisp diction and natural pauses for high-retention narration."
+};
+
+const formatSceneCountInstruction = (sceneRange, verb = "Create") =>
+  sceneRange.minScenes === sceneRange.maxScenes
+    ? `${verb} exactly ${sceneRange.minScenes} scenes.`
+    : `${verb} ${sceneRange.minScenes} to ${sceneRange.maxScenes} scenes.`;
+
+const sanitizeEnglishImagePrompt = (value) =>
+  normalizeText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7E]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const buildDefaultImagePrompt = (scene = {}) => {
+  const exactFrame = sanitizeEnglishSearchQuery(scene.searchQuery || scene.visualGoal || scene.title || "person reacting to a surprising technology story");
+  const visualTitle = sanitizeEnglishImagePrompt(scene.title || "short documentary scene");
+
+  return clampTextAtSentenceBoundary(
+    [
+      `Vertical 9:16 image for a fast-paced documentary short about ${visualTitle}.`,
+      `${exactFrame}.`,
+      "One clear focal subject, one concrete physical action, one specific real-world setting, strong foreground detail, mobile-first composition, varied camera angle, directional lighting, high contrast, editorial documentary mood, consistent illustration style, clean space for captions, readable at phone size, no readable text, logos, watermarks, UI labels, charts, collage, or split screen."
+    ].join(" "),
+    1200
+  );
+};
+
+const normalizeImagePrompts = (scene = {}, backup = {}) => {
+  const prompts = Array.isArray(scene?.imagePrompts)
+    ? scene.imagePrompts
+        .map((prompt) => clampTextAtSentenceBoundary(sanitizeEnglishImagePrompt(prompt), 1200))
+        .filter((prompt) => prompt.length >= 40)
+    : [];
+
+  if (prompts.length > 0) {
+    return prompts.slice(0, 4);
+  }
+
+  return [buildDefaultImagePrompt({...backup, ...scene})];
+};
+
+const normalizeAudioPlan = (audio = {}) => {
+  const provider = normalizeText(audio?.provider) || DEFAULT_AUDIO_PLAN.provider;
+  const voiceName = normalizeText(audio?.voiceName || audio?.voice || audio?.name) || DEFAULT_AUDIO_PLAN.voiceName;
+  const voiceId = normalizeText(audio?.voiceId) || DEFAULT_AUDIO_PLAN.voiceId;
+  const modelId = normalizeText(audio?.modelId) || DEFAULT_AUDIO_PLAN.modelId;
+  const voiceStyle = clampTextAtSentenceBoundary(audio?.voiceStyle || audio?.style || DEFAULT_AUDIO_PLAN.voiceStyle, 320);
+
+  return {
+    provider,
+    voiceName,
+    voiceId,
+    modelId,
+    voiceStyle
+  };
+};
+
+const fallbackScenes = (title, language = "pt-BR", desiredSceneCount = DEFAULT_STORYBOARD_SCENE_RANGE.maxScenes) => {
   const topic = cleanTopic(title) || title;
   const english = isEnglishLanguage(language);
+  const baseScenes = english
+    ? [
+        {
+          title: "Hook",
+          narration: `Living alone can look calm from the outside, but inside the room the silence starts to feel heavier every night.`,
+          searchQuery: "person sitting alone on bed in small apartment at night vertical",
+          overlay: "Living alone"
+        },
+        {
+          title: "Morning",
+          narration: "Meanwhile, the day begins without anyone saying good morning, and even the kitchen feels colder than it should.",
+          searchQuery: "person alone in kitchen making coffee in quiet apartment morning vertical",
+          overlay: "Quiet morning"
+        },
+        {
+          title: "Phone",
+          narration: "Now, the phone lights up again, but most messages are work alerts, ads, or something that means nothing.",
+          searchQuery: "close up smartphone with notifications in lonely apartment vertical",
+          overlay: "Empty notifications"
+        },
+        {
+          title: "Meals",
+          narration: "In practice, eating alone every day turns dinner into a routine with no conversation, no laughter, and no pause.",
+          searchQuery: "person eating dinner alone at small table in apartment vertical",
+          overlay: "Dinner alone"
+        },
+        {
+          title: "Work",
+          narration: "But, when the workday ends, there is no one on the other side asking how your day really went.",
+          searchQuery: "person closing laptop alone after work at home vertical",
+          overlay: "After work"
+        },
+        {
+          title: "Weekend",
+          narration: "And this is where the sadness gets sharper, because weekends create empty hours that stretch across the whole room.",
+          searchQuery: "person alone on couch looking around quiet apartment weekend vertical",
+          overlay: "Long weekend"
+        },
+        {
+          title: "Memories",
+          narration: "And in the middle of all this, old photos, voice notes, and familiar songs can pull the chest back into places that no longer exist.",
+          searchQuery: "person holding phone with old photos while sitting alone at home vertical",
+          overlay: "Memories"
+        },
+        {
+          title: "Routine",
+          narration: "But look, the hardest part is not always crying, because sometimes it is acting normal while everything feels emotionally muted.",
+          searchQuery: "person quietly folding laundry alone with distant expression vertical",
+          overlay: "Muted feelings"
+        },
+        {
+          title: "Night",
+          narration: "And it does not stop there, because nighttime makes every sound louder and every unanswered thought harder to escape.",
+          searchQuery: "person awake at night in dark bedroom alone vertical",
+          overlay: "Night thoughts"
+        },
+        {
+          title: "Comparison",
+          narration: "The most interesting part is that social media can make the loneliness worse, showing full tables, couples, and crowded rooms while you scroll in silence.",
+          searchQuery: "person scrolling social media alone in dark room vertical",
+          overlay: "Comparison"
+        },
+        {
+          title: "Body",
+          narration: "And you know what else? The body feels it too, with tired eyes, low energy, and a strange heaviness that follows the whole day.",
+          searchQuery: "close up tired person alone by window in apartment vertical",
+          overlay: "The body feels it"
+        },
+        {
+          title: "Truth",
+          narration: "The problem is that people often confuse living alone with being strong, when sometimes it is simply surviving one quiet day after another.",
+          searchQuery: "person standing alone by window looking outside reflective vertical",
+          overlay: "Hidden weight"
+        },
+        {
+          title: "Relief",
+          narration: "But wait, healing can begin in small ways, like calling one friend, leaving the house, or letting somebody know the silence is hurting.",
+          searchQuery: "person making phone call for support while alone at home vertical",
+          overlay: "Small relief"
+        },
+        {
+          title: "Close",
+          narration: "There is more, because living alone does not need to become emotional exile when connection is rebuilt one honest step at a time.",
+          searchQuery: "person stepping outside apartment into daylight hopeful vertical",
+          overlay: "One step at a time"
+        }
+      ]
+    : [
+        {
+          title: "Hook",
+          narration: `Se você quer entender ${topic}, começa por uma imagem simples: a tecnologia já está entrando na rotina sem pedir licença.`,
+          searchQuery: "person using smartphone at home vertical",
+          overlay: "Atenção"
+        },
+        {
+          title: "Primeiro sinal",
+          narration: "Ao mesmo tempo, o primeiro sinal aparece no bolso, porque o celular virou mapa, banco, agenda e balcão de atendimento na mesma tela.",
+          searchQuery: "person checking smartphone app vertical",
+          overlay: "No bolso"
+        },
+        {
+          title: "Trabalho",
+          narration: "Só que essa mudança não fica no celular. Ela entra no trabalho, acelera tarefas repetidas e muda o ritmo de equipes inteiras.",
+          searchQuery: "office team using laptops vertical",
+          overlay: "No trabalho"
+        },
+        {
+          title: "Compras",
+          narration: "Agora isso também aparece nas compras, com recomendações, pagamentos rápidos e entregas que parecem quase instantâneas.",
+          searchQuery: "woman paying with smartphone in store vertical",
+          overlay: "Nas compras"
+        },
+        {
+          title: "Saúde",
+          narration: "E na saúde o efeito fica ainda mais claro, porque sensores, exames digitais e acompanhamento remoto já começam a encurtar distâncias.",
+          searchQuery: "doctor using tablet with patient vertical",
+          overlay: "Na saúde"
+        },
+        {
+          title: "Casa",
+          narration: "Ao mesmo tempo, a casa deixa de ser só casa e passa a responder a comandos, horários e preferências quase sem esforço.",
+          searchQuery: "smart home woman using phone vertical",
+          overlay: "Em casa"
+        },
+        {
+          title: "Cidade",
+          narration: "Na rua, o impacto chega no trânsito, na energia e na forma como as cidades tentam funcionar com mais precisão.",
+          searchQuery: "smart city traffic aerial vertical",
+          overlay: "Na cidade"
+        },
+        {
+          title: "Educação",
+          narration: "Só que a mudança também passa pelo aprendizado, porque estudar deixou de depender de um único lugar ou de um único horário.",
+          searchQuery: "student studying on laptop at home vertical",
+          overlay: "Aprender"
+        },
+        {
+          title: "Comunicação",
+          narration: "Agora até conversar mudou, com tradução, resumo, pesquisa e organização a acontecer em segundos dentro das mesmas apps.",
+          searchQuery: "person video calling on phone vertical",
+          overlay: "Conversar"
+        },
+        {
+          title: "Segurança",
+          narration: "E é aqui que surge o alerta: quanto mais sistemas entendem hábitos, mais importante fica proteger dados e acessos.",
+          searchQuery: "person enabling phone security vertical",
+          overlay: "Alerta"
+        },
+        {
+          title: "Mercado",
+          narration: "No mercado, isso separa quem testa cedo de quem chega atrasado, porque a vantagem passa a ser adaptação rápida.",
+          searchQuery: "business meeting with screen data vertical",
+          overlay: "Mercado"
+        },
+        {
+          title: "Rotina",
+          narration: "Ao mesmo tempo, a rotina muda em detalhes pequenos, como pedir transporte, marcar consulta ou resolver documentos sem filas longas.",
+          searchQuery: "person booking service on smartphone vertical",
+          overlay: "Rotina"
+        },
+        {
+          title: "Pessoas",
+          narration: "Só que nada disso funciona de verdade sem pessoas, porque a tecnologia só ganha valor quando resolve dor real do dia a dia.",
+          searchQuery: "close up person smiling using phone vertical",
+          overlay: "Pessoas"
+        },
+        {
+          title: "Fecho",
+          narration: `Por isso, ${topic} não é sobre ficção distante. É sobre mudanças silenciosas que começam pequenas e, quando se nota, já viraram normalidade.`,
+          searchQuery: "content creator talking to camera vertical",
+          overlay: "Novo normal"
+        }
+      ];
 
-  if (english) {
-    return [
-      {
-        title: "Hook",
-        narration: `Living alone can look calm from the outside, but inside the room the silence starts to feel heavier every night.`,
-        searchQuery: "person sitting alone on bed in small apartment at night vertical",
-        overlay: "Living alone"
-      },
-      {
-        title: "Morning",
-        narration: "Meanwhile, the day begins without anyone saying good morning, and even the kitchen feels colder than it should.",
-        searchQuery: "person alone in kitchen making coffee in quiet apartment morning vertical",
-        overlay: "Quiet morning"
-      },
-      {
-        title: "Phone",
-        narration: "Now, the phone lights up again, but most messages are work alerts, ads, or something that means nothing.",
-        searchQuery: "close up smartphone with notifications in lonely apartment vertical",
-        overlay: "Empty notifications"
-      },
-      {
-        title: "Meals",
-        narration: "In practice, eating alone every day turns dinner into a routine with no conversation, no laughter, and no pause.",
-        searchQuery: "person eating dinner alone at small table in apartment vertical",
-        overlay: "Dinner alone"
-      },
-      {
-        title: "Work",
-        narration: "But, when the workday ends, there is no one on the other side asking how your day really went.",
-        searchQuery: "person closing laptop alone after work at home vertical",
-        overlay: "After work"
-      },
-      {
-        title: "Weekend",
-        narration: "And this is where the sadness gets sharper, because weekends create empty hours that stretch across the whole room.",
-        searchQuery: "person alone on couch looking around quiet apartment weekend vertical",
-        overlay: "Long weekend"
-      },
-      {
-        title: "Memories",
-        narration: "And in the middle of all this, old photos, voice notes, and familiar songs can pull the chest back into places that no longer exist.",
-        searchQuery: "person holding phone with old photos while sitting alone at home vertical",
-        overlay: "Memories"
-      },
-      {
-        title: "Routine",
-        narration: "But look, the hardest part is not always crying, because sometimes it is acting normal while everything feels emotionally muted.",
-        searchQuery: "person quietly folding laundry alone with distant expression vertical",
-        overlay: "Muted feelings"
-      },
-      {
-        title: "Night",
-        narration: "And it does not stop there, because nighttime makes every sound louder and every unanswered thought harder to escape.",
-        searchQuery: "person awake at night in dark bedroom alone vertical",
-        overlay: "Night thoughts"
-      },
-      {
-        title: "Comparison",
-        narration: "The most interesting part is that social media can make the loneliness worse, showing full tables, couples, and crowded rooms while you scroll in silence.",
-        searchQuery: "person scrolling social media alone in dark room vertical",
-        overlay: "Comparison"
-      },
-      {
-        title: "Body",
-        narration: "And you know what else? The body feels it too, with tired eyes, low energy, and a strange heaviness that follows the whole day.",
-        searchQuery: "close up tired person alone by window in apartment vertical",
-        overlay: "The body feels it"
-      },
-      {
-        title: "Truth",
-        narration: "The problem is that people often confuse living alone with being strong, when sometimes it is simply surviving one quiet day after another.",
-        searchQuery: "person standing alone by window looking outside reflective vertical",
-        overlay: "Hidden weight"
-      },
-      {
-        title: "Relief",
-        narration: "But wait, healing can begin in small ways, like calling one friend, leaving the house, or letting somebody know the silence is hurting.",
-        searchQuery: "person making phone call for support while alone at home vertical",
-        overlay: "Small relief"
-      },
-      {
-        title: "Close",
-        narration: "There is more, because living alone does not need to become emotional exile when connection is rebuilt one honest step at a time.",
-        searchQuery: "person stepping outside apartment into daylight hopeful vertical",
-        overlay: "One step at a time"
-      }
-    ].map((scene) => ({
+  return expandFallbackScenes(
+    baseScenes.map((scene) => ({
       ...scene,
       searchQuery: normalizeText(scene.searchQuery)
         .replace(/\b(vertical|portrait)\b/gi, "")
         .replace(/\s+/g, " ")
-        .trim()
-    }));
-  }
-
-  return [
-  {
-    title: "Hook",
-    narration: `Se você quer entender ${topic}, começa por uma imagem simples: a tecnologia já está entrando na rotina sem pedir licença.`,
-    searchQuery: "person using smartphone at home vertical",
-    overlay: "Atenção"
-  },
-  {
-    title: "Primeiro sinal",
-    narration: "Ao mesmo tempo, o primeiro sinal aparece no bolso, porque o celular virou mapa, banco, agenda e balcão de atendimento na mesma tela.",
-    searchQuery: "person checking smartphone app vertical",
-    overlay: "No bolso"
-  },
-  {
-    title: "Trabalho",
-    narration: "Só que essa mudança não fica no celular. Ela entra no trabalho, acelera tarefas repetidas e muda o ritmo de equipes inteiras.",
-    searchQuery: "office team using laptops vertical",
-    overlay: "No trabalho"
-  },
-  {
-    title: "Compras",
-    narration: "Agora isso também aparece nas compras, com recomendações, pagamentos rápidos e entregas que parecem quase instantâneas.",
-    searchQuery: "woman paying with smartphone in store vertical",
-    overlay: "Nas compras"
-  },
-  {
-    title: "Saúde",
-    narration: "E na saúde o efeito fica ainda mais claro, porque sensores, exames digitais e acompanhamento remoto já começam a encurtar distâncias.",
-    searchQuery: "doctor using tablet with patient vertical",
-    overlay: "Na saúde"
-  },
-  {
-    title: "Casa",
-    narration: "Ao mesmo tempo, a casa deixa de ser só casa e passa a responder a comandos, horários e preferências quase sem esforço.",
-    searchQuery: "smart home woman using phone vertical",
-    overlay: "Em casa"
-  },
-  {
-    title: "Cidade",
-    narration: "Na rua, o impacto chega no trânsito, na energia e na forma como as cidades tentam funcionar com mais precisão.",
-    searchQuery: "smart city traffic aerial vertical",
-    overlay: "Na cidade"
-  },
-  {
-    title: "Educação",
-    narration: "Só que a mudança também passa pelo aprendizado, porque estudar deixou de depender de um único lugar ou de um único horário.",
-    searchQuery: "student studying on laptop at home vertical",
-    overlay: "Aprender"
-  },
-  {
-    title: "Comunicação",
-    narration: "Agora até conversar mudou, com tradução, resumo, pesquisa e organização a acontecer em segundos dentro das mesmas apps.",
-    searchQuery: "person video calling on phone vertical",
-    overlay: "Conversar"
-  },
-  {
-    title: "Segurança",
-    narration: "E é aqui que surge o alerta: quanto mais sistemas entendem hábitos, mais importante fica proteger dados e acessos.",
-    searchQuery: "person enabling phone security vertical",
-    overlay: "Alerta"
-  },
-  {
-    title: "Mercado",
-    narration: "No mercado, isso separa quem testa cedo de quem chega atrasado, porque a vantagem passa a ser adaptação rápida.",
-    searchQuery: "business meeting with screen data vertical",
-    overlay: "Mercado"
-  },
-  {
-    title: "Rotina",
-    narration: "Ao mesmo tempo, a rotina muda em detalhes pequenos, como pedir transporte, marcar consulta ou resolver documentos sem filas longas.",
-    searchQuery: "person booking service on smartphone vertical",
-    overlay: "Rotina"
-  },
-  {
-    title: "Pessoas",
-    narration: "Só que nada disso funciona de verdade sem pessoas, porque a tecnologia só ganha valor quando resolve dor real do dia a dia.",
-    searchQuery: "close up person smiling using phone vertical",
-    overlay: "Pessoas"
-  },
-  {
-    title: "Fecho",
-    narration: `Por isso, ${topic} não é sobre ficção distante. É sobre mudanças silenciosas que começam pequenas e, quando se nota, já viraram normalidade.`,
-    searchQuery: "content creator talking to camera vertical",
-    overlay: "Novo normal"
-  }
-].map((scene) => ({
-  ...scene,
-  searchQuery: normalizeText(scene.searchQuery)
-    .replace(/\b(vertical|portrait)\b/gi, "")
-    .replace(/\s+/g, " ")
-    .trim()
-}));
+        .trim(),
+      imagePrompts: normalizeImagePrompts(scene, scene)
+    })),
+    desiredSceneCount
+  );
 };
 
 const ensureHashtags = (hashtags) => {
@@ -1130,16 +1805,29 @@ const ensureHashtags = (hashtags) => {
   return normalized.length >= 3 ? normalized.slice(0, 8) : null;
 };
 
-const normalizeStoryboard = (input, title, language = "pt-BR") => {
-  const fallback = fallbackStoryboard(title, language);
+const normalizeStoryboard = (
+  input,
+  title,
+  language = "pt-BR",
+  sceneRange = DEFAULT_STORYBOARD_SCENE_RANGE,
+  desiredDurationSeconds = OUTPUT_PROFILE.defaultTargetSeconds
+) => {
+  const fallback = fallbackStoryboard(
+    title,
+    language,
+    Math.max(sceneRange.minScenes, getRecommendedSceneCountForDuration(OUTPUT_PROFILE.id, desiredDurationSeconds))
+  );
   const sourceScenes = Array.isArray(input?.scenes) ? input.scenes : fallback.scenes;
-  const scenes = sourceScenes.slice(0, MAX_SCENES).map((scene, index) => {
+  const scenes = sourceScenes.slice(0, sceneRange.maxScenes).map((scene, index) => {
     const backup = fallback.scenes[index % fallback.scenes.length];
+    const searchQuery =
+      clampTextAtWordBoundary(sanitizeEnglishSearchQuery(scene?.searchQuery), SEARCH_QUERY_MAX_LENGTH) ||
+      backup.searchQuery;
 
     return {
       title: clampText(scene?.title, 80) || backup.title,
       narration: clampText(sanitizeNarrationLine(scene?.narration, backup.narration), 520),
-      searchQuery: clampText(sanitizeEnglishSearchQuery(scene?.searchQuery), 140) || backup.searchQuery,
+      searchQuery,
       overlay: clampText(
         pickSceneOverlay({
           overlay: scene?.overlay,
@@ -1148,17 +1836,19 @@ const normalizeStoryboard = (input, title, language = "pt-BR") => {
           fallbackOverlay: backup.overlay
         }),
         80
-      ) || backup.overlay
+      ) || backup.overlay,
+      imagePrompts: normalizeImagePrompts(scene, {...backup, searchQuery})
     };
   });
 
-  while (scenes.length < MIN_SCENES) {
+  while (scenes.length < sceneRange.minScenes) {
     const backup = fallback.scenes[scenes.length % fallback.scenes.length];
     scenes.push({
       title: backup.title,
       narration: backup.narration,
       searchQuery: backup.searchQuery,
-      overlay: backup.overlay
+      overlay: backup.overlay,
+      imagePrompts: normalizeImagePrompts(backup, backup)
     });
   }
 
@@ -1168,11 +1858,15 @@ const normalizeStoryboard = (input, title, language = "pt-BR") => {
     postCaption: clampText(input?.postCaption, 500) || fallback.postCaption,
     hashtags: ensureHashtags(input?.hashtags) || fallback.hashtags,
     cta: clampText(input?.cta, 120),
-    scenes: scenes.length >= MIN_SCENES ? scenes : fallback.scenes
+    audio: normalizeAudioPlan(input?.audio || fallback.audio),
+    thumbnailPrompt: clampTextAtSentenceBoundary(input?.thumbnailPrompt, 2000) || "",
+    scenes: scenes.length >= sceneRange.minScenes ? scenes : fallback.scenes
   };
 };
 
-export const fallbackStoryboard = (title, language = "pt-BR") => {
+export const fallbackStoryboard = (title, language = "pt-BR", desiredSceneCount = DEFAULT_STORYBOARD_SCENE_RANGE.maxScenes) => {
+  const safeSceneCount = Math.max(1, Number(desiredSceneCount) || DEFAULT_STORYBOARD_SCENE_RANGE.maxScenes);
+
   if (isEnglishLanguage(language)) {
     return {
       videoTitle: title,
@@ -1186,7 +1880,9 @@ export const fallbackStoryboard = (title, language = "pt-BR") => {
           ? ["#loneliness", "#livingalone", "#mentalhealth", "#youtube"]
           : ["#loneliness", "#livingalone", "#mentalhealth", "#shorts"],
       cta: "",
-      scenes: fallbackScenes(title, language)
+      audio: DEFAULT_AUDIO_PLAN,
+      thumbnailPrompt: "",
+      scenes: fallbackScenes(title, language, safeSceneCount)
     };
   }
 
@@ -1198,11 +1894,13 @@ export const fallbackStoryboard = (title, language = "pt-BR") => {
         : "Se o seu vídeo não prende nos primeiros segundos, você já perdeu boa parte da audiência.",
     postCaption: `Um formato simples e barato para transformar ${title} num ${OUTPUT_PROFILE.layout === "horizontal" ? "vídeo longo" : "short"} que parece nativo da plataforma.`,
     hashtags:
-      OUTPUT_PROFILE.layout === "horizontal"
-        ? ["#youtube", "#video", "#conteudo", "#criadores"]
-        : ["#tiktoktips", "#shorts", "#reels", "#conteudo"],
+        OUTPUT_PROFILE.layout === "horizontal"
+          ? ["#youtube", "#video", "#conteudo", "#criadores"]
+          : ["#tiktoktips", "#shorts", "#reels", "#conteudo"],
     cta: "",
-    scenes: fallbackScenes(title, language)
+    audio: DEFAULT_AUDIO_PLAN,
+    thumbnailPrompt: "",
+    scenes: fallbackScenes(title, language, safeSceneCount)
   };
 };
 
@@ -1448,13 +2146,14 @@ const callVertexGemini = async ({model, messages, jsonMode = false, responseSche
           generationConfig: withThinkingDisabled(
             jsonMode
               ? {
-                temperature: 0,
-                responseMimeType: "application/json",
-                ...(responseSchema ? {responseSchema} : {})
-              }
+                  temperature: 0,
+                  responseMimeType: "application/json",
+                  ...(responseSchema ? {responseSchema} : {})
+                }
               : {
-                temperature: 0
-              }
+                  temperature: 0
+                },
+            selectedModel
           )
         }),
         signal
@@ -1518,6 +2217,7 @@ const parseVertexJson = async ({text, model}) => {
 const callGemini = async ({apiKey, model, messages, jsonMode = false, responseSchema, usageContext = "unspecified"}) => {
   const systemParts = [];
   const userParts = [];
+  const sanitizedResponseSchema = responseSchema ? sanitizeGeminiResponseSchema(responseSchema) : undefined;
 
   for (const msg of messages) {
     const text = Array.isArray(msg.content)
@@ -1545,15 +2245,18 @@ const callGemini = async ({apiKey, model, messages, jsonMode = false, responseSc
           body: JSON.stringify({
             systemInstruction: systemParts.length > 0 ? {parts: [{text: systemParts.join("\n\n")}]} : undefined,
             contents: [{parts: [{text: userParts.join("\n\n")}]}],
-            generationConfig: jsonMode
-              ? {
-                  temperature: 0,
-                  responseMimeType: "application/json",
-                  ...(responseSchema ? {responseSchema} : {})
-                }
-              : {
-                  temperature: 0
-                }
+            generationConfig: withThinkingDisabled(
+              jsonMode
+                ? {
+                    temperature: 0,
+                    responseMimeType: "application/json",
+                    ...(sanitizedResponseSchema ? {responseSchema: sanitizedResponseSchema} : {})
+                  }
+                : {
+                    temperature: 0
+                  },
+              model
+            )
           }),
           signal
         }
@@ -1689,12 +2392,21 @@ const requestedShape = JSON.stringify({
   postCaption: "string",
   hashtags: ["#one", "#two", "#three"],
   cta: "string",
+  audio: {
+    provider: "elevenlabs",
+    voiceName: "Liam",
+    voiceId: "TX3LPaxmHKxFdv7VOQHJ",
+    modelId: "eleven_multilingual_v2",
+    voiceStyle: "string"
+  },
+  thumbnailPrompt: "string",
   scenes: [
     {
       title: "string",
       narration: "string",
       searchQuery: "string",
-      overlay: "string"
+      overlay: "string",
+      imagePrompts: ["string"]
     }
   ]
 });
@@ -1799,11 +2511,12 @@ const buildVisualStyleGuidance = (imageStyleHint) => {
 
 const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourceText, scriptGuidance, imageStyleHint}) => {
   const visualStyle = buildVisualStyleGuidance(imageStyleHint);
+  const sceneRange = getStoryboardSceneRange(desiredDurationSeconds);
   return [
-  {
-    role: "system",
-    content:
-      `Return valid JSON only. Do not include markdown. If the language is pt-BR, write only in Brazilian Portuguese and avoid European Portuguese wording. ${buildFormatGuidance()} Writing style rules: write as if you are a friend explaining something fascinating to the viewer. Use short punchy sentences, one idea per sentence. Each sentence must describe something visually concrete that an illustration can show. Use surprising facts and numbers to hook attention. If you use rhetorical questions, use them sparingly and never as the opening hook. Avoid abstract or philosophical sentences that have no clear visual representation. Every narration line must paint a picture the viewer can see. Prefer present tense and direct address using voce. Never depend on sci-fi, CGI, Mars rovers, impossible quantum-computer shots, abstract holograms, or lab concepts that are hard to illustrate.`
+    {
+      role: "system",
+      content:
+      `Return valid JSON only. Do not include markdown. If the language is pt-BR, write only in Brazilian Portuguese and avoid European Portuguese wording. ${buildFormatGuidance()} Writing style rules: write as if you are a friend telling a fascinating true story to the viewer. Use short punchy sentences, one idea per sentence. Each sentence must describe something visually concrete that an illustration can show. Use surprising facts and numbers to hook attention. If you use rhetorical questions, use them sparingly and never as the opening hook. Avoid abstract or philosophical sentences that have no clear visual representation. Every narration line must paint a picture the viewer can see. Prefer present tense. Use direct address sparingly, and never turn the script into advice, coaching, or a self-help lesson. Never depend on sci-fi, CGI, Mars rovers, impossible quantum-computer shots, abstract holograms, or lab concepts that are hard to illustrate. Every scene must include imagePrompts with at least one highly detailed image-generation prompt.`
   },
   {
     role: "user",
@@ -1817,10 +2530,19 @@ const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourc
       `Language: ${language}`,
       `Title: ${title}`,
       `Target duration: around ${desiredDurationSeconds || 100} seconds.`,
-      `Create a video plan with ${MIN_SCENES} to ${MAX_SCENES} scenes.`,
+      formatSceneCountInstruction(sceneRange, "Create"),
+      "For a 60-second vertical Short, the default structure is exactly 12 fast-paced scenes: hook, context, fear/conflict, mechanism, resistance, first validation, adoption, backlash, turning point, consequence, today contrast, payoff.",
       "Each searchQuery must use ASCII English only: plain Latin letters, numbers, spaces, and hyphens. Never mix Portuguese, Chinese, emojis, or non-Latin characters.",
+      "Every scene must include imagePrompts with 1 to 4 English prompts. Each image prompt must be optimized for AI image generation and include: subject, action, setting, composition/framing, camera angle or lens language, lighting, visual style/material, mood, mobile 9:16 readability, and negative constraints for text/logos/watermarks.",
+      NO_ENGLISH_VISUAL_TEXT_RULE,
+      BLANK_UI_VISUAL_RULE,
+      "imagePrompts must be more detailed than searchQuery. searchQuery is a compact stock/image lookup; imagePrompts is the direct image-generation prompt.",
+      "Each image prompt must describe one coherent frame only. Do not cram a sequence, multiple locations, collage, split-screen, charts, UI labels, or readable text into one prompt.",
+      "The audio object must specify ElevenLabs with the locked short-form voice Liam: provider elevenlabs, voiceName Liam, voiceId TX3LPaxmHKxFdv7VOQHJ, modelId eleven_multilingual_v2, and a short voiceStyle for fast, high-retention short-form storytelling.",
       "Each searchQuery must avoid readable text inside devices, interfaces, signs, emails, buttons, documents, or alerts. Never write phrases like 'Access Denied', 'Update Now', 'error message', headlines, notification copy, button labels, links on screen, or form fields. Describe blank panels, warning icons, abstract alerts, or lock symbols instead.",
       "Never include literal button labels or quoted UI words like 'Update', 'Login', 'Verify', or 'Allow' in any searchQuery.",
+      "Never ask for split-screen, collage, triptych, montage, or several disconnected countries or rooms inside one generated image. One frame must show one place, one main subject, and one action.",
+      "Never describe a sequence, several people, or multiple device types inside one searchQuery. Avoid phrases like 'sequence of different people', 'hands on keyboards smartphones and tablets', or 'many users at once'.",
       "Set cta to an empty string.",
       "Do not start scenes with filler connectors like 'Só que', 'Mas olha só', 'Ao mesmo tempo', 'Agora' or 'Na prática'.",
 
@@ -1832,8 +2554,11 @@ const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourc
       "The narration must flow like one continuous voiceover without forced transition crutches.",
       "Never start a scene with loose continuation fragments like 'ou um menu', 'e uma tela', 'mas um detalhe' or any other incomplete phrase.",
       "Avoid robotic list formatting. Make it sound like one person is guiding the viewer from one idea to the next.",
-      "Use a strong practical hook, but do not include CTA in the narration.",
-      "The hook must be a sharp, provocative statement that creates immediate curiosity — never a generic intro or a question. Use a before-and-after contrast, a surprising reversal, or a bold accusation. Example patterns: 'X era uma piada... agora domina o planeta', 'Disseram que X nunca ia funcionar... estavam muito errados', 'X parecia impossível... até alguém provar o contrário'. The hook must make the viewer feel they will miss something important if they scroll away.",
+      "Use a strong factual hook, but do not include CTA in the narration.",
+      "The hook must be a sharp, surprising statement that creates immediate curiosity — never a generic intro, a question, a lecture, or direct advice to the viewer. Use irony, contradiction, a before-and-after contrast, or a surprising reversal. Example patterns: 'X parecia ridiculo... hoje domina tudo', 'A coisa mais banal virou a engrenagem do mundo', 'Chamaram X de inutil... e estavam olhando para a proxima revolucao'.",
+      "When the source material contains a concrete number, date, scale metric, or hard fact, use the strongest one in the hook together with the core irony or contradiction.",
+      "Do not end the hook or the final scene with moral-of-the-story wording, self-help framing, or lessons directed at the viewer. Let the ironic fact or consequence land by itself.",
+      "Do not drop memorable source beats like typed test strings, throwaway lines, tiny notes, whispered reactions, or awkward human details when the source material includes them.",
 
       // --- VISUAL STYLE ---
       `The visual style is ${visualStyle.styleDescription}`,
@@ -1850,14 +2575,39 @@ const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourc
       "Avoid scene plans that become one abstract category per scene.",
       "Do not inject unrelated generic tech filler such as translation, summaries, research, app workflows, organization features, AI capabilities, or browser habits unless the title or source material is explicitly about that subtopic.",
 
+      // --- RETENTION, HOOK & LOOP (engagement, SPEC v2) ---
+      "HOOK decided in under 1 second: the first scene must open with a visual jolt and a first spoken line that is an incomplete or shocking statement opening a curiosity gap. No greeting, no channel intro, no slow build. The opening words must carry the single most surprising true fact or sharpest contradiction of the whole story.",
+      "FACT INTEGRITY: never state an urban legend or unverified myth as fact. If a striking claim is actually a popular myth, reframe it to the closest defensible truth. The hook must be literally true — a hook that lies wins the first 3 seconds but kills completion and earns negative comments.",
+      "LOOP / CALLBACK (replays are the strongest ranking signal): the final scene's last narration line must be a callback that gives the opening line new meaning, so a viewer who restarts feels the beginning now explains the end. The last visual must echo the opening/thumbnail composition (same recurring character or framing). Never end on a generic or moral closer.",
+      "RETENTION DENSITY: every scene must end on a micro-curiosity that pulls the viewer into the next one. Place one mid-video spike — the single most shocking number or reversal — around the middle to re-grab attention. Use at most two or three big turns in one story; more is exhausting.",
+      "CUT CADENCE: in the first third of the video keep visual changes fast (a new image roughly every 1.3 to 2.0 seconds). For the opening scenes provide 2 to 3 imagePrompts so the editor can cut quickly; later scenes may use 1 to 2.",
+      "REPLAY BAIT: include exactly one tiny visual detail that is too fast to catch on first watch (describe it in one scene's imagePrompts) to reward a rewatch, without breaking comprehension.",
+      "MUTED VIEWING: most viewers watch on mute, so write the narration so the burned-in captions alone carry the hook and the payoff. The opening line must deliver the hook by itself even with no sound.",
+
       // --- CRITICAL RULES (end of prompt for recency) ---
       "Avoid abstract visuals.",
       "Do not create icon-only scenes. Every scene must feel like a real illustrated moment with a person, object, action, or physical setting, not a floating symbol on empty space.",
       "NEVER use charts, graphs, bar charts, pie charts, line graphs, or any data visualization as a scene visual. Instead, translate statistics and percentages into human scenes: '70% of companies' becomes 'seven out of ten people holding phones', '3x faster' becomes 'a person finishing work early and leaving the office'. Use people, objects, and actions to represent numbers.",
       "NEVER use calendar visuals with specific dates, years, or numbers written on them. Instead show a person circling a date, a hand flipping pages, or a clock to represent time passing.",
       `Each searchQuery must be a vivid, detailed English description of the exact image to generate, as if describing it to an illustrator: include subject, action, setting, and mood. Example: '${visualStyle.searchQueryExample}'.`,
+      "Every searchQuery must end cleanly on a full word. Never return a clipped or cut-off query.",
+      "Never end a searchQuery with dangling connectors or incomplete tails like 'with', 'the', 'of', 'where', or 'turned-off'.",
       "For every scene, the narration and searchQuery should refer to the same exact visual idea.",
       "Hashtags should be relevant and platform-native.",
+      "## thumbnailPrompt rules",
+      "thumbnailPrompt is an English image-generation prompt sent directly to an AI image model to create the video cover thumbnail. It must produce one single striking image, NOT describe the video.",
+      "1. Write in English regardless of video language.",
+      "2. ONE dominant subject filling at least half the frame. Prefer a person with strong facial expression when topic involves people.",
+      "3. Specify exactly one bold emotion with concrete detail: 'wide shocked eyes and open mouth', 'suspicious narrowed eyes looking directly at camera', 'sly smirk with one raised eyebrow'. Never say 'expressive' generically.",
+      "4. High-contrast color scheme: name 2-3 specific colors. Use warm subject against dark background. Good combos: yellow+black, red+white, blue+orange.",
+      "5. Maximum 3 visual elements total. No clutter.",
+      "6. NO text, words, letters, numbers, titles, labels, watermarks, or logos in the image.",
+      "7. Specify lighting direction and mood explicitly.",
+      "8. Main subject in upper two-thirds of the frame. Bottom third relatively empty.",
+      "9. Show the setup or reaction, never the answer — create a curiosity gap.",
+      "10. Match the video visual style.",
+      "10b. If the chosen visual style is illustrative or editorial, do NOT use realistic-film phrases like 'cinematic feel', 'film still', 'shallow depth of field', 'photorealistic', or documentary-camera wording.",
+      "11. Between 40 and 250 words.",
       ...buildCreativeContextLines({sourceText, scriptGuidance}),
       "Return this JSON shape:",
       requestedShape
@@ -1866,57 +2616,70 @@ const buildGenerationMessages = ({title, language, desiredDurationSeconds, sourc
 ];
 };
 
-const buildReviewMessages = ({title, language, desiredDurationSeconds, storyboard, sourceText, scriptGuidance}) => [
-  {
-    role: "system",
-    content:
-      `You are a strict video editor. Your job is to repair weak storyboard drafts so the narration, overlay, and stock-footage search query are tightly aligned. Return valid JSON only. Do not include markdown. ${buildFormatGuidance()} Rewrite any scene that depends on futuristic CGI, impossible science visuals, Mars rovers, abstract holograms, quantum-computer beauty shots, or rare footage that a normal stock site probably does not have.`
-  },
-  {
-    role: "user",
-    content: [
-      (() => {
-        const {minWords, maxWords} = getTargetWordRange(desiredDurationSeconds, language);
+const buildReviewMessages = ({title, language, desiredDurationSeconds, storyboard, sourceText, scriptGuidance}) => {
+  const {minWords, maxWords} = getTargetWordRange(desiredDurationSeconds, language);
+  const sceneRange = getStoryboardSceneRange(desiredDurationSeconds);
 
-        return `Narration target: ${minWords} to ${maxWords} words total.`;
-      })(),
-      `Language: ${language}`,
-      `Title: ${title}`,
-      `Target duration: around ${desiredDurationSeconds || 100} seconds.`,
-      "Review the draft below and rewrite it to improve visual matching.",
-      "Rules:",
-      `1. Keep ${MIN_SCENES} to ${MAX_SCENES} scenes.`,
-      "2. Use Brazilian Portuguese if language is pt-BR.",
-      "3. Every narration line must be a complete spoken sentence.",
-      "4. Never leave fragment openings like 'ou um menu', 'e uma tela', 'mas um detalhe', or any other incomplete continuation.",
-      "5. Every narration line must describe something that can clearly be shown in stock footage.",
-      "6. Every searchQuery must be a highly specific English query that matches the narration exactly.",
-      "7. Every searchQuery must be ASCII English only, with no mixed-language tokens or non-Latin characters.",
-      "7b. Every searchQuery must avoid readable interface text, button labels, error messages, headlines, links on screen, notification copy, or form fields. Replace them with blank panels, warning icons, abstract alerts, or lock symbols.",
-      "7c. Never include literal UI words like 'Update', 'Login', 'Verify', or quoted button text in any searchQuery.",
-      "8. Remove generic lines, abstract phrasing, and anything visually vague.",
-      "8b. Remove icon-only or symbol-only scenes. Rewrite them into real illustrated moments with people, objects, actions, and settings.",
-      "9. Remove forced transition crutches like 'Só que', 'Mas olha só', 'Ao mesmo tempo', 'Agora' and 'Na prática'.",
-      "10. Replace hard-to-find visuals with concrete human scenes that imply the same idea.",
-      "10b. Reduce repeated desk-laptop scenes. If several scenes use the same desk setup, rewrite some of them into phone, wallet, card, checkout, room, home, office, router, tablet, or hands-only object scenes.",
-      "10c. Remove any unrelated generic tech filler such as translation, summaries, research, app workflows, organization features, AI capabilities, or browser habits unless the title or source material is explicitly about that subtopic.",
-      "10d. Ensure visual rhythm: alternate scene types across the storyboard — human scene (person doing something) → symbolic scene (object/metaphor) → institutional/environmental scene (building, landscape, wide context) → human. If three consecutive scenes are the same type, rewrite the middle one into a different type.",
-      "10e. Every scene title must be unique. If two scenes share the same title, rename them to reflect their distinct beats.",
-      "11. NEVER use charts, graphs, bar charts, pie charts, line graphs, or data visualizations. Replace any statistics with human scenes: '70% of companies' becomes 'seven out of ten people holding phones', '3x faster' becomes 'a person finishing work early and leaving the office'.",
-      "12. NEVER use calendar visuals with specific years or numbers. Show a person circling a date or a clock instead.",
-      "13. Every searchQuery must be a vivid, detailed English description of the exact image to illustrate: include subject, action, setting, and mood.",
-      "14. Set cta to an empty string.",
-      "15. Return the same JSON shape only.",
-      ...buildCreativeContextLines({sourceText, scriptGuidance}),
-      "Draft JSON:",
-      JSON.stringify(storyboard)
-    ].join("\n")
-  }
-];
+  return [
+    {
+      role: "system",
+      content:
+        `You are a strict video editor. Your job is to repair weak storyboard drafts so the narration, overlay, and stock-footage search query are tightly aligned. Return valid JSON only. Do not include markdown. ${buildFormatGuidance()} Rewrite any scene that depends on futuristic CGI, impossible science visuals, Mars rovers, abstract holograms, quantum-computer beauty shots, or rare footage that a normal stock site probably does not have.`
+    },
+    {
+      role: "user",
+      content: [
+        `Narration target: ${minWords} to ${maxWords} words total.`,
+        `Language: ${language}`,
+        `Title: ${title}`,
+        `Target duration: around ${desiredDurationSeconds || 100} seconds.`,
+        "Review the draft below and rewrite it to improve visual matching.",
+        "Rules:",
+        `1. ${formatSceneCountInstruction(sceneRange, "Keep")}`,
+        "2. Use Brazilian Portuguese if language is pt-BR.",
+        "3. Every narration line must be a complete spoken sentence.",
+        "4. Never leave fragment openings like 'ou um menu', 'e uma tela', 'mas um detalhe', or any other incomplete continuation.",
+        "5. Every narration line must describe something that can clearly be shown in stock footage.",
+        "6. Every searchQuery must be a highly specific English query that matches the narration exactly.",
+        "6b. Every scene must include imagePrompts with 1 to 4 detailed English image-generation prompts. Each prompt must include subject, action, setting, composition, camera angle, lighting, style, mood, 9:16 mobile clarity, and negative constraints for text/logos/watermarks.",
+        `6b2. ${NO_ENGLISH_VISUAL_TEXT_RULE}`,
+        `6b3. ${BLANK_UI_VISUAL_RULE}`,
+        "6c. The audio object must remain ElevenLabs Liam: voiceId TX3LPaxmHKxFdv7VOQHJ and modelId eleven_multilingual_v2.",
+        "7. Every searchQuery must be ASCII English only, with no mixed-language tokens or non-Latin characters.",
+        "7b. Every searchQuery must avoid readable interface text, button labels, error messages, headlines, links on screen, notification copy, or form fields. Replace them with blank panels, warning icons, abstract alerts, or lock symbols.",
+        "7c. Never include literal UI words like 'Update', 'Login', 'Verify', or quoted button text in any searchQuery.",
+        "7d. Never use split-screen, collage, triptych, montage, or several disconnected rooms or countries inside one image. Keep one coherent frame with one place, one main subject, and one action.",
+        "7d2. Never describe a sequence, several people, or multiple device types inside one searchQuery. Keep one dominant subject and one device family per scene.",
+        "7e. Every searchQuery must end on a full word. Never leave a clipped or cut-off query.",
+        "7f. Never end a searchQuery with dangling connectors or incomplete tails like 'with', 'the', 'of', 'where', or 'turned-off'.",
+        "8. Remove generic lines, abstract phrasing, and anything visually vague.",
+        "8b. Remove icon-only or symbol-only scenes. Rewrite them into real illustrated moments with people, objects, actions, and settings.",
+        "8c. Remove direct advice to the viewer, moral-of-the-story wording, self-help framing, and coach-style lessons. Let irony and factual consequence speak for themselves.",
+        "9. Remove forced transition crutches like 'Só que', 'Mas olha só', 'Ao mesmo tempo', 'Agora' and 'Na prática'.",
+        "10. Replace hard-to-find visuals with concrete human scenes that imply the same idea.",
+        "10b. Reduce repeated desk-laptop scenes. If several scenes use the same desk setup, rewrite some of them into phone, wallet, card, checkout, room, home, office, router, tablet, or hands-only object scenes.",
+        "10c. Remove any unrelated generic tech filler such as translation, summaries, research, app workflows, organization features, AI capabilities, or browser habits unless the title or source material is explicitly about that subtopic.",
+        "10d. Ensure visual rhythm: alternate scene types across the storyboard — human scene (person doing something) → symbolic scene (object/metaphor) → institutional/environmental scene (building, landscape, wide context) → human. If three consecutive scenes are the same type, rewrite the middle one into a different type.",
+        "10e. Every scene title must be unique. If two scenes share the same title, rename them to reflect their distinct beats.",
+        "11. NEVER use charts, graphs, bar charts, pie charts, line graphs, or data visualizations. Replace any statistics with human scenes: '70% of companies' becomes 'seven out of ten people holding phones', '3x faster' becomes 'a person finishing work early and leaving the office'.",
+        "12. NEVER use calendar visuals with specific years or numbers. Show a person circling a date or a clock instead.",
+        "13. Every searchQuery must be a vivid, detailed English description of the exact image to illustrate: include subject, action, setting, and mood.",
+        "14. Set cta to an empty string.",
+        "15. The thumbnailPrompt must describe one vivid concrete image for the video cover. One dominant subject, one bold emotion, high-contrast colors, no text or labels. Between 40 and 250 words.",
+        "15b. If the visual style is illustrative or editorial, remove realistic-film language like 'cinematic feel', 'film still', 'shallow depth of field', 'photorealistic', or documentary-camera wording from thumbnailPrompt.",
+        "16. Return the same JSON shape only.",
+        ...buildCreativeContextLines({sourceText, scriptGuidance}),
+        "Draft JSON:",
+        JSON.stringify(storyboard)
+      ].join("\n")
+    }
+  ];
+};
 
 const buildExpansionMessages = ({title, language, desiredDurationSeconds, storyboard, sourceText, scriptGuidance}) => {
   const {minWords, maxWords} = getTargetWordRange(desiredDurationSeconds, language);
   const currentWords = getStoryboardWordCount(storyboard);
+  const sceneRange = getStoryboardSceneRange(desiredDurationSeconds);
 
   return [
     {
@@ -1929,25 +2692,35 @@ const buildExpansionMessages = ({title, language, desiredDurationSeconds, storyb
       content: [
         `Language: ${language}`,
         `Title: ${title}`,
-      `Current narration length: ${currentWords} words.`,
-      `Target narration length: ${minWords} to ${maxWords} words.`,
-      "Rewrite the storyboard so it reaches the target length.",
-      `Keep ${MIN_SCENES} to ${MAX_SCENES} scenes.`,
-      "Do not make the story generic.",
-      "Expand each scene with one extra concrete detail when useful.",
-      "Keep every narration line as a complete standalone spoken sentence.",
-      "Do not introduce fragment openings like 'ou um menu' or 'e uma tela'.",
-      "Do not force transition connectors like 'Só que', 'Mas olha só', 'Ao mesmo tempo', 'Agora' or 'Na prática'.",
-      "Do not introduce unrelated generic tech filler such as translation, summaries, research, app workflows, organization features, AI capabilities, or browser habits unless the title or source material is explicitly about that subtopic.",
-      "Every narration line must still describe visuals that can be found in stock footage.",
-      "Avoid adding rare or impossible visuals while expanding.",
-      "Do not expand into icon-only or symbol-only scenes; keep real people, objects, and settings.",
-      "Every searchQuery must remain specific and directly matched to the narration.",
-      "Every searchQuery must stay in ASCII English only.",
-      "Every searchQuery must avoid readable screen text or button labels; use abstract alerts, lock icons, blank panels, or warning symbols instead.",
-      "Never include literal UI words like 'Update', 'Login', 'Verify', or quoted button text in any searchQuery.",
-      "Do not expand by repeating the same desk-laptop setup across too many scenes; vary props and environments.",
-      "Set cta to an empty string.",
+        `Current narration length: ${currentWords} words.`,
+        `Target narration length: ${minWords} to ${maxWords} words.`,
+        "Rewrite the storyboard so it reaches the target length.",
+        formatSceneCountInstruction(sceneRange, "Keep"),
+        "Do not make the story generic.",
+        "Expand each scene with one extra concrete detail when useful.",
+        "Keep every narration line as a complete standalone spoken sentence.",
+        "Do not turn the story into advice, a lesson, or coach-style wording directed at the viewer.",
+        "Do not introduce fragment openings like 'ou um menu' or 'e uma tela'.",
+        "Do not force transition connectors like 'Só que', 'Mas olha só', 'Ao mesmo tempo', 'Agora' or 'Na prática'.",
+        "Do not introduce unrelated generic tech filler such as translation, summaries, research, app workflows, organization features, AI capabilities, or browser habits unless the title or source material is explicitly about that subtopic.",
+        "Every narration line must still describe visuals that can be found in stock footage.",
+        "Avoid adding rare or impossible visuals while expanding.",
+        "Do not expand into icon-only or symbol-only scenes; keep real people, objects, and settings.",
+        "Every searchQuery must remain specific and directly matched to the narration.",
+        "Every scene must keep or add imagePrompts with at least one detailed English image-generation prompt matching the narration and searchQuery.",
+        NO_ENGLISH_VISUAL_TEXT_RULE,
+        BLANK_UI_VISUAL_RULE,
+        "Keep the audio object on ElevenLabs Liam when available.",
+        "Every searchQuery must stay in ASCII English only.",
+        "Every searchQuery must avoid readable screen text or button labels; use abstract alerts, lock icons, blank panels, or warning symbols instead.",
+        "Never include literal UI words like 'Update', 'Login', 'Verify', or quoted button text in any searchQuery.",
+        "Never turn one scene into split-screen, collage, triptych, montage, or multiple countries in one image. Keep one place, one main subject, and one action.",
+        "Never expand one scene into several people, several device types, or a sequence of actions inside one frame.",
+        "Every searchQuery must end on a full word. Never leave a clipped or cut-off query.",
+        "Never end a searchQuery with dangling connectors or incomplete tails like 'with', 'the', 'of', 'where', or 'turned-off'.",
+        "Do not expand by repeating the same desk-laptop setup across too many scenes; vary props and environments.",
+        "Preserve the thumbnailPrompt unchanged unless it is empty.",
+        "Set cta to an empty string.",
         ...buildCreativeContextLines({sourceText, scriptGuidance}),
         "Return the same JSON shape only.",
         "Draft JSON:",
@@ -1960,6 +2733,7 @@ const buildExpansionMessages = ({title, language, desiredDurationSeconds, storyb
 const buildCompressionMessages = ({title, language, desiredDurationSeconds, storyboard, sourceText, scriptGuidance}) => {
   const {minWords, maxWords} = getTargetWordRange(desiredDurationSeconds, language);
   const currentWords = getStoryboardWordCount(storyboard);
+  const sceneRange = getStoryboardSceneRange(desiredDurationSeconds);
 
   return [
     {
@@ -1972,24 +2746,34 @@ const buildCompressionMessages = ({title, language, desiredDurationSeconds, stor
       content: [
         `Language: ${language}`,
         `Title: ${title}`,
-      `Current narration length: ${currentWords} words.`,
-      `Target narration length: ${minWords} to ${maxWords} words.`,
-      "Rewrite the storyboard so it stays inside the target word range.",
-      `Keep ${MIN_SCENES} to ${MAX_SCENES} scenes.`,
-      "Shorten only the narration. Keep the same topic progression.",
-      "Do not make the narration generic or vague.",
-      "Keep every narration line as a complete standalone spoken sentence.",
-      "Do not introduce fragment openings like 'ou um menu' or 'e uma tela'.",
-      "Do not force transition connectors like 'Só que', 'Mas olha só', 'Ao mesmo tempo', 'Agora' or 'Na prática'.",
-      "Do not keep scenes that rely on rare or impossible stock footage; rewrite them into concrete human visuals instead.",
-      "Do not keep icon-only or symbol-only scenes; rewrite them into real illustrated moments with people, objects, and settings.",
-      "Do not keep or introduce unrelated generic tech filler such as translation, summaries, research, app workflows, organization features, AI capabilities, or browser habits unless the title or source material is explicitly about that subtopic.",
-      "Every narration line must still match the searchQuery exactly.",
-      "Every searchQuery must stay in ASCII English only.",
-      "Every searchQuery must avoid readable screen text or button labels; use abstract alerts, lock icons, blank panels, or warning symbols instead.",
-      "Never include literal UI words like 'Update', 'Login', 'Verify', or quoted button text in any searchQuery.",
-      "Reduce repeated desk-laptop setups whenever possible by varying props and environments.",
-      "Set cta to an empty string.",
+        `Current narration length: ${currentWords} words.`,
+        `Target narration length: ${minWords} to ${maxWords} words.`,
+        "Rewrite the storyboard so it stays inside the target word range.",
+        formatSceneCountInstruction(sceneRange, "Keep"),
+        "Shorten only the narration. Keep the same topic progression.",
+        "Do not make the narration generic or vague.",
+        "Keep every narration line as a complete standalone spoken sentence.",
+        "Do not rewrite the story into direct advice, self-help framing, or moral-of-the-story wording.",
+        "Do not introduce fragment openings like 'ou um menu' or 'e uma tela'.",
+        "Do not force transition connectors like 'Só que', 'Mas olha só', 'Ao mesmo tempo', 'Agora' or 'Na prática'.",
+        "Do not keep scenes that rely on rare or impossible stock footage; rewrite them into concrete human visuals instead.",
+        "Do not keep icon-only or symbol-only scenes; rewrite them into real illustrated moments with people, objects, and settings.",
+        "Do not keep or introduce unrelated generic tech filler such as translation, summaries, research, app workflows, organization features, AI capabilities, or browser habits unless the title or source material is explicitly about that subtopic.",
+        "Every narration line must still match the searchQuery exactly.",
+        "Every scene must keep imagePrompts with at least one detailed English image-generation prompt matching the shortened narration.",
+        NO_ENGLISH_VISUAL_TEXT_RULE,
+        BLANK_UI_VISUAL_RULE,
+        "Keep the audio object on ElevenLabs Liam when available.",
+        "Every searchQuery must stay in ASCII English only.",
+        "Every searchQuery must avoid readable screen text or button labels; use abstract alerts, lock icons, blank panels, or warning symbols instead.",
+        "Never include literal UI words like 'Update', 'Login', 'Verify', or quoted button text in any searchQuery.",
+        "Never compress scenes into split-screen, collage, triptych, montage, or multiple disconnected places in one image.",
+        "Never compress scenes into a sequence of several people or multiple device types in one frame.",
+        "Every searchQuery must end on a full word. Never leave a clipped or cut-off query.",
+        "Never end a searchQuery with dangling connectors or incomplete tails like 'with', 'the', 'of', 'where', or 'turned-off'.",
+        "Reduce repeated desk-laptop setups whenever possible by varying props and environments.",
+        "Preserve the thumbnailPrompt unchanged unless it is empty.",
+        "Set cta to an empty string.",
         ...buildCreativeContextLines({sourceText, scriptGuidance}),
         "Return the same JSON shape only.",
         "Draft JSON:",
@@ -2007,40 +2791,77 @@ const buildRepairMessages = ({
   sourceText,
   scriptGuidance,
   issues,
+  issueObjects = [],
   warnings = []
-}) => [
-  {
-    role: "system",
-    content:
-      `You are repairing a storyboard that failed practical QA. Preserve the core creative direction while fixing only the problems that would break the video or pull it off-topic. Return valid JSON only. Do not include markdown. ${buildFormatGuidance()}`
-  },
-  {
-    role: "user",
-    content: [
-      `Language: ${language}`,
-      `Title: ${title}`,
-      `Target duration: around ${desiredDurationSeconds || 100} seconds.`,
-      "Fix the storyboard below without changing the overall topic.",
-      `Keep ${MIN_SCENES} to ${MAX_SCENES} scenes.`,
-      "Repair every issue listed below.",
-      ...issues.map((issue, index) => `${index + 1}. ${issue}`),
-      ...(warnings.length > 0 ? ["Keep these style nudges in mind:", ...warnings.map((warning, index) => `W${index + 1}. ${warning}`)] : []),
-      "Keep these constraints only where they matter technically:",
-      "- Keep the same topic and overall progression.",
+}) => {
+  const sceneRange = getStoryboardSceneRange(desiredDurationSeconds);
+  const structuredSource = parseStructuredSourceText(sourceText);
+  const requiredNumberItems = structuredSource ? (structuredSource.grouped.get("required_numbers") || []).slice(0, 12) : [];
+  const strongestNumberLine = pickStrongestStructuredNumberLine(requiredNumberItems);
+  const issueCodes = Array.isArray(issueObjects)
+    ? issueObjects.map((issue) => String(issue?.code || "").trim()).filter(Boolean)
+    : [];
+  const requiresHardDataHook =
+    issueCodes.includes("viral_hook_missing_data_point") ||
+    issueCodes.includes("viral_hook_not_accusatory");
+
+  return [
+    {
+      role: "system",
+      content:
+        `You are repairing a storyboard that failed practical QA. Preserve the core creative direction while fixing only the problems that would break the video or pull it off-topic. Return valid JSON only. Do not include markdown. ${buildFormatGuidance()}`
+    },
+    {
+      role: "user",
+      content: [
+        `Language: ${language}`,
+        `Title: ${title}`,
+        `Target duration: around ${desiredDurationSeconds || 100} seconds.`,
+        "Fix the storyboard below without changing the overall topic.",
+        formatSceneCountInstruction(sceneRange, "Keep"),
+        "Repair every issue listed below.",
+        ...issues.map((issue, index) => `${index + 1}. ${issue}`),
+        ...(issueCodes.length > 0 ? [`Issue codes to resolve: ${issueCodes.join(", ")}`] : []),
+        ...(warnings.length > 0 ? ["Keep these style nudges in mind:", ...warnings.map((warning, index) => `W${index + 1}. ${warning}`)] : []),
+        ...(requiresHardDataHook
+          ? [
+              "Hook repair rule: rewrite the hook as a hard factual opening, never as a soft explainer.",
+              "Hook repair rule: the hook must explicitly include the strongest concrete number or scale fact available, then land the irony, refusal, contradiction, or reversal."
+            ]
+          : []),
+        ...(requiresHardDataHook && strongestNumberLine
+          ? [
+              `Strongest required number to use in the hook: ${strongestNumberLine}`,
+              "Preferred hook shape: '<strongest number or scale fact>. <contradiction, refusal, or irony in one short sentence>'."
+            ]
+          : []),
+        "Keep these constraints only where they matter technically:",
+        "- Keep the same topic and overall progression.",
       "- Keep scenes concrete and visually varied.",
+      "- Every scene must include imagePrompts with at least one detailed English image-generation prompt aligned to the narration and searchQuery.",
+      `- ${NO_ENGLISH_VISUAL_TEXT_RULE}`,
+      `- ${BLANK_UI_VISUAL_RULE}`,
+      "- Keep audio.provider as elevenlabs and prefer Liam with voiceId TX3LPaxmHKxFdv7VOQHJ when available.",
       "- Every narration line must be a complete spoken sentence in pt-BR when applicable.",
+      "- Do not turn the hook or ending into direct advice, coach-style language, or a moral-of-the-story lesson.",
       "- Every searchQuery must be ASCII English only.",
       "- Every searchQuery must avoid readable text, labels, button copy, email copy, or UI chrome.",
       "- Never include literal UI words like 'Update', 'Login', 'Verify', or quoted button text in any searchQuery.",
+      "- Never use split-screen, collage, triptych, montage, or multiple disconnected places inside one image. Keep one coherent frame.",
+      "- Never turn one scene into a sequence of several people or multiple device types inside one frame.",
+      "- Every searchQuery must end on a full word. Never leave a clipped or cut-off query.",
+      "- Never end a searchQuery with dangling connectors or incomplete tails like 'with', 'the', 'of', 'where', or 'turned-off'.",
       "- Remove only scenes that drift into unrelated topics or generic filler not tied to the title.",
-      "- Set cta to an empty string.",
-      "- postCaption must stay descriptive and on-topic.",
-      ...buildCreativeContextLines({sourceText, scriptGuidance}),
-      "Current storyboard JSON:",
-      JSON.stringify(storyboard)
-    ].join("\n")
-  }
-];
+        "- Set cta to an empty string.",
+        "- postCaption must stay descriptive and on-topic.",
+        "- Preserve or improve the thumbnailPrompt. It must describe one vivid concrete image for the video cover.",
+        ...buildCreativeContextLines({sourceText, scriptGuidance}),
+        "Current storyboard JSON:",
+        JSON.stringify(storyboard)
+      ].join("\n")
+    }
+  ];
+};
 
 export const repairStoryboard = async ({
   title,
@@ -2054,15 +2875,17 @@ export const repairStoryboard = async ({
   sourceText = "",
   scriptGuidance = "",
   issues = [],
+  issueObjects = [],
   warnings = []
 }) => {
   const selectedProvider = resolveLlmProvider(provider);
+  const sceneRange = getStoryboardSceneRange(desiredDurationSeconds);
 
   if (selectedProvider === "openrouter" && !apiKey) {
-    return normalizeStoryboard(storyboard, title, language);
+    return normalizeStoryboardWithSource(storyboard, title, language, sceneRange, desiredDurationSeconds, sourceText);
   }
 
-  return normalizeStoryboard(
+  return normalizeStoryboardWithSource(
     await callJsonProvider({
       provider: selectedProvider,
       apiKey,
@@ -2075,15 +2898,161 @@ export const repairStoryboard = async ({
         sourceText,
         scriptGuidance,
         issues,
+        issueObjects,
         warnings
       }),
-      schema: storyboardOutputSchema,
+      schema: createStoryboardOutputSchemaForDuration(desiredDurationSeconds),
       cwd,
       usageContext: "storyboard-repair"
     }),
     title,
-    language
+    language,
+    sceneRange,
+    desiredDurationSeconds,
+    sourceText
   );
+};
+
+// ── Hook A/B variants (SPEC v2) ───────────────────────────────────────────────
+// Generate alternative opening hooks for an existing storyboard so the same body
+// can be posted with different first scenes and the 3s retention curve compared.
+
+const HOOK_VARIANTS_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    variants: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          angle: {type: "string"},
+          narration: {type: "string"},
+          overlay: {type: "string"},
+          firstCaption: {type: "string"}
+        },
+        required: ["angle", "narration", "overlay", "firstCaption"]
+      }
+    }
+  },
+  required: ["variants"]
+};
+
+const buildHookVariantMessages = ({language, title, baseHook, baseOverlay, contextScenes, lastNarration, count}) => [
+  {
+    role: "system",
+    content:
+      `You rewrite ONLY the opening hook of a short-form video to A/B test retention. Return valid JSON only, no markdown. If the language is pt-BR, write only in Brazilian Portuguese. The body of the video never changes — you only produce alternative first lines. Every hook must be literally true given the story context provided; never invent facts or state urban legends as fact.`
+  },
+  {
+    role: "user",
+    content: [
+      `Language: ${language}`,
+      title ? `Video title: ${title}` : "",
+      `Current opening hook (scene 1 narration): "${baseHook}"`,
+      baseOverlay ? `Current scene 1 overlay: "${baseOverlay}"` : "",
+      "Story context (do not change the body, only the opening):",
+      contextScenes,
+      lastNarration ? `The video ends on: "${lastNarration}". A great hook can set up this ending for a loop payoff.` : "",
+      "",
+      `Produce exactly ${count} alternative opening hooks, each using a DIFFERENT angle. Use these angles in order: 1) "curiosity-gap" — an incomplete or shocking true statement that opens a gap; 2) "start-mid-action" — drop the viewer straight into the most striking moment; 3) "absurd-contrast" — a recognizable absurdity or injustice, or a visual contradiction.`,
+      "Rules for every variant:",
+      "- The hook is decided in under 1 second. Open with the single most surprising true fact or sharpest contradiction. No greeting, no intro, no question as the opener.",
+      "- Keep it the same language and roughly the same length as the current hook (one or two short spoken sentences).",
+      "- No call-to-action, no moral, no self-help or coaching wording.",
+      "- It must be literally true given the story context — a hook that lies wins 3 seconds but kills completion.",
+      "- narration: the spoken opening line(s). overlay: a short punchy on-screen overlay (may be UPPERCASE, may include a number). firstCaption: 4 to 7 words, the burned-in caption card that delivers the hook on mute.",
+      `Return JSON exactly as: {"variants":[{"angle":"curiosity-gap","narration":"...","overlay":"...","firstCaption":"..."}, ...]} with ${count} items.`
+    ].filter(Boolean).join("\n")
+  }
+];
+
+/**
+ * Generate N alternative opening hooks for an existing storyboard.
+ * Returns an array of {angle, narration, overlay, firstCaption}.
+ */
+export const generateHookVariants = async ({
+  storyboard,
+  language = "pt-BR",
+  count = 3,
+  provider,
+  apiKey = "",
+  model,
+  cwd
+} = {}) => {
+  const scenes = Array.isArray(storyboard?.scenes) ? storyboard.scenes : [];
+  if (scenes.length === 0) {
+    throw new Error("Storyboard sem cenas — nada para gerar variantes de hook.");
+  }
+
+  const targetCount = Math.max(2, Math.min(3, Number(count) || 3));
+  const baseHook = normalizeText(storyboard?.hook || scenes[0]?.narration || "");
+  const baseOverlay = normalizeText(scenes[0]?.overlay || "");
+  const contextScenes = scenes
+    .slice(0, Math.min(5, scenes.length))
+    .map((scene, index) => `Scene ${index + 1}: ${normalizeText(scene?.narration || "")}`)
+    .join("\n");
+
+  const raw = await callJsonProvider({
+    provider: resolveLlmProvider(provider),
+    apiKey,
+    model,
+    messages: buildHookVariantMessages({
+      language,
+      title: normalizeText(storyboard?.videoTitle || ""),
+      baseHook,
+      baseOverlay,
+      contextScenes,
+      lastNarration: normalizeText(scenes.at(-1)?.narration || ""),
+      count: targetCount
+    }),
+    schema: HOOK_VARIANTS_OUTPUT_SCHEMA,
+    cwd,
+    usageContext: "hook-variants"
+  });
+
+  const seen = new Set();
+  const variants = (Array.isArray(raw?.variants) ? raw.variants : [])
+    .map((variant) => ({
+      angle: normalizeText(variant?.angle || ""),
+      narration: normalizeText(variant?.narration || ""),
+      overlay: normalizeText(variant?.overlay || ""),
+      firstCaption: normalizeText(variant?.firstCaption || "")
+    }))
+    .filter((variant) => {
+      if (!variant.narration) return false;
+      const key = variant.narration.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, targetCount);
+
+  if (variants.length === 0) {
+    throw new Error("O modelo nao devolveu nenhuma variante de hook utilizavel.");
+  }
+
+  return variants;
+};
+
+/**
+ * Build a new storyboard that is identical to the base except for the opening
+ * hook (scene 1 narration/overlay and the top-level hook). The body is untouched.
+ */
+export const buildVariantStoryboard = (baseStoryboard, variant) => {
+  const clone = JSON.parse(JSON.stringify(baseStoryboard || {}));
+  if (!Array.isArray(clone.scenes) || clone.scenes.length === 0) {
+    return clone;
+  }
+  const narration = normalizeText(variant?.narration || "");
+  const overlay = normalizeText(variant?.overlay || "");
+  if (narration) {
+    clone.scenes[0].narration = narration;
+    clone.hook = narration;
+  }
+  if (overlay) {
+    clone.scenes[0].overlay = overlay;
+  }
+  return clone;
 };
 
 export const generateStoryboard = async ({
@@ -2099,26 +3068,30 @@ export const generateStoryboard = async ({
   imageStyleHint = ""
 }) => {
   const selectedProvider = resolveLlmProvider(provider);
+  const sceneRange = getStoryboardSceneRange(desiredDurationSeconds);
 
   if (selectedProvider === "openrouter" && !apiKey) {
-    return fallbackStoryboard(title, language);
+    return fallbackStoryboard(title, language, getRecommendedSceneCountForDuration(OUTPUT_PROFILE.id, desiredDurationSeconds));
   }
 
-  const generatedStoryboard = normalizeStoryboard(
+  const generatedStoryboard = normalizeStoryboardWithSource(
     await callJsonProvider({
       provider: selectedProvider,
       apiKey,
       model,
       messages: buildGenerationMessages({title, language, desiredDurationSeconds, sourceText, scriptGuidance, imageStyleHint}),
-      schema: storyboardOutputSchema,
+      schema: createStoryboardOutputSchemaForDuration(desiredDurationSeconds),
       cwd,
       usageContext: "storyboard-generate"
     }),
     title,
-    language
+    language,
+    sceneRange,
+    desiredDurationSeconds,
+    sourceText
   );
 
-  let sanitized = normalizeStoryboard(
+  let sanitized = normalizeStoryboardWithSource(
     await callJsonProvider({
       provider: selectedProvider,
       apiKey,
@@ -2131,18 +3104,21 @@ export const generateStoryboard = async ({
         sourceText,
         scriptGuidance
       }),
-      schema: storyboardOutputSchema,
+      schema: createStoryboardOutputSchemaForDuration(desiredDurationSeconds),
       cwd,
       usageContext: "storyboard-review"
     }),
     title,
-    language
+    language,
+    sceneRange,
+    desiredDurationSeconds,
+    sourceText
   );
   const {minWords, maxWords} = getTargetWordRange(desiredDurationSeconds, language);
   const firstWordCount = getStoryboardWordCount(sanitized);
 
   if (firstWordCount < minWords) {
-    sanitized = normalizeStoryboard(
+    sanitized = normalizeStoryboardWithSource(
       await callJsonProvider({
         provider: selectedProvider,
         apiKey,
@@ -2155,17 +3131,20 @@ export const generateStoryboard = async ({
           sourceText,
           scriptGuidance
         }),
-        schema: storyboardOutputSchema,
+        schema: createStoryboardOutputSchemaForDuration(desiredDurationSeconds),
         cwd,
         usageContext: "storyboard-expand"
       }),
       title,
-      language
+      language,
+      sceneRange,
+      desiredDurationSeconds,
+      sourceText
     );
   }
 
   if (getStoryboardWordCount(sanitized) > maxWords) {
-    sanitized = normalizeStoryboard(
+    sanitized = normalizeStoryboardWithSource(
       await callJsonProvider({
         provider: selectedProvider,
         apiKey,
@@ -2178,12 +3157,15 @@ export const generateStoryboard = async ({
           sourceText,
           scriptGuidance
         }),
-        schema: storyboardOutputSchema,
+        schema: createStoryboardOutputSchemaForDuration(desiredDurationSeconds),
         cwd,
         usageContext: "storyboard-compress"
       }),
       title,
-      language
+      language,
+      sceneRange,
+      desiredDurationSeconds,
+      sourceText
     );
   }
 
@@ -2213,11 +3195,66 @@ export const generateStoryboard = async ({
       sourceText,
       scriptGuidance,
       issues: storyboardIssues,
+      issueObjects: storyboardQa.issueObjects,
       warnings: storyboardQa.warnings
     });
   }
 
-  const parsed = storyboardSchema.safeParse(sanitized);
+  const repairedWordCount = getStoryboardWordCount(sanitized);
+
+  if (repairedWordCount < minWords) {
+    sanitized = normalizeStoryboardWithSource(
+      await callJsonProvider({
+        provider: selectedProvider,
+        apiKey,
+        model,
+        messages: buildExpansionMessages({
+          title,
+          language,
+          desiredDurationSeconds,
+          storyboard: sanitized,
+          sourceText,
+          scriptGuidance
+        }),
+        schema: createStoryboardOutputSchemaForDuration(desiredDurationSeconds),
+        cwd,
+        usageContext: "storyboard-expand-after-repair"
+      }),
+      title,
+      language,
+      sceneRange,
+      desiredDurationSeconds,
+      sourceText
+    );
+  }
+
+  if (getStoryboardWordCount(sanitized) > maxWords) {
+    sanitized = normalizeStoryboardWithSource(
+      await callJsonProvider({
+        provider: selectedProvider,
+        apiKey,
+        model,
+        messages: buildCompressionMessages({
+          title,
+          language,
+          desiredDurationSeconds,
+          storyboard: sanitized,
+          sourceText,
+          scriptGuidance
+        }),
+        schema: createStoryboardOutputSchemaForDuration(desiredDurationSeconds),
+        cwd,
+        usageContext: "storyboard-compress-after-repair"
+      }),
+      title,
+      language,
+      sceneRange,
+      desiredDurationSeconds,
+      sourceText
+    );
+  }
+
+  const parsed = createStoryboardSchemaForDuration(desiredDurationSeconds).safeParse(sanitized);
 
   if (!parsed.success) {
     throw new Error(parsed.error.issues.map((issue) => issue.message).join("; "));

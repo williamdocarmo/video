@@ -278,11 +278,12 @@ export const getLatestGenerateJobForSlug = ({slug, title = "", channel = "", max
 
 export const getRecoverySourceJob = (job) => {
   if (!job) return null;
-  if (job.type === "generate") return job;
+  if (job.type === "generate" && job.input?.previewOnly !== true) return job;
 
   const visited = new Set([String(job.id || "")]);
   const queue = [...getReferencedRecoveryJobIds(job)];
   const jobs = _getJobs();
+  let previewFallback = null;
 
   while (queue.length > 0) {
     const id = queue.shift();
@@ -290,14 +291,20 @@ export const getRecoverySourceJob = (job) => {
     visited.add(id);
     const referenced = jobs.get(id);
     if (!referenced) continue;
-    if (referenced.type === "generate") return referenced;
+    if (referenced.type === "generate") {
+      if (referenced.input?.previewOnly !== true) return referenced;
+      previewFallback ||= referenced;
+    }
     queue.push(...getReferencedRecoveryJobIds(referenced));
   }
 
-  return getLatestGenerateJobForSlug({
+  const latestGenerateJob = getLatestGenerateJobForSlug({
     slug: job.slug, title: job.title, channel: job.input?.channel,
     maxCreatedAtMs: toTimestampMs(job.createdAt) || Number.POSITIVE_INFINITY
-  }) || job;
+  });
+
+  if (latestGenerateJob?.input?.previewOnly !== true) return latestGenerateJob;
+  return previewFallback || latestGenerateJob || job;
 };
 
 export const getRecoveryArtifactEpochAt = (job) => {
@@ -452,7 +459,9 @@ export const getMostRelevantFailureLogLine = (job) => {
 };
 
 export const getProcessFailureMessage = (job, fallbackMessage) =>
-  normalizeFailureLine(getMostRelevantFailureLogLine(job)) || fallbackMessage;
+  normalizeFailureLine(job?.terminationReason) ||
+  normalizeFailureLine(getMostRelevantFailureLogLine(job)) ||
+  fallbackMessage;
 
 // ── State & stage ────────────────────────────────────────────────────
 

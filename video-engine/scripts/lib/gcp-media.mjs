@@ -1,12 +1,17 @@
 import {normalizeText} from "../../../shared/utils.mjs";
-import {getGcpAccessToken, resolveGcpConfig} from "./gcp-config.mjs";
+import {getAiplatformHost, getGcpAccessToken, resolveGcpConfig, resolveVertexModelLocation} from "./gcp-config.mjs";
 
-const withThinkingDisabled = (config = {}) => ({
-  ...config,
-  thinkingConfig: {
-    thinkingBudget: 0
-  }
-});
+const supportsThinkingBudgetZero = (model = "") => !/gemini-2\.5-pro/i.test(String(model || "").trim());
+
+const withThinkingDisabled = (config = {}, model = "") =>
+  supportsThinkingBudgetZero(model)
+    ? {
+        ...config,
+        thinkingConfig: {
+          thinkingBudget: 0
+        }
+      }
+    : {...config};
 
 const extractVertexText = (payload) =>
   normalizeText(
@@ -42,7 +47,7 @@ export const callVertexMultimodalText = async ({
   const config = resolveGcpConfig(process.env);
   const accessToken = await getGcpAccessToken();
   const endpoint =
-    `https://${config.location}-aiplatform.googleapis.com/v1/projects/${config.projectId}` +
+    `https://${getAiplatformHost(config.location)}/v1/projects/${config.projectId}` +
     `/locations/${config.location}/publishers/google/models/${model}:generateContent`;
 
   const parts = [
@@ -67,7 +72,7 @@ export const callVertexMultimodalText = async ({
   }
 
   if (generationConfig && Object.keys(generationConfig).length > 0) {
-    body.generationConfig = withThinkingDisabled(generationConfig);
+    body.generationConfig = withThinkingDisabled(generationConfig, model);
   }
 
   const response = await fetch(endpoint, {
@@ -102,7 +107,7 @@ export const generateVertexImage = async ({
     const config = resolveGcpConfig(process.env);
     const accessToken = await getGcpAccessToken();
     const endpoint =
-      `https://${config.location}-aiplatform.googleapis.com/v1/projects/${config.projectId}` +
+      `https://${getAiplatformHost(config.location)}/v1/projects/${config.projectId}` +
       `/locations/${config.location}/publishers/google/models/${model}:predict`;
 
     const body = {
@@ -114,7 +119,7 @@ export const generateVertexImage = async ({
       parameters: {
         sampleCount: Math.max(1, Number(numberOfImages) || 1),
         aspectRatio,
-        sampleImageSize: "1K",
+        sampleImageSize: "2K",
         personGeneration: "allow_all",
         safetySetting: "block_medium_and_above",
         enhancePrompt: false,
@@ -158,9 +163,10 @@ export const generateVertexImage = async ({
 
   const config = resolveGcpConfig(process.env);
   const accessToken = await getGcpAccessToken();
+  const modelLocation = resolveVertexModelLocation(model, config.location);
   const endpoint =
-    `https://${config.location}-aiplatform.googleapis.com/v1/projects/${config.projectId}` +
-    `/locations/${config.location}/publishers/google/models/${model}:generateContent`;
+    `https://${getAiplatformHost(modelLocation)}/v1/projects/${config.projectId}` +
+    `/locations/${modelLocation}/publishers/google/models/${model}:generateContent`;
 
   const body = {
     contents: [
@@ -172,7 +178,7 @@ export const generateVertexImage = async ({
     generationConfig: withThinkingDisabled({
       responseModalities: ["TEXT", "IMAGE"],
       candidateCount: Math.max(1, Number(numberOfImages) || 1)
-    })
+    }, model)
   };
 
   if (aspectRatio) {

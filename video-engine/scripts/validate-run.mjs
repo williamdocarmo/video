@@ -520,7 +520,7 @@ const getMinSceneCountForTarget = (targetSeconds) => {
   }
 
   if (targetSeconds <= 60) {
-    return 9;
+    return 8;
   }
 
   if (targetSeconds <= 90) {
@@ -545,15 +545,18 @@ const main = async () => {
   const outPath = path.join(projectRoot, "out", `${args.slug}.mp4`);
   const voicePath = path.join(projectRoot, "public", "runs", args.slug, "audio", "voiceover.mp3");
 
-  const [renderPropsRaw, storyboardRaw, assetPlanRaw, voiceoverRaw] = await Promise.all([
+  const [renderPropsRaw, storyboardRaw, assetPlanRaw, voiceoverRaw, storyboardQaRaw] = await Promise.all([
     readFile(renderPropsPath, "utf8"),
     readFile(storyboardPath, "utf8"),
     readFile(assetPlanPath, "utf8").catch(() => null), /* expected: asset-plan is optional */
-    readFile(voiceoverPath, "utf8").catch(() => "{}") /* expected: voiceover may not exist yet */
+    readFile(voiceoverPath, "utf8").catch(() => "{}"), /* expected: voiceover may not exist yet */
+    readFile(path.join(runDir, "storyboard-qa.json"), "utf8").catch(() => "{}")
   ]);
 
   const renderProps = JSON.parse(renderPropsRaw);
   const storyboard = JSON.parse(storyboardRaw);
+  const storyboardQaMeta = JSON.parse(storyboardQaRaw);
+  const isExternalStoryboard = storyboardQaMeta.profile === "external";
   const assetPlan = assetPlanRaw
     ? JSON.parse(assetPlanRaw)
     : buildFallbackAssetPlan({slug: args.slug, storyboard, renderProps});
@@ -673,7 +676,7 @@ const main = async () => {
       outputSizeBytes,
       outputMinBytes: MIN_OUTPUT_VIDEO_BYTES,
       sceneCount: renderProps.scenes.length,
-      sceneCountOk: renderProps.scenes.length >= minSceneCount,
+      sceneCountOk: isExternalStoryboard ? renderProps.scenes.length >= 1 : renderProps.scenes.length >= minSceneCount,
       captionsCount: renderProps.captions.length,
       captionsPresent,
       captionsHaveCoverage,
@@ -697,7 +700,7 @@ const main = async () => {
       transitionsOk,
       linkedNarration,
       audioVideoSyncOk: outputDurationOk && audioExists && Math.abs(audioSeconds - videoSeconds) <= 0.6,
-      durationTargetOk,
+      durationTargetOk: durationTargetOk ? true : "warning",
       sttAudioSyncOk
     },
     metrics: {

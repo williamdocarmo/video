@@ -328,6 +328,16 @@ const normalizeCaptionRanges = (captions, finalFrame) => {
     return captions;
   }
 
+  // Hard cap on words after merging — when the STT timing collapses to a single
+  // frame (typical on the last scene), every adjacent caption shares the same
+  // startFrame and merges unbounded into one mega-blob that wraps to 4–5 lines
+  // on a 9:16 phone frame. Cap at 2× target chunk so the renderer keeps them
+  // as distinct captions even when their timestamps are identical; downstream
+  // word-level startFrames stay sequential, so the karaoke timing still works.
+  const captionWordsPerChunk = Math.max(1, Number(process.env.CAPTION_WORDS_PER_CHUNK || 3));
+  // Single-line target: one extra word over chunk size, never two doublings.
+  const maxMergedWords = captionWordsPerChunk + 1;
+
   const normalized = [];
 
   for (let index = 0; index < captions.length; index += 1) {
@@ -342,6 +352,14 @@ const normalizeCaptionRanges = (captions, finalFrame) => {
 
       if (desiredEnd > current.startFrame) {
         current.endFrame = desiredEnd;
+        break;
+      }
+
+      const mergedWordCount = current.words.length + (Array.isArray(next.words) ? next.words.length : 0);
+      if (mergedWordCount > maxMergedWords) {
+        // Refuse to merge — give the current caption a minimal 1-frame slot
+        // and let the next caption start adjacent to it.
+        current.endFrame = current.startFrame;
         break;
       }
 
@@ -364,6 +382,57 @@ const normalizeCaptionRanges = (captions, finalFrame) => {
     normalized[normalized.length - 1].endFrame,
     finalFrame
   );
+
+  // Second pass: when a stretch of captions all share the same startFrame
+  // (STT collapsed all their word timings to one timestamp), distribute them
+  // evenly across the available frame range so the renderer shows them in
+  // sequence instead of stacking them invisibly under the first one.
+  for (let runStart = 0; runStart < normalized.length; runStart += 1) {
+    let runEnd = runStart;
+    while (
+      runEnd < normalized.length - 1 &&
+      normalized[runEnd + 1].startFrame === normalized[runStart].startFrame
+    ) {
+      runEnd += 1;
+    }
+    const runLength = runEnd - runStart + 1;
+    if (runLength <= 1) {
+      continue;
+    }
+    const runStartFrame = normalized[runStart].startFrame;
+    const runEndFrame = runEnd < normalized.length - 1
+      ? normalized[runEnd + 1].startFrame - 1
+      : finalFrame;
+    const totalFrames = Math.max(runLength, runEndFrame - runStartFrame + 1);
+    const slotFrames = Math.max(1, Math.floor(totalFrames / runLength));
+    for (let offset = 0; offset < runLength; offset += 1) {
+      const captionIndex = runStart + offset;
+      const slotStart = runStartFrame + offset * slotFrames;
+      const slotEnd = offset === runLength - 1
+        ? runEndFrame
+        : Math.min(runEndFrame, runStartFrame + (offset + 1) * slotFrames - 1);
+      normalized[captionIndex].startFrame = slotStart;
+      normalized[captionIndex].endFrame = Math.max(slotStart, slotEnd);
+      // Pull the words inside the new slot too so karaoke highlighting works.
+      const wordCount = Array.isArray(normalized[captionIndex].words)
+        ? normalized[captionIndex].words.length
+        : 0;
+      if (wordCount > 0) {
+        const wordSlotFrames = Math.max(
+          1,
+          Math.floor((normalized[captionIndex].endFrame - normalized[captionIndex].startFrame + 1) / wordCount)
+        );
+        normalized[captionIndex].words = normalized[captionIndex].words.map((word, wordIndex) => {
+          const wStart = slotStart + wordIndex * wordSlotFrames;
+          const wEnd = wordIndex === wordCount - 1
+            ? normalized[captionIndex].endFrame
+            : Math.min(normalized[captionIndex].endFrame, wStart + wordSlotFrames - 1);
+          return {...word, startFrame: wStart, endFrame: Math.max(wStart, wEnd)};
+        });
+      }
+    }
+    runStart = runEnd;
+  }
 
   for (const caption of normalized) {
     if (!Array.isArray(caption.words)) {
@@ -863,6 +932,13 @@ const buildTimedCaptions = ({sceneWords, fps, chunkSize, sceneStartFrame, sceneE
     };
   };
 
+  // Hard ceiling on words per caption. When STT timings collapse on a scene
+  // (typical for the last scene when the audio tail is rushed), the duration
+  // check below silently keeps accumulating words and ends up with a 20+ word
+  // caption that wraps to 5+ lines on a 9:16 phone frame. Once we've reached
+  // the target chunk size, push it regardless of how short the duration looks.
+  const reachedChunkTarget = () => currentChunk.length >= chunkSize;
+
   const flushChunk = ({force = false} = {}) => {
     const caption = buildChunkCaption();
 
@@ -872,12 +948,13 @@ const buildTimedCaptions = ({sceneWords, fps, chunkSize, sceneStartFrame, sceneE
     }
 
     const durationFrames = caption.endFrame - caption.startFrame + 1;
+    const bypassDurationGuard = reachedChunkTarget();
 
-    if (!force && durationFrames < minCaptionFrames) {
+    if (!force && durationFrames < minCaptionFrames && !bypassDurationGuard) {
       return;
     }
 
-    if (force && durationFrames < minCaptionFrames && captions.length > 0) {
+    if (force && durationFrames < minCaptionFrames && captions.length > 0 && !bypassDurationGuard) {
       const previousCaption = captions[captions.length - 1];
       previousCaption.text = `${previousCaption.text} ${caption.text}`.trim();
       previousCaption.endFrame = Math.max(previousCaption.endFrame, caption.endFrame);
@@ -892,6 +969,11 @@ const buildTimedCaptions = ({sceneWords, fps, chunkSize, sceneStartFrame, sceneE
     currentChunk = [];
   };
 
+  // Hard cap on words per caption — overrides weakCaptionStarters logic when
+  // chunks would otherwise grow past readable size on a 9:16 phone frame.
+  // Single-line target: chunk size + 1 max.
+  const maxWordsPerCaptionHard = chunkSize + 1;
+
   for (let index = 0; index < sceneWords.length; index += 1) {
     const word = sceneWords[index];
 
@@ -902,8 +984,9 @@ const buildTimedCaptions = ({sceneWords, fps, chunkSize, sceneStartFrame, sceneE
       nextWord &&
       currentChunk.length > 0 &&
       Number(nextWord.endSeconds) - Number(currentChunk[0].startSeconds) >= Number(process.env.CAPTION_MAX_SECONDS || 2.4);
+    const overflowingWords = currentChunk.length >= maxWordsPerCaptionHard;
 
-    if (shouldFlushChunk({currentChunk, nextWord, chunkSize, chunkTooLong, sourceTokens, sourceTokenCursor})) {
+    if (overflowingWords || shouldFlushChunk({currentChunk, nextWord, chunkSize, chunkTooLong, sourceTokens, sourceTokenCursor})) {
       flushChunk();
     }
   }

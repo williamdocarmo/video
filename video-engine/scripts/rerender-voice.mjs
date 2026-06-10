@@ -3,7 +3,7 @@
 // Usage: node scripts/rerender-voice.mjs --slug <slug> [--voice <name>] [--style-prompt <prompt>]
 import "dotenv/config";
 import {spawnSync} from "node:child_process";
-import {access, copyFile, mkdir, readFile, stat, writeFile} from "node:fs/promises";
+import {access, copyFile, mkdir, readFile, rm, stat, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {inferOutputProfileFromDimensions, resolveOutputProfileConfig} from "../../config/output-profiles.mjs";
@@ -20,6 +20,11 @@ const MIN_RENDERED_VIDEO_BYTES = Math.max(
   1024,
   Number.parseInt(process.env.MIN_OUTPUT_VIDEO_BYTES || "131072", 10) || 131072
 );
+const REMOTION_TIMEOUT_MS = Math.max(
+  30000,
+  Number.parseInt(process.env.REMOTION_TIMEOUT_MS || "5400000", 10) || 5400000
+);
+const RERENDER_REEXTRACT_TIMED_WORDS = String(process.env.RERENDER_REEXTRACT_TIMED_WORDS || "false").trim().toLowerCase() === "true";
 
 const parseArgs = (argv) => {
   const parsed = {};
@@ -28,12 +33,31 @@ const parseArgs = (argv) => {
     if (argv[i] === "--voice") { parsed.voice = argv[++i]; continue; }
     if (argv[i] === "--style-prompt") { parsed.stylePrompt = argv[++i]; continue; }
     if (argv[i] === "--output-profile") { parsed.outputProfile = argv[++i]; continue; }
+    if (argv[i] === "--storyboard-file") { parsed.storyboardFile = argv[++i]; continue; }
     if (argv[i] === "--caption-shift-frames") { parsed.captionShiftFrames = Number.parseInt(argv[++i], 10) || 0; continue; }
     if (argv[i] === "--no-render") { parsed.noRender = true; continue; }
     if (argv[i] === "--reuse-existing-audio") { parsed.reuseExistingAudio = true; continue; }
     if (argv[i] === "--provider") { parsed.provider = argv[++i]; continue; }
   }
   return parsed;
+};
+
+const resolveDefaultVoiceName = (provider) => {
+  const normalizedProvider = String(provider || "auto").trim().toLowerCase();
+
+  if (normalizedProvider === "elevenlabs") {
+    return process.env.ELEVENLABS_VOICE_ID || "TX3LPaxmHKxFdv7VOQHJ";
+  }
+
+  if (normalizedProvider === "azure") {
+    return process.env.AZURE_TTS_VOICE || "pt-BR-AntonioNeural";
+  }
+
+  if (["google-gemini-tts", "gemini-tts", "gemini"].includes(normalizedProvider)) {
+    return process.env.GOOGLE_TTS_VOICE || "Iapetus";
+  }
+
+  return process.env.GOOGLE_TTS_VOICE || process.env.TTS_VOICE || "pt-BR-Chirp3-HD-Achernar";
 };
 
 const TRUSTED_TIMED_WORD_SOURCES = new Set(["gcloud-speech-stt", "azure-word-boundary", "elevenlabs-alignment"]);
@@ -113,11 +137,14 @@ const roundMetric = (value, digits = 3) => Number(Number(value || 0).toFixed(dig
 const formatRushedSceneSummary = (scene) =>
   `cena ${scene.sceneIndex + 1} (${scene.timedWordCount} palavras em ${scene.durationSeconds}s, ${scene.wordsPerSecond} palavras/s)`;
 
-const resolveStoryboardPath = async ({runsDir, slug}) => {
+const resolveStoryboardPath = async ({runsDir, slug, storyboardFile = ""}) => {
   const candidates = [
+    storyboardFile
+      ? (path.isAbsolute(storyboardFile) ? storyboardFile : path.resolve(projectRoot, storyboardFile))
+      : "",
     path.join(runsDir, "storyboard.json"),
     path.join(projectRoot, "runs", `${slug}-preview`, "storyboard.json")
-  ];
+  ].filter(Boolean);
 
   for (const candidate of candidates) {
     if (await fileExists(candidate)) {
@@ -254,6 +281,14 @@ const normalizeRenderScenesForRemotion = async ({slug, scenes, storyboardScenes}
   return normalizedScenes;
 };
 
+const buildPostText = (storyboard) => {
+  const caption = String(storyboard?.postCaption || "").trim();
+  const hashtags = Array.isArray(storyboard?.hashtags)
+    ? storyboard.hashtags.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  return [caption, hashtags.join(" ")].filter(Boolean).join("\n\n") + "\n";
+};
+
 const buildFallbackRenderProps = async ({slug, storyboard, outputProfile, existingRenderProps}) => {
   const scenes = [];
 
@@ -277,7 +312,7 @@ const buildFallbackRenderProps = async ({slug, storyboard, outputProfile, existi
     title: existingRenderProps?.title || storyboard.videoTitle || slug,
     hook: existingRenderProps?.hook || storyboard.hook || "",
     cta: existingRenderProps?.cta || storyboard.cta || "",
-    channelHandle: existingRenderProps?.channelHandle || "@teucanal",
+    channelHandle: existingRenderProps?.channelHandle || "",
     musicPath: existingRenderProps?.musicPath || null,
     outputProfile: outputProfile.id,
     compositionId: outputProfile.compositionId,
@@ -615,6 +650,7 @@ const persistCanonicalArtifacts = async ({
   await mkdir(publicAudioDir, {recursive: true});
 
   await writeFile(path.join(runsDir, "storyboard.json"), JSON.stringify(storyboard, null, 2));
+  await writeFile(path.join(runsDir, "post.txt"), buildPostText(storyboard));
   await writeFile(path.join(runsDir, "asset-plan.json"), JSON.stringify(assetPlan, null, 2));
   await writeFile(path.join(runsDir, "render-props.json"), JSON.stringify(renderProps, null, 2));
   await writeFile(path.join(runsDir, "voiceover.json"), JSON.stringify(voiceoverPayload, null, 2));
@@ -632,11 +668,12 @@ const main = async () => {
   }
 
   const slug = args.slug;
-  const voiceName = args.voice || process.env.AZURE_TTS_VOICE || process.env.GOOGLE_TTS_VOICE || "pt-BR-AntonioNeural";
+  const selectedProvider = String(args.provider || process.env.TTS_PROVIDER || "auto").trim().toLowerCase();
+  const voiceName = args.voice || resolveDefaultVoiceName(selectedProvider);
   const stylePrompt = args.stylePrompt || process.env.GOOGLE_TTS_STYLE_PROMPT || "com voz masculina natural, segura e calorosa";
   const captionShiftFrames = Number.isFinite(args.captionShiftFrames) ? args.captionShiftFrames : 0;
   const runsDir = path.join(projectRoot, "runs", slug);
-  const storyboardPath = await resolveStoryboardPath({runsDir, slug});
+  const storyboardPath = await resolveStoryboardPath({runsDir, slug, storyboardFile: args.storyboardFile});
   const storyboard = JSON.parse(await readFile(storyboardPath, "utf8"));
   const existingRenderProps = await loadJsonIfExists(path.join(runsDir, "render-props.json"));
   const existingVoiceover = (await loadJsonIfExists(path.join(runsDir, "voiceover.json"))) || {};
@@ -674,35 +711,41 @@ const main = async () => {
   const aiffPath = path.join(audioDir, "voiceover.next.aiff");
   const existingAudioPath = await resolveExistingAudioPath(projectRoot, slug, canonicalRunAudioPath);
   let audioSourcePath = existingAudioPath;
-
-  const selectedProvider = String(args.provider || process.env.TTS_PROVIDER || "auto").trim().toLowerCase();
   const voicePlan = buildVoiceText(storyboard.scenes);
   let voiceResult;
   let audioDurationSeconds;
 
   if (args.reuseExistingAudio) {
-    process.stderr.write("Reutilizando voiceover.mp3 e reextraindo timedWords reais.\n");
+    process.stderr.write("Reutilizando voiceover.mp3.\n");
     let extractedTiming = null;
+    const canUseStoredTiming =
+      isTrustedTimedWordsSource(existingVoiceover.timedWordsSource) &&
+      timedWordsLookPlausible(existingVoiceover.timedWords);
 
-    try {
-      extractedTiming = await extractTimedWordsFromAudio({
-        mp3Path: existingAudioPath,
-        text: voicePlan.text,
-        languageCode: process.env.VIDEO_LANGUAGE || "pt-BR",
-        sceneSpans: voicePlan.sceneSpans,
-        allowEstimated: false
-      });
-    } catch (error) {
-      process.stderr.write(`Reextracao falhou: ${error instanceof Error ? error.message : String(error)}\n`);
+    if (canUseStoredTiming && !RERENDER_REEXTRACT_TIMED_WORDS) {
+      process.stderr.write(
+        `Reutilizando timedWords salvos da run (${existingVoiceover.timedWordsSource}).\n`
+      );
+    } else {
+      process.stderr.write("Reextraindo timedWords reais a partir do audio...\n");
+
+      try {
+        extractedTiming = await extractTimedWordsFromAudio({
+          mp3Path: existingAudioPath,
+          text: voicePlan.text,
+          languageCode: process.env.VIDEO_LANGUAGE || "pt-BR",
+          sceneSpans: voicePlan.sceneSpans,
+          allowEstimated: false
+        });
+      } catch (error) {
+        process.stderr.write(`Reextracao falhou: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
     }
 
     const canUseExtractedTiming =
       extractedTiming &&
       isTrustedTimedWordsSource(extractedTiming.timedWordsSource) &&
       timedWordsLookPlausible(extractedTiming.timedWords);
-    const canUseStoredTiming =
-      isTrustedTimedWordsSource(existingVoiceover.timedWordsSource) &&
-      timedWordsLookPlausible(existingVoiceover.timedWords);
 
     if (!canUseExtractedTiming && !canUseStoredTiming) {
       throw new Error("Nao consegui timedWords confiaveis para --reuse-existing-audio.");
@@ -836,7 +879,7 @@ const main = async () => {
     title: oldRenderProps.title,
     hook: oldRenderProps.hook,
     cta: oldRenderProps.cta,
-    channelHandle: oldRenderProps.channelHandle || "@teucanal",
+    channelHandle: oldRenderProps.channelHandle || "",
     outputProfile: inferredProfile.id,
     compositionId: inferredProfile.compositionId,
     videoWidth: inferredProfile.width,
@@ -915,26 +958,32 @@ const main = async () => {
   const outDir = path.join(projectRoot, "out");
   await mkdir(outDir, {recursive: true});
   const outPath = path.join(outDir, `${slug}.mp4`);
+  const renderPropsPath = path.join(outDir, `${slug}.render-props.json`);
+  await writeFile(renderPropsPath, JSON.stringify(renderPropsForRemotion, null, 2));
   process.stderr.write(`Renderizando: ${outPath}\n`);
 
-  await runLoggedCommand("npx", [
-    "remotion", "render",
-    "src/index.ts", inferredProfile.compositionId, outPath,
-    `--props=${JSON.stringify(renderPropsForRemotion)}`,
-    `--timeout=${process.env.REMOTION_TIMEOUT_MS || "1800000"}`,
-    `--concurrency=${process.env.REMOTION_CONCURRENCY || "2"}`,
-    `--scale=${process.env.REMOTION_SCALE || "1"}`,
-    `--video-bitrate=${process.env.REMOTION_VIDEO_BITRATE || "9M"}`,
-    `--audio-bitrate=${process.env.REMOTION_AUDIO_BITRATE || "96k"}`,
-    `--x264-preset=${process.env.REMOTION_X264_PRESET || "veryfast"}`
-  ], {
-    compactProgress: true,
-    env: {
-      CI: "1",
-      NO_COLOR: "1",
-      FORCE_COLOR: "0"
-    }
-  });
+  try {
+    await runLoggedCommand("npx", [
+      "remotion", "render",
+      "src/index.ts", inferredProfile.compositionId, outPath,
+      `--props=${renderPropsPath}`,
+      `--timeout=${REMOTION_TIMEOUT_MS}`,
+      `--concurrency=${process.env.REMOTION_CONCURRENCY || "2"}`,
+      `--scale=${process.env.REMOTION_SCALE || "1"}`,
+      `--video-bitrate=${process.env.REMOTION_VIDEO_BITRATE || "9M"}`,
+      `--audio-bitrate=${process.env.REMOTION_AUDIO_BITRATE || "128k"}`,
+      `--x264-preset=${process.env.REMOTION_X264_PRESET || "fast"}`
+    ], {
+      compactProgress: true,
+      env: {
+        CI: "1",
+        NO_COLOR: "1",
+        FORCE_COLOR: "0"
+      }
+    });
+  } finally {
+    await rm(renderPropsPath, {force: true}).catch(() => {});
+  }
   await assertRenderedVideoHealthy({slug, outPath, audioDurationSeconds});
 
   await persistCanonicalArtifacts({

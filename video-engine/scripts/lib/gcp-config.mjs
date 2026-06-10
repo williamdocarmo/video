@@ -35,7 +35,7 @@ export const resolveGcpConfig = (env = process.env) => {
     credentialsPath,
     storyModel: String(env.STORY_MODEL || env.GEMINI_MODEL || "gemini-2.5-flash").trim(),
     visionModel: String(env.VISION_MODEL || env.GEMINI_VISION_MODEL || env.GEMINI_MODEL || "gemini-2.5-flash").trim(),
-    imageModel: String(env.GOOGLE_IMAGE_MODEL || env.IMAGE_MODEL || "gemini-2.5-flash-image").trim(),
+    imageModel: String(env.GOOGLE_IMAGE_MODEL || env.IMAGE_MODEL || "gemini-3.1-flash-image-preview").trim(),
     imageModelFallbacks: String(env.GOOGLE_IMAGE_MODEL_FALLBACKS || env.IMAGE_MODEL_FALLBACKS || "")
       .split(",")
       .map((item) => item.trim())
@@ -43,8 +43,22 @@ export const resolveGcpConfig = (env = process.env) => {
   };
 };
 
+export const getAiplatformHost = (location) => {
+  const normalized = String(location || "").trim().toLowerCase();
+  return normalized === "global" ? "aiplatform.googleapis.com" : `${normalized}-aiplatform.googleapis.com`;
+};
+
+export const resolveVertexModelLocation = (model, fallbackLocation) => {
+  const normalizedModel = String(model || "").trim().toLowerCase();
+  if (/^gemini-3(?:\.\d+)?-.*image/.test(normalizedModel) || normalizedModel === "gemini-3-pro-image-preview") {
+    return "global";
+  }
+  return String(fallbackLocation || "us-central1").trim();
+};
+
 /**
- * Validate that all required Vertex AI env vars are set and credentials file exists.
+ * Validate that all required Vertex AI env vars are set.
+ * Credentials file is optional — if not set, ADC (Application Default Credentials) is used.
  * @param {Record<string, string>} [env=process.env]
  * @returns {GcpConfig} Validated config.
  * @throws {Error} If required variables are missing or credentials file not found.
@@ -61,15 +75,11 @@ export const validateVertexEnv = (env = process.env) => {
     missing.push("GOOGLE_CLOUD_LOCATION");
   }
 
-  if (!hasEnvValue(config.credentialsPath)) {
-    missing.push("GOOGLE_APPLICATION_CREDENTIALS");
-  }
-
   if (missing.length > 0) {
     throw new Error(`Config Vertex incompleta: ${missing.join(", ")}`);
   }
 
-  if (!existsSync(config.credentialsPath)) {
+  if (hasEnvValue(config.credentialsPath) && !existsSync(config.credentialsPath)) {
     throw new Error(`GOOGLE_APPLICATION_CREDENTIALS aponta para ficheiro inexistente: ${config.credentialsPath}`);
   }
 
@@ -85,10 +95,14 @@ let authClientPromise = null;
 export const getGoogleAuthClient = async () => {
   if (!authClientPromise) {
     const config = validateVertexEnv(process.env);
-    const auth = new GoogleAuth({
-      keyFilename: config.credentialsPath,
-      scopes: ["https://www.googleapis.com/auth/cloud-platform"]
-    });
+    const authOpts = {
+      scopes: ["https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/generative-language"],
+      projectId: config.projectId
+    };
+    if (hasEnvValue(config.credentialsPath)) {
+      authOpts.keyFilename = config.credentialsPath;
+    }
+    const auth = new GoogleAuth(authOpts);
     authClientPromise = auth.getClient();
   }
 

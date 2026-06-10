@@ -209,6 +209,27 @@ const normalizeText = (value) =>
 
 const normalizeLowerText = (value) => normalizeText(value).toLowerCase();
 
+const escapeRegex = (value) => String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildWholeWordPattern = (term) => {
+  const escaped = escapeRegex(term).replace(/\s+/g, "\\s+");
+  return new RegExp(`\\b${escaped}\\b`, "i");
+};
+
+const PERSON_NEGATION_PATTERNS = [
+  /\bno\s+(?:extra\s+)?(?:people|person|character|man|woman|human|figure|adult|child|couple)\b/gi,
+  /\bwithout\s+(?:any\s+)?(?:people|person|character|man|woman|human|figure|adult|child|couple)\b/gi,
+  /\bsem\s+(?:qualquer\s+)?(?:pessoas|pessoa|personagem|homem|mulher)\b/gi
+];
+
+const stripNegatedPersonPhrases = (value) => {
+  let text = String(value ?? "");
+  for (const pattern of PERSON_NEGATION_PATTERNS) {
+    text = text.replace(pattern, " ");
+  }
+  return normalizeText(text);
+};
+
 const uniqueStrings = (values) => {
   const seen = new Set();
   const result = [];
@@ -227,8 +248,8 @@ const uniqueStrings = (values) => {
 };
 
 const includesAny = (text, terms) => {
-  const source = normalizeLowerText(text);
-  return terms.some((term) => source.includes(term.toLowerCase()));
+  const source = String(text ?? "");
+  return terms.some((term) => buildWholeWordPattern(term).test(source));
 };
 
 const matchPatternValue = (text, patterns) => {
@@ -262,8 +283,8 @@ const asArray = (value) => {
 };
 
 const extractKnownTerms = (text, terms) => {
-  const source = normalizeLowerText(text);
-  return terms.filter((term) => source.includes(term.toLowerCase()));
+  const source = String(text ?? "");
+  return terms.filter((term) => buildWholeWordPattern(term).test(source));
 };
 
 const extractFocusRegions = (text) => {
@@ -286,7 +307,7 @@ const extractFocusRegions = (text) => {
 };
 
 const extractConcreteReferences = (sceneText) => {
-  const source = normalizeLowerText(sceneText);
+  const source = stripNegatedPersonPhrases(sceneText);
   const references = [];
 
   if (includesAny(source, PERSON_TERMS)) references.push("person");
@@ -302,14 +323,14 @@ const extractConcreteReferences = (sceneText) => {
 };
 
 const countPeopleSignals = (text) => {
-  const source = normalizeLowerText(text);
-  const hits = PERSON_TERMS.reduce((count, term) => count + (source.includes(term.toLowerCase()) ? 1 : 0), 0);
+  const source = stripNegatedPersonPhrases(text);
+  const hits = PERSON_TERMS.reduce((count, term) => count + (buildWholeWordPattern(term).test(source) ? 1 : 0), 0);
   const explicitPlural = /\bpeople\b/i.test(source) || /\bcouple\b/i.test(source) || /\bgroup\b/i.test(source) || /\bcrowd\b/i.test(source);
   return explicitPlural ? Math.max(2, hits) : Math.max(1, hits > 0 ? 1 : 0);
 };
 
 const inferSubjectKind = (text) => {
-  const source = normalizeLowerText(text);
+  const source = stripNegatedPersonPhrases(text);
 
   if (includesAny(source, PERSON_TERMS)) return "person";
   if (includesAny(source, DEVICE_TERMS)) return "device";

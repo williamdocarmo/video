@@ -2,6 +2,270 @@
 
 ---
 
+## [2026-06-10] Correção da corrida orphan-detector ↔ worker-sync e concorrência na lane heavy
+
+### Resumo
+Eliminada a cascata de falhas em que o servidor re-ingeria as próprias escritas de `jobs.json`, ressuscitava registros terminais defasados e matava processos recém-iniciados. A lane heavy ganhou concorrência configurável (`HEAVY_LANE_CONCURRENCY`, default 1; produção em 2) para quase dobrar a vazão de lotes, já que o pipeline é majoritariamente limitado por APIs remotas. Detalhes em `docs/2026-06-10-confiabilidade-fila-e-concorrencia.md`.
+
+### O que foi implementado
+
+**Confiabilidade da fila**
+- `persistJobs`/`persistJobsSync` atualizam `jobsFileMtimeMs` (disk-sync só processa escritas externas)
+- status terminal do disco só é adotado/mata processo se for mais novo que `processStartedAt`
+- orphan detector com keepalive de heartbeat (30s) para processos vivos, restauração de `processId` clobberado (`getJobProcessPid`) e liberação explícita do slot da lane ao resolver órfãos
+- frescor do heartbeat calculado por `max(heartbeatAt, updatedAt, startedAt, processStartedAt, stageUpdatedAt)`
+
+**Concorrência**
+- lane heavy com N slots via `HEAVY_LANE_CONCURRENCY` (runner-loops com claim síncrono; preview segue 1 slot)
+- `getActiveJobIds()` expõe `activeHeavyJobIds[]` (campos legados preservados)
+- drop-in systemd `throughput.conf` com `HEAVY_LANE_CONCURRENCY=2`; `REMOTION_CONCURRENCY` mantido em 1 enquanto a VM tiver ≤16 GB
+
+---
+
+## [2026-04-22] Dual-channel mirror mode, timeout hardening, storyboard-first UI, publish copy split
+
+### Resumo
+Rodada de estabilização e alinhamento do fluxo real do produto: geração espelhada para `@ate2min + @quiet2min` com os mesmos assets, timeout por tipo de job e por inatividade, suporte real a storyboards com múltiplas imagens por cena, aba `Template`, limpeza da UI para o fluxo baseado em JSON pronto, e separação entre `title`, `publishTitle`, `caption` e `socialCaption` para publicação cross-platform.
+
+### O que foi implementado
+
+**Dual-channel**
+- nova opção de geração dupla para `@ate2min + @quiet2min`
+- storyboard-base em `pt-BR`
+- tradução apenas do texto visível ao usuário para `en-US`
+- job espelho em inglês reutiliza os assets via `reuseAssetsFromSlug`
+- dependência explícita entre o job primário e o job espelho
+
+**Fila e runtime**
+- timeout por tipo de job (`generate`, `render-only`, `scene-regenerate`, `audio-prep`, `validate-only`)
+- timeout por inatividade
+- terminação da árvore inteira de processos em job travado
+- mensagens de timeout/restart mais explícitas no estado do job
+
+**Storyboard e assets**
+- suporte real a `scene.shots[]` com múltiplas imagens por cena
+- preservação da `duration` por shot
+- `mustShow` com inferência/fallback robusto quando não vier explícito no shot
+- template operacional consolidado em torno de `10–12` cenas, `28–32` imagens e `~54s–70s`
+
+**UI**
+- remoção do peso das opções antigas de idioma/estilo/tom como knobs primários
+- aba `Template` com regras, prompt para Codex/Claude e JSON-base
+- copy da tela ajustado para deixar claro quando o storyboard JSON pula a etapa de preview
+- biblioteca com campos separados para título interno, título de publicação e legenda curta
+
+**Publicação**
+- `title`: uso interno na biblioteca
+- `publishTitle`: título curto para YouTube/publicação
+- `caption`: descrição base longa
+- `socialCaption`: copy curta segura para cross-post/helper
+- limites aplicados:
+  - `publishTitle`: `100`
+  - `caption`: `5000`
+  - `socialCaption`: `2200`
+- `agendador.online` passa a tentar enviar `title` separado
+- TikTok helper passa a usar `publishTitle` + `socialCaption`
+
+**Documentação**
+- atualização de `README.md`, `PRODUCTION-RUNBOOK.md`, `docs/api-reference.md`, `docs/openapi.yaml`, `docs/operations-reference.md`
+- novo consolidado em `docs/2026-04-22-dual-channel-publish-update.md`
+- `top.md` revisto para o mapa de leitura atual
+
+---
+
+## [2026-04-22] Runtime split, OpenAPI served by runtime, structured logs
+
+### Resumo
+Separação operacional do runtime em `all` / `api` / `worker`, novos entrypoints para API e worker, sincronização de jobs por snapshot em disco, health endpoint com role/auth source, OpenAPI e docs markdown servidos pelo próprio runtime, logging estruturado JSON para requests/jobs, e remoção do fallback hardcoded `007007` em favor de password explícita por env ou password forte gerada em `.web-ui/runtime-auth.json`.
+
+### O que foi implementado
+
+**Runtime split**
+- `web/api-server.mjs` para modo `api`
+- `web/worker-engine.mjs` para modo `worker`
+- `web/server.mjs` continua a suportar o modo histórico `all`
+- `VIDEO_STUDIO_ROLE=all|api|worker`
+- `WEB_DATA_DIR` para isolar estado local por ambiente/teste
+
+**Estado compartilhado**
+- `jobs.json` continua a ser o snapshot partilhado entre processos
+- merge por frescura (`updatedAt`/heartbeat) na persistência
+- sincronização periódica de jobs a partir do snapshot em disco
+
+**Observability**
+- logs JSON para requests HTTP, startup, shutdown e eventos de job
+- `GET /api/health` agora expõe também `role` e `auth.source`
+- `GET /api/openapi.yaml`
+- `GET /api/docs/:name`
+
+**Auth**
+- removido o fallback hardcoded `007007`
+- prioridade: `VIDEO_STUDIO_PASSWORD`
+- fallback seguro: password gerada e persistida em `.web-ui/runtime-auth.json`
+
+**Deploy**
+- novos unit files:
+  - `deploy/codex-video-api.service`
+  - `deploy/codex-video-worker.service`
+- `deploy/codex-video-ui.service` mantém compatibilidade com modo unificado
+
+---
+
+## [2026-04-22] Storyboard upload, Gemini 3.x models, TTS migration, UX polish, hardening
+
+### Resumo
+Storyboard externo via UI (colar JSON ou carregar ficheiro), integração dos modelos Gemini 3.1 Flash Image e Pro Image como default de geração visual, migração do TTS de Gemini 2.5 para 3.1 Flash TTS, remoção do overlay de texto na thumbnail e do intro text no vídeo, redução do volume da música de fundo para 0.8%, fallback automático para tentativas rejeitadas de imagem, timeouts por lane na fila de jobs, bloqueio de ficheiros sensíveis no `/api/file`, paginação de jobs, toast notifications, limpeza de `.tmp` no startup, e vários ajustes de QA.
+
+### O que foi implementado
+
+**Storyboard externo via UI**
+- Campo textarea + botão de upload de ficheiro `.json` na tab "Criar"
+- Validação inline: parse de JSON, verificação de `scenes[]`, contagem de cenas com feedback visual
+- Se fornecido, o pipeline salta a geração de storyboard pelo Gemini e vai direto para assets + render
+- Se o storyboard externo incluir visual prompts por cena, o pipeline bypassa o preset visual selecionado
+- `sceneCountOk` na QA relaxado para storyboards externos (aceita ≥1 cena em vez do mínimo do perfil)
+
+**Modelos de imagem Gemini 3.x**
+- `gemini-3.1-flash-image-preview` como modelo padrão (`DEFAULT_IMAGE_MODEL` em `presets.mjs`)
+- `gemini-3-pro-image-preview` adicionado como opção no dropdown de modelos
+- Modelos anteriores (Imagen 4.0 Fast/Full/Ultra, Gemini 2.5 Flash Image) continuam disponíveis
+- Endpoint: `generativelanguage.googleapis.com` (API remota, sem processamento local)
+
+**TTS — Migração para Gemini 3.1**
+- Modelo TTS padrão atualizado de `gemini-2.5-flash-tts` para `gemini-3.1-flash-tts-preview`
+- Fallback para Chirp3-HD mantido em caso de erro transiente
+
+**Thumbnail e vídeo**
+- Overlay de texto removido da thumbnail — agora usa imagem AI limpa (crop + resize, sem headline)
+- Intro text overlay removido do vídeo (hook text já não aparece nos primeiros frames)
+- Volume da música de fundo reduzido de 2% para 0.8% (`volume={0.008}`)
+
+**Fallback para tentativas rejeitadas de imagem**
+- Se todos os attempts de um segmento falharem no audit visual, o pipeline usa a melhor tentativa rejeitada em vez de falhar o job inteiro
+- Log: `"FALLBACK using rejected attempt (audit failed but usable)"`
+
+**Fila de jobs — Timeouts**
+- Lane `preview`: timeout de 5 minutos
+- Lane `heavy`: timeout de 30 minutos
+- Processo morto com SIGTERM → SIGKILL após 5s se exceder o timeout
+
+**Segurança — Bloqueio de ficheiros sensíveis**
+- `/api/file` bloqueia acesso a: `.env`, `.key`, `secrets.mjs`, `secrets.json`, `gcp-ate.json`, `jobs.json`
+
+**Persistência e performance**
+- `logTail` limitado a 50 linhas na persistência de jobs (reduz tamanho de `jobs.json`)
+- `/api/jobs` paginado: `?limit=50&offset=0` (default 50, max 500)
+- Slug length aumentado de 60 para 80 caracteres
+
+**Frontend / UX**
+- Toast notifications substituem `window.alert()` em toda a UI (7 ocorrências)
+- Botão de submit desabilitado durante request para evitar duplo-clique
+- Botão duplicado "Aprovar edição e gerar vídeo" no fundo do formulário de preview
+
+**Limpeza e startup**
+- Limpeza automática de ficheiros em `.tmp/system/` com mais de 24h no startup do servidor
+- Evita acumulação de frames Remotion temporários
+
+**QA — Ajustes**
+- `durationTargetOk` tornado não-bloqueante (warning em vez de falha)
+- `sceneCountOk` relaxado para storyboards externos (aceita qualquer contagem ≥1)
+
+---
+
+## [2026-04-17] Recovery hardening, scene manual review, UI fixes, QA adjustment, music catalog
+
+### Resumo
+Pacote de estabilização operacional focado em bugs/configuração e recuperação de runs: limpeza de scripts quebrados, retenção de jobs e temp files, upload de vídeo sem carregar tudo em memória, correção de resume/render com payload grande, revisão manual de tentativas de imagem rejeitadas, correção de seleção ElevenLabs nos canais `ate2min`/`quiet2min`, ajuste do layout da tab Criar, QA menos arbitrário para shorts de 60s com 8 cenas válidas, remoção de trilhas quebradas e catalogação da biblioteca local de música.
+
+### O que foi implementado
+
+**Estabilidade do backend e recovery**
+- `web/server.mjs`: retenção de jobs concluídos/falhados, limpeza de `jobs.json.*.tmp`, limpeza real de `streams`, consistência entre `:id` da rota e `body.jobId`
+- Resume/render passou a usar arquivo de props em vez de payload inline enorme
+- Novo fluxo de revisão manual de imagem rejeitada:
+  - `GET /api/jobs/:id/scene-review`
+  - `POST /api/jobs/:id/approve-scene-attempt`
+- Aprovação manual reconstrói o clip da cena, atualiza manifestos e continua o recovery
+- `web/lib/job-state.mjs`: recovery source passa a preferir o `generate` completo, não o preview
+
+**Pipeline de imagem**
+- `scripts/generate-google-assets.mjs`: cenas que pedem múltiplos braços de forma intencional deixaram de conflitar com o `negativePrompt`
+- O audit visual ficou menos rígido para esse caso simbólico, mantendo reprovação quando a anatomia está realmente incoerente
+
+**Frontend / UX**
+- `web/public/index.html`, `web/public/styles.css`: aba Criar reestruturada para layout de workspace com coluna lateral sticky
+- `web/public/app.js`: correção da persistência de `ElevenLabs` em `ate2min` e `quiet2min`
+- UI de detalhe do job ganhou galeria de revisão manual das tentativas rejeitadas
+
+**QA e validação**
+- `video-engine/scripts/validate-run.mjs`: vídeos de até 60s passam a aceitar 8 cenas como mínimo válido
+- Isso evita reprovação de vídeos bons por regra arbitrária de 9 cenas
+
+**Áudio / música**
+- `video-engine/src/ShortVideo.tsx`: volume da trilha manteve-se em `0.02`
+- Confirmado que a opção de música depende do checkbox do site, não do texto do roteiro
+- Removidas 8 trilhas corrompidas da pasta local de música
+- Novo script `scripts/catalog-background-music.mjs` gera catálogo local da biblioteca
+
+**Documentação e limpeza**
+- `video-engine/package.json`: remoção dos scripts quebrados `envato:session` e `envato:download`
+- `README.md`, `top.md`: documentação alinhada com o comportamento real
+- `video-engine/src/ShortVideo.tsx`: remoção de prop duplicada
+
+### Artefatos gerados
+- Catálogo de música:
+  - `/root/Documents/scripts/envato/music/catalog.json`
+  - `/root/Documents/scripts/envato/music/catalog.csv`
+  - `/root/Documents/scripts/envato/music/catalog.md`
+
+### Observações
+- O vídeo `2026-04-16-voce-nao-esta-atrasado-voce-esta-distraido` foi recuperado com sucesso via aprovação manual da cena 2, render final e QA final concluída.
+- A escolha de música continua aleatória entre as faixas válidas remanescentes, salvo quando `DEFAULT_MUSIC_FILE` estiver definido.
+
+---
+
+## [2026-04-14] AI-generated thumbnail via storyboard prompt
+
+### Resumo
+O LLM agora gera um campo `thumbnailPrompt` no storyboard — um prompt de imagem em inglês optimizado para criar capas de vídeo com alto CTR. Esse prompt é usado para gerar uma imagem nova via Vertex AI (Gemini Flash Image por padrão), que substitui o frame extraído do vídeo como base da thumbnail. Fallback silencioso se o campo estiver ausente ou a geração falhar.
+
+### O que foi implementado
+
+**Schema e regras LLM (`video-engine/scripts/lib/llm-provider.mjs`)**
+- `thumbnailPrompt` adicionado ao schema Zod (string, max 300, optional), JSON schema (properties + required), e `requestedShape`
+- 11 regras de thumbnail no `buildGenerationMessages`: sujeito dominante, emoção concreta, contraste de cores, sem texto, sujeito no terço superior, curiosity gap
+- Regra de review (rule 15-16) no `buildReviewMessages`
+- Preservação em `buildExpansionMessages` e `buildCompressionMessages`
+- Preservação/melhoria em `buildRepairMessages`
+- Fallback para string vazia em `normalizeStoryboard` e `fallbackStoryboard` (EN + PT)
+
+**Geração de thumbnail AI (`video-engine/scripts/make-plan1-video.mjs`)**
+- Nova função `generateThumbnail()`: lê `thumbnailPrompt` do storyboard, prepend do `stylePrompt` + `styleLockPrompt` do preset visual, gera imagem via `generateVertexImage()`
+- Modelo configurável via `THUMBNAIL_IMAGE_MODEL` env (default: `gemini-2.5-flash-image`)
+- Aspect ratio do perfil de saída (9:16 vertical, 16:9 horizontal)
+- Crop pós-geração via sharp: remove 25% inferior, resize para 1080×1920 com `position: top` — força sujeito no terço superior independente do modelo
+- Fallback silencioso: se `thumbnailPrompt` vazio/ausente, ou geração falhar, usa `qaFramePaths[0]` (comportamento anterior)
+- Imagem AI passada como `sourceFramePath` ao `createThumbnailPoster()` existente (overlays de texto mantidos)
+
+**Dependências**
+- `sharp@0.33.5` adicionado ao `video-engine/package.json`
+
+### Arquivos afetados
+
+| Arquivo | Mudança |
+|---------|---------|
+| `video-engine/scripts/lib/llm-provider.mjs` | Schema Zod/JSON, regras em 5 builders de mensagens, normalização, fallback |
+| `video-engine/scripts/make-plan1-video.mjs` | Import `generateVertexImage`, função `generateThumbnail()`, wiring no pipeline |
+| `video-engine/package.json` | +sharp@0.33.5 |
+| `video-engine/package-lock.json` | Lock atualizado |
+
+### Custo adicional por vídeo
+- LLM: $0 (campo extra na mesma chamada de storyboard)
+- Imagem: ~$0.02–0.04 (1 chamada API)
+- Tempo: +5–15s
+
+---
+
 ## [2026-04-12b] UI autonomy features, image audit fix, model default update
 
 ### Resumo

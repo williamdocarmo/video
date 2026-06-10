@@ -1,0 +1,95 @@
+TEMPLATE PADRAO PARA STORYBOARDS CURTOS VERTICAIS
+
+1. Objetivo
+- gerar um JSON completo para short vertical 9:16
+- quando houver titulo e conteudo/script, transformar o material em uma historia rapida, concreta e visual
+- padrao para @foiumaideia: curiosidade, tecnologia, negocio, historia e impacto cultural com ritmo nativo de Shorts
+
+2. Duracao e ritmo
+- duracao maxima: 60s
+- alvo ideal: 55s a 60s
+- exatamente 12 cenas para videos de ate 60s
+- cada cena deve ter 1 ideia narrativa e 1 imagem principal clara
+- ritmo medio: 4s a 5s por cena
+- primeiros 3s: pelo menos 2 mudancas visuais ou 1 imagem extremamente forte com hook direto
+
+3. Estrutura obrigatoria das 12 cenas
+- 01 Hook: consequencia, ironia ou absurdo principal
+- 02 Contexto rapido: onde e quando a historia comeca
+- 03 Medo, problema ou conflito
+- 04 Mecanismo: como a ideia funciona
+- 05 Por que parecia errado, estranho ou impossivel
+- 06 Primeiro uso, validacao ou prova
+- 07 Crescimento inicial
+- 08 Resistencia, protesto ou backlash
+- 09 Virada de escala ou legitimidade
+- 10 Consequencia permanente
+- 11 Contraste antes/depois ou hoje
+- 12 Payoff final + CTA curto fora da narracao quando aplicavel
+
+4. Regras de texto
+- narracao em pt-BR natural, curta e falada
+- uma ideia por frase
+- sem tom coach, moral da historia ou frase generica
+- sem comecar cenas com muletas: "So que", "Mas olha so", "Ao mesmo tempo", "Agora", "Na pratica"
+- overlay curto: 2 a 4 palavras sempre que possivel
+- cada cena precisa empurrar a historia para a frente
+- CTA deve ficar no campo cta, nao dentro da narracao
+
+5. Regras de imagem
+- cada cena DEVE conter imagePrompts com 1 a 4 prompts detalhados
+- cada imagePrompt deve estar em ingles ASCII
+- cada imagePrompt deve seguir esta ordem: subject, action, setting, composition/framing, camera angle/lens, lighting, style/material, mood, 9:16 mobile clarity, negative constraints
+- searchQuery e candidateQueries continuam compactos e em ingles ASCII
+- imagePrompts sao prompts diretos para geracao de imagem, mais ricos do que searchQuery
+- uma unica identidade visual do inicio ao fim
+- sem texto legivel, logos, watermark, UI labels, placas legiveis, graficos, colagem, split-screen ou montagem
+- cada imagem deve mostrar um frame coerente: um lugar, um assunto dominante, uma acao fisica
+- variar enquadramento: close, wide, over-the-shoulder, top-down, reaction, object detail, crowd/environment
+
+6. Audio
+- preferir ElevenLabs para payloads finais quando disponivel
+- voz recomendada para pt-BR documental envolvente: Ana Alice BR
+- voiceId recomendado: ORgG8rwdAiMYRug8RJwR
+- modelId recomendado: eleven_multilingual_v2
+- estilo: narracao documental curta, curiosa, firme, com diccao limpa, ritmo alto e pausas naturais
+
+7. Chaves obrigatorias no JSON
+- videoTitle
+- hook
+- postCaption
+- hashtags
+- cta
+- audio
+- thumbnailPrompt
+- styleNotes
+- imagePromptRules
+- scenes
+
+8. Chaves obrigatorias em cada cena
+- title
+- duration
+- narration
+- overlay
+- sceneType
+- searchQuery
+- visualGoal
+- candidateQueries
+- imagePrompts
+- shots
+
+9. Chaves obrigatorias em cada shot
+- shotType
+- duration
+- visualGoal
+- searchQuery
+- imagePrompt
+- candidateQueries
+
+10. Padrao de qualidade
+- hook vende a curiosidade inteira do video
+- meio explica por que aquilo parecia absurdo e por que funcionou
+- final fecha com ironia, consequencia, comparacao ou dado forte
+- se houver numero, data ou escala forte, usar cedo
+- se houver resistencia historica, tornar visualmente obvia
+- se o tema envolver tecnologia, mostrar pessoas e consequencias reais, nao abstracoes

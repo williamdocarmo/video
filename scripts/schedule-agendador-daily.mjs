@@ -71,7 +71,7 @@ const parseArgs = (argv) => {
     firstFile: "",
     deletePendingIds: [],
     dryRun: false,
-    maxUploadMb: 24
+    maxUploadMb: 900
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -261,9 +261,9 @@ const ensureUploadable = async (inputPath, {compressedDir, maxUploadMb, dryRun})
   await mkdir(compressedDir, {recursive: true});
   const outputPath = path.join(compressedDir, path.basename(inputPath));
   const attempts = [
-    {videoBitrate: "1000k", audioBitrate: "96k"},
-    {videoBitrate: "800k", audioBitrate: "80k"},
-    {videoBitrate: "650k", audioBitrate: "64k"}
+    {videoBitrate: "4000k", audioBitrate: "128k"},
+    {videoBitrate: "2500k", audioBitrate: "96k"},
+    {videoBitrate: "1500k", audioBitrate: "80k"}
   ];
 
   for (const attempt of attempts) {
@@ -275,7 +275,7 @@ const ensureUploadable = async (inputPath, {compressedDir, maxUploadMb, dryRun})
       "-i",
       inputPath,
       "-vf",
-      "scale='min(720,iw)':-2:force_original_aspect_ratio=decrease",
+      "scale='min(1080,iw)':-2:force_original_aspect_ratio=decrease",
       "-r",
       "30",
       "-c:v",

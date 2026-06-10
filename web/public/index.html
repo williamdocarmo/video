@@ -7,8 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/styles.css?v=20260407-ui3">
+    <link rel="stylesheet" href="/styles.css?v=20260422-ui-refresh">
   </head>
   <body>
     <div class="page-shell">
@@ -21,6 +20,7 @@
           <button type="button" class="topbar-tab" data-tab-target="logs">Pipeline</button>
           <button type="button" class="topbar-tab" data-tab-target="videos">Biblioteca</button>
           <button type="button" class="topbar-tab" data-tab-target="layout">Estilos</button>
+          <button type="button" class="topbar-tab" data-tab-target="template">Template</button>
         </nav>
         <div class="topbar-status">
           <span class="topbar-pill"><span class="topbar-pill-label">Fila</span> <strong id="queueCount">0</strong></span>
@@ -30,67 +30,92 @@
       </header>
 
       <section class="tab-panel" data-tab-panel="workspace">
-        <main class="layout">
-          <section class="panel panel-command">
-            <div class="panel-head">
+        <main class="workspace-shell">
+          <section class="panel panel-hero workspace-intro">
+            <div class="workspace-intro-copy">
               <p class="panel-kicker">Launch</p>
-              <h2>Novo vídeo</h2>
-              <p>Escreva o briefing, ajuste o perfil e dispare preview ou geração final sem saltar entre telas.</p>
+              <h1>Novo vídeo</h1>
+              <p>Cole o storyboard JSON preenchido, ajuste formato e voz e dispare preview ou geração final sem empilhar tudo numa coluna única.</p>
             </div>
+            <div class="workspace-intro-card">
+              <p class="workspace-intro-label">Fluxo recomendado</p>
+              <strong>Storyboard JSON → preview → ajuste → render final</strong>
+              <p>Preview primeiro continua a rota mais segura quando ainda falta validar estrutura, timing ou narração antes do render final.</p>
+            </div>
+          </section>
 
-            <form id="generateForm" class="stack">
-              <div class="form-section">
-                <div class="form-section-head">
-                  <p class="section-chip">Entrada</p>
-                  <h3>Assunto e contexto</h3>
-                </div>
-                <label class="field">
-                  <span>Título / assunto</span>
-                  <input type="text" name="title" placeholder="Ex.: Como a IA vai mudar o trabalho em 2030">
-                  <small id="titleHint" class="field-hint">Se não colar texto-base, use um título específico com pelo menos 6 palavras.</small>
-                </label>
-
-                <label class="field">
-                  <span>Texto completo para o Gemini usar como base</span>
-                  <textarea
-                    name="sourceText"
-                    rows="9"
-                    placeholder="Cole aqui o artigo inteiro, notas, briefing ou qualquer texto-base. Se deixar vazio, o pipeline usa só o título."
-                  ></textarea>
-                  <small id="sourceTextHint" class="field-hint">Com texto-base, o pipeline fica mais estável e reduz falhas do Gemini no storyboard/plano visual.</small>
-                </label>
-              </div>
-
-              <div class="form-section">
-                <div class="form-section-head">
-                  <p class="section-chip">Configuração</p>
-                  <h3>Formato, ritmo e imagem</h3>
-                </div>
-                <div class="grid two">
+          <form id="generateForm" class="workspace-form">
+            <div class="workspace-grid">
+              <div class="workspace-main stack">
+                <div class="form-section form-section-primary">
+                  <div class="form-section-head">
+                    <p class="section-chip">Entrada</p>
+                    <h3>Assunto e contexto</h3>
+                    <p class="form-section-copy">Use esta coluna para colar o storyboard pronto e complementar o contexto quando precisar. O resto fica concentrado na lateral para evitar rolagem desnecessária.</p>
+                  </div>
                   <label class="field">
-                    <span>Idioma</span>
-                    <select name="language" id="generateLanguage"></select>
+                    <span>Título / assunto</span>
+                    <input type="text" name="title" placeholder="Ex.: Como a IA vai mudar o trabalho em 2030">
+                    <small id="titleHint" class="field-hint">Se não colar texto-base, use um título específico com pelo menos 6 palavras.</small>
                   </label>
 
+                  <label class="field field-source">
+                    <span>Texto completo para o Gemini usar como base</span>
+                    <textarea
+                      name="sourceText"
+                      rows="11"
+                      placeholder="Cole aqui o artigo inteiro, notas, briefing ou qualquer texto-base. Se deixar vazio, o pipeline usa só o título."
+                    ></textarea>
+                    <small id="sourceTextHint" class="field-hint">Com texto-base, o pipeline fica mais estável e reduz falhas do Gemini no storyboard/plano visual.</small>
+                  </label>
+
+                  <label class="field field-source">
+                    <span>Storyboard JSON <small>(opcional — salta a geração pelo Gemini)</small></span>
+                    <textarea
+                      name="storyboardJson"
+                      id="generateStoryboardJson"
+                      rows="6"
+                      placeholder='Cole o JSON do storyboard ou use o botão para carregar um ficheiro .json'
+                    ></textarea>
+                    <div class="field-note-row">
+                      <input type="file" id="storyboardFileInput" accept=".json" class="hidden">
+                      <button type="button" id="storyboardFileButton" class="button small ghost">Carregar ficheiro .json</button>
+                      <button type="button" id="storyboardClearButton" class="button small ghost hidden">Limpar</button>
+                    </div>
+                    <small id="storyboardJsonHint" class="field-hint">Se fornecido, o pipeline usa este storyboard em vez de gerar um novo. Precisa ter <code>scenes[]</code> com pelo menos 1 cena.</small>
+                  </label>
+                </div>
+              </div>
+
+              <aside class="workspace-sidebar">
+                <div class="form-section">
+                  <div class="form-section-head">
+                    <p class="section-chip">Configuração</p>
+                    <h3>Formato, pipeline e render</h3>
+                  </div>
                   <label class="field">
                     <span>Formato de saída</span>
                     <select name="outputProfile" id="generateOutputProfile"></select>
                     <small id="outputProfileHint" class="field-hint"></small>
                   </label>
-                </div>
 
-                <label class="field">
-                  <span>Modo de geração</span>
-                  <select name="generationMode" id="generateGenerationMode"></select>
-                  <small id="generationModeHint" class="field-hint"></small>
-                </label>
+                  <div class="grid two">
+                    <label class="field">
+                      <span>Modo de geração</span>
+                      <select name="generationMode" id="generateGenerationMode"></select>
+                      <small id="generationModeHint" class="field-hint"></small>
+                    </label>
 
-                <div class="grid two">
-                  <label class="field">
-                    <span>Duração</span>
-                    <select name="targetSeconds" id="generateDuration"></select>
-                    <small id="durationHint" class="field-hint"></small>
-                  </label>
+                    <label class="field">
+                      <span>Duração</span>
+                      <select name="targetSeconds" id="generateDuration"></select>
+                      <small id="durationHint" class="field-hint"></small>
+                    </label>
+                  </div>
+
+                  <p class="config-summary">
+                    Idioma, tom e direção visual passam a vir automaticamente do preset do canal e dos defaults do backend quando o storyboard JSON já vem pronto.
+                  </p>
 
                   <label class="field">
                     <span>Modelo de imagem</span>
@@ -99,94 +124,98 @@
                       <small id="imageModelHint" class="field-hint"></small>
                       <small id="imageModelCost" class="field-pill hidden"></small>
                     </div>
-                  </label>
-                </div>
-
-                <div class="grid two">
-                  <label class="field">
-                    <span id="generateImageStyleLabel">Estilo de imagem</span>
-                    <select name="imageStyle" id="generateImageStyle"></select>
-                    <small id="imageStyleHint" class="field-hint"></small>
-                    <div id="imageStylePreview" class="style-preview hidden">
+                    <div id="imageModelPreview" class="style-preview hidden">
                       <div class="style-preview-copy">
-                        <p class="style-preview-kicker">Readout visual</p>
-                        <strong id="imageStylePreviewLabel">Estilo selecionado</strong>
-                        <p id="imageStylePreviewDescription">Sem descrição adicional.</p>
-                        <a id="imageStylePreviewLink" class="text-link style-preview-link" href="#generateImageStyle" target="_blank" rel="noreferrer">Abrir referência</a>
+                        <p class="style-preview-kicker">Exemplo de render</p>
+                        <strong id="imageModelPreviewLabel">Modelo selecionado</strong>
+                        <p id="imageModelPreviewDescription">Sem descrição adicional.</p>
                       </div>
-                      <a id="imageStylePreviewImageLink" class="style-preview-thumb hidden" href="#generateImageStyle" target="_blank" rel="noreferrer">
-                        <img id="imageStylePreviewImage" alt="Preview do estilo selecionado">
+                      <a id="imageModelPreviewImageLink" class="style-preview-thumb hidden" href="#generateImageModel" target="_blank" rel="noreferrer">
+                        <img id="imageModelPreviewImage" alt="Exemplo do modelo selecionado">
                       </a>
                     </div>
                   </label>
+                </div>
+
+                <div class="form-section">
+                  <div class="form-section-head">
+                    <p class="section-chip">Saída</p>
+                    <h3>Voz, canal e execução</h3>
+                  </div>
+                  <div class="grid two">
+                    <label class="field">
+                      <span>Provedor de áudio</span>
+                      <select name="audioProvider" id="generateAudioProvider">
+                        <option value="gcp">Google Cloud TTS</option>
+                        <option value="elevenlabs" selected>ElevenLabs</option>
+                      </select>
+                    </label>
+
+                    <label class="field">
+                      <span>Voz</span>
+                      <select name="voice" id="generateVoice" data-custom-target="generateCustomVoice"></select>
+                      <small id="voiceHint" class="field-hint"></small>
+                    </label>
+
+                    <label class="field hidden" id="generateCustomVoiceField">
+                      <span>Voz personalizada</span>
+                      <input type="text" name="customVoice" id="generateCustomVoice" placeholder="Ex.: Charon ou Kore">
+                    </label>
+                  </div>
 
                   <label class="field">
-                    <span>Estilo de roteiro</span>
-                    <select name="tone" id="generateTone"></select>
-                    <small id="toneHint" class="field-hint"></small>
-                  </label>
-                </div>
-              </div>
-
-              <div class="form-section">
-                <div class="form-section-head">
-                  <p class="section-chip">Saída</p>
-                  <h3>Voz, canal e execução</h3>
-                </div>
-                <div class="grid two">
-                  <label class="field">
-                    <span>Provedor de áudio</span>
-                    <select name="audioProvider" id="generateAudioProvider">
-                      <option value="gcp" selected>Google Cloud TTS</option>
-                      <option value="elevenlabs">ElevenLabs</option>
-                    </select>
+                    <span>Canal de destino</span>
+                    <select name="channel" id="generateChannel"></select>
+                    <small id="channelHint" class="field-hint"></small>
                   </label>
 
-                  <label class="field">
-                    <span>Voz</span>
-                    <select name="voice" id="generateVoice" data-custom-target="generateCustomVoice"></select>
-                    <small id="voiceHint" class="field-hint"></small>
-                  </label>
-
-                  <label class="field hidden" id="generateCustomVoiceField">
-                    <span>Voz personalizada</span>
-                    <input type="text" name="customVoice" id="generateCustomVoice" placeholder="Ex.: Charon ou Kore">
-                  </label>
+                  <div class="field">
+                    <span>Distribuição</span>
+                    <label class="check" id="generateDualChannelsWrap">
+                      <input type="checkbox" name="generateForBothChannels" id="generateDualChannels">
+                      <span>Gerar para os dois canais: @ate2min + @quiet2min</span>
+                    </label>
+                    <small id="dualChannelHint" class="field-hint">
+                      Base em pt-BR para @ate2min; a versão em inglês para @quiet2min reaproveita os mesmos assets visuais. Requer storyboard JSON em pt-BR.
+                    </small>
+                  </div>
                 </div>
 
-                <label class="field">
-                  <span>Canal de destino</span>
-                  <select name="channel" id="generateChannel"></select>
-                  <small id="channelHint" class="field-hint"></small>
-                </label>
+                <div class="submit-card">
+                  <div class="submit-card-copy">
+                    <p class="section-chip">Disparo</p>
+                    <h3>Como este run deve sair</h3>
+                    <p>Use preview para validar cenas, timing e narração. Ative geração direta só quando o storyboard já estiver fechado.</p>
+                  </div>
 
-                <div class="toggle-row toggle-row-command">
-                  <label class="check">
-                    <input type="checkbox" name="force" checked>
-                    <span>Forçar regeneração</span>
-                  </label>
+                  <div class="toggle-grid">
+                    <label class="check">
+                      <input type="checkbox" name="force" checked>
+                      <span>Forçar regeneração</span>
+                    </label>
 
-                  <label class="check">
-                    <input type="checkbox" name="noMusic" checked>
-                    <span>Sem música de fundo</span>
-                  </label>
+                    <label class="check">
+                      <input type="checkbox" name="noMusic" checked>
+                      <span>Sem música de fundo</span>
+                    </label>
 
-                  <label class="check">
-                    <input type="checkbox" name="autoApprove" id="generateAutoApprove">
-                    <span>Gerar direto sem aprovação</span>
-                  </label>
+                    <label class="check">
+                      <input type="checkbox" name="autoApprove" id="generateAutoApprove">
+                      <span>Gerar direto sem aprovação</span>
+                    </label>
+                  </div>
+
+                  <div class="button-stack">
+                    <button id="generateSubmitButton" type="submit" class="button primary button-block" data-preview-only="true">Montar preview para aprovar</button>
+                    <p class="button-row-note">Preview primeiro reduz retrabalho. Se você colar um storyboard JSON válido, o app usa esse storyboard e já segue para a geração final.</p>
+                  </div>
                 </div>
-              </div>
+              </aside>
+            </div>
+            <p id="generateValidationHint" class="field-hint hidden"></p>
+          </form>
 
-              <div class="button-row">
-                <button id="generateSubmitButton" type="submit" class="button primary" data-preview-only="true">Montar preview para aprovar</button>
-                <p class="button-row-note">Preview primeiro reduz retrabalho quando o briefing ainda está instável.</p>
-              </div>
-              <p id="generateValidationHint" class="field-hint hidden"></p>
-            </form>
-          </section>
-
-          <section class="panel panel-status">
+          <section class="panel panel-status workspace-status">
             <div class="panel-head">
               <p class="panel-kicker">Run state</p>
               <h2>Status atual</h2>
@@ -260,6 +289,7 @@
 
                   <div class="action-groups hidden" id="jobActions">
                     <div class="action-primary-row">
+                      <button id="startJobButton" type="button" class="button primary">Iniciar job</button>
                       <button id="resumeJobButton" type="button" class="button primary">Retomar a partir do ponto salvo</button>
                       <button id="regenerateSceneButton" type="button" class="button primary">Regenerar cena faltante</button>
                       <button id="generateAudioButton" type="button" class="button primary">Gerar áudio</button>
@@ -301,11 +331,21 @@
               </article>
 
               <div id="jobSceneGallery" class="hidden">
-                <div class="section-head" style="margin-bottom:0">
+                <div class="section-head section-head-tight">
                   <h3 class="section-label" style="margin:0">Cenas geradas</h3>
-                  <button id="jobSceneGalleryToggle" type="button" class="button secondary" style="margin-left:auto">Mostrar</button>
+                  <button id="jobSceneGalleryToggle" type="button" class="button secondary">Mostrar</button>
                 </div>
                 <div id="jobSceneGalleryGrid" class="scene-gallery-grid hidden"></div>
+              </div>
+
+              <div id="jobSceneReview" class="state-card hidden">
+                <div class="section-head section-head-tight">
+                  <div class="section-head-copy">
+                    <p class="state-label">Review manual</p>
+                    <p class="field-hint">Quando a imagem passou no render local mas a QA semântica travou, você pode revisar as tentativas e aprovar uma manualmente.</p>
+                  </div>
+                </div>
+                <div id="jobSceneReviewGrid" class="scene-review-grid"></div>
               </div>
 
               <div id="previewPanel" class="stack hidden">
@@ -316,6 +356,7 @@
                 <form id="previewStoryboardForm" class="preview-storyboard-form">
                   <div id="previewSummary" class="preview-summary hidden"></div>
                   <div id="previewScenes" class="preview-scenes"></div>
+                  <div class="button-row preview-submit-row"><button id="approvePreviewButtonBottom" type="button" class="button primary">Aprovar edição e gerar vídeo</button></div>
                 </form>
               </div>
             </div>
@@ -462,9 +503,9 @@
               </div>
 
               <div id="sceneGallery" class="hidden">
-                <div class="section-head" style="margin-bottom:0">
+                <div class="section-head section-head-tight">
                   <h3 class="section-label" style="margin:0">Cenas geradas</h3>
-                  <button id="sceneGalleryToggle" type="button" class="button secondary" style="margin-left:auto">Mostrar</button>
+                  <button id="sceneGalleryToggle" type="button" class="button secondary">Mostrar</button>
                 </div>
                 <div id="sceneGalleryGrid" class="scene-gallery-grid hidden"></div>
               </div>
@@ -486,8 +527,23 @@
                   </label>
 
                   <label class="field">
-                    <span>Título</span>
-                    <input type="text" name="title" placeholder="Título do vídeo">
+                    <span>Título interno</span>
+                    <input type="text" name="title" maxlength="200" placeholder="Título do vídeo na biblioteca">
+                    <small class="field-hint">Usado na biblioteca e como fallback interno. Pode ser mais descritivo.</small>
+                  </label>
+                </div>
+
+                <div class="grid two">
+                  <label class="field">
+                    <span>Título de publicação</span>
+                    <input type="text" name="publishTitle" maxlength="100" placeholder="Título curto para YouTube">
+                    <small id="videoPublishTitleHint" class="field-hint">YouTube aceita até 100 caracteres. Ideal: 55–70.</small>
+                  </label>
+
+                  <label class="field">
+                    <span>Legenda curta (FB/IG/TikTok)</span>
+                    <textarea name="socialCaption" rows="4" maxlength="2200" placeholder="Legenda curta segura para cross-post"></textarea>
+                    <small id="videoSocialCaptionHint" class="field-hint">Até 2.200 caracteres. Use este campo quando for publicar fora do YouTube ou abrir o helper do TikTok.</small>
                   </label>
                 </div>
 
@@ -515,13 +571,20 @@
                 </div>
 
                 <label class="field">
-                  <span>Legenda / caption</span>
-                  <textarea name="caption" rows="6" placeholder="Legenda para salvar e publicar"></textarea>
+                  <span>Descrição / caption base</span>
+                  <textarea name="caption" rows="6" maxlength="5000" placeholder="Descrição base para YouTube e fallback de publicação"></textarea>
+                  <small id="videoCaptionHint" class="field-hint">Até 5.000 caracteres. Use este campo para YouTube e contexto longo; para cross-post, prefira a legenda curta.</small>
                 </label>
 
                 <label class="field">
                   <span>Hashtags</span>
                   <input type="text" name="hashtags" placeholder="#tag1 #tag2 #tag3">
+                </label>
+
+                <label class="field">
+                  <span>Hook vencedor (A/B)</span>
+                  <input type="text" name="hookWinner" maxlength="40" placeholder="Ex: variante B (start-mid-action)">
+                  <small class="field-hint">Anote manualmente qual hook teve melhor retenção neste teste A/B.</small>
                 </label>
 
                 <div class="stack compact">
@@ -551,6 +614,7 @@
 
                 <p id="videoLibraryHint" class="field-hint">Se as credenciais do agendador não estiverem configuradas, a publicação vai falhar com erro explícito.</p>
                 <p id="videoActionHint" class="field-hint hidden"></p>
+                <div id="publishStatus" class="publish-status hidden"></div>
 
                 <div class="button-row">
                   <button id="saveVideoMetaButton" type="submit" class="button secondary">Salvar edição</button>
@@ -558,6 +622,7 @@
                   <button id="publishVideoButton" type="button" class="button primary">Publicar agora no agenda.online</button>
                   <button id="resetPublishButton" type="button" class="button secondary hidden">Publicar novamente</button>
                   <button id="openTikTokHelperButton" type="button" class="button secondary">TikTok Web</button>
+                  <button id="hookVariantsButton" type="button" class="button secondary">Variantes de hook (A/B)</button>
                   <button id="deleteVideoButton" type="button" class="button danger">Deletar</button>
                 </div>
               </form>
@@ -589,8 +654,70 @@
           </div>
         </section>
       </section>
+
+      <section class="tab-panel hidden" data-tab-panel="template">
+        <section class="panel panel-hero">
+          <div class="panel-head">
+            <p class="panel-kicker">JSON standard</p>
+            <h2>Template padrao para qualquer tema</h2>
+            <p>Copie daqui o formato oficial para storyboards curtos verticais: regras de duracao, prompt para Codex ou Claude Code e um JSON-base generico com cerca de 60 segundos.</p>
+          </div>
+
+          <div class="template-grid">
+            <article class="form-section template-card">
+              <div class="form-section-head">
+                <p class="section-chip">Regras</p>
+                <h3>Formato oficial</h3>
+                <p class="form-section-copy">Resumo do que um storyboard novo precisa respeitar antes de entrar no pipeline.</p>
+              </div>
+              <div class="button-row">
+                <button type="button" class="button secondary small" data-copy-target="templateRulesTextarea">Copiar regras</button>
+                <a class="button ghost small" href="/templates/foiumaideia-storyboard-rules.txt" target="_blank" rel="noreferrer">Abrir ficheiro</a>
+              </div>
+              <label class="field">
+                <span>Regras do template</span>
+                <textarea id="templateRulesTextarea" class="template-textarea template-textarea-compact" readonly data-template-src="/templates/foiumaideia-storyboard-rules.txt">Carregando regras...</textarea>
+              </label>
+            </article>
+
+            <article class="form-section template-card">
+              <div class="form-section-head">
+                <p class="section-chip">Prompt</p>
+                <h3>Prompt para Codex / Claude Code</h3>
+                <p class="form-section-copy">Cole este prompt num agente e troque apenas o tema, fatos e estilo visual quando precisar.</p>
+              </div>
+              <div class="button-row">
+                <button type="button" class="button secondary small" data-copy-target="templatePromptTextarea">Copiar prompt</button>
+                <a class="button ghost small" href="/templates/foiumaideia-storyboard-prompt.txt" target="_blank" rel="noreferrer">Abrir ficheiro</a>
+              </div>
+              <label class="field">
+                <span>Prompt padrao</span>
+                <textarea id="templatePromptTextarea" class="template-textarea template-textarea-compact" readonly data-template-src="/templates/foiumaideia-storyboard-prompt.txt">Carregando prompt...</textarea>
+              </label>
+            </article>
+
+            <article class="form-section template-card template-card-wide">
+              <div class="form-section-head">
+                <p class="section-chip">JSON</p>
+                <h3>JSON base de ~60s</h3>
+                <p class="form-section-copy">Template valido com 12 cenas, 32 imagens e cerca de 59.2s. Substitua os placeholders mantendo a estrutura e as duracoes.</p>
+              </div>
+              <div class="button-row">
+                <button type="button" class="button secondary small" data-copy-target="templateJsonTextarea">Copiar JSON</button>
+                <button type="button" class="button ghost small" data-paste-storyboard-target="templateJsonTextarea">Usar no Storyboard JSON</button>
+                <a class="button ghost small" href="/templates/foiumaideia-storyboard-template-60s.json" target="_blank" rel="noreferrer">Abrir ficheiro</a>
+              </div>
+              <label class="field">
+                <span>JSON padrao</span>
+                <textarea id="templateJsonTextarea" class="template-textarea template-textarea-code" readonly data-template-src="/templates/foiumaideia-storyboard-template-60s.json">Carregando JSON...</textarea>
+              </label>
+            </article>
+          </div>
+        </section>
+      </section>
     </div>
 
-    <script type="module" src="/app.js?v=20260407-ui3"></script>
+    <div id="toastContainer" class="toast-container"></div>
+    <script type="module" src="/app.js?v=20260422-ui-refresh"></script>
   </body>
 </html>

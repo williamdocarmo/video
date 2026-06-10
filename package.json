@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "web": "node web/server.mjs",
+    "web:api": "node web/api-server.mjs",
+    "web:worker": "node web/worker-engine.mjs",
     "make": "node scripts/foiumaideia.mjs",
     "make:batch": "node scripts/make-batch.mjs",
     "make:original": "node scripts/foiumaideia.mjs",

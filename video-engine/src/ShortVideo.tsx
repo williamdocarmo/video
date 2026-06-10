@@ -112,7 +112,6 @@ const KaraokeCaption = ({
           key={`${caption.startFrame}-${normalizedWord}-${index}`}
           style={{
             ...commonStyle,
-            background: isActive ? ACTIVE_COLOR : "rgba(255,255,255,0.12)",
             borderRadius: isLeadHighlight ? 999 : 16,
             color: isActive || isLeadHighlight ? "#0b0b0b" : "#ffffff",
             display: "inline-block",
@@ -405,7 +404,7 @@ export const ShortVideo = ({
       >
         <div
           style={{
-            opacity: introVisibility
+            opacity: 0
           }}
         >
           <div style={{height: 42}} />
@@ -451,7 +450,7 @@ export const ShortVideo = ({
       </AbsoluteFill>
 
       {narrationPath ? <Audio src={staticFile(narrationPath)} /> : null}
-      {musicPath ? <Audio src={staticFile(musicPath)} volume={0.08} /> : null}
+      {musicPath ? <Audio src={staticFile(musicPath)} volume={0.05} /> : null}
     </AbsoluteFill>
   );
 };

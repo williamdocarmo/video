@@ -114,6 +114,21 @@ const parsePostText = (rawText) => {
   return {caption, hashtags};
 };
 
+const normalizeHashtagsList = (items) =>
+  Array.isArray(items)
+    ? items.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+
+const pickHashtags = (...candidates) => {
+  for (const candidate of candidates) {
+    const hashtags = normalizeHashtagsList(candidate);
+    if (hashtags.length > 0) {
+      return hashtags;
+    }
+  }
+  return [];
+};
+
 /** @param {string} targetPath */
 const ffprobeDurationSeconds = (targetPath) => {
   const result = spawnSync(
@@ -134,6 +149,28 @@ const getVideoDurationSeconds = (targetPath) => {
   } catch {
     return null;
   }
+};
+
+const getDurationCacheStamp = (details) =>
+  `${Number(details?.size || 0)}:${Math.trunc(Number(details?.mtimeMs || 0))}`;
+
+const getCachedDurationSeconds = (metadata, details) => {
+  const cachedDuration = Number(metadata?.durationSeconds);
+  const cachedStamp = String(metadata?.durationCacheStamp || "").trim();
+  if (!Number.isFinite(cachedDuration) || cachedDuration <= 0) {
+    return null;
+  }
+  if (!details) {
+    return roundSeconds(cachedDuration);
+  }
+  return cachedStamp && cachedStamp === getDurationCacheStamp(details)
+    ? roundSeconds(cachedDuration)
+    : null;
+};
+
+const readDurationSecondsFast = ({metadata = null, details = null}) => {
+  const cached = getCachedDurationSeconds(metadata, details);
+  return cached !== null ? cached : null;
 };
 
 /** @param {*} value */
@@ -185,7 +222,7 @@ export const getVideoRca = (video, stateInfo = getVideoStateInfo(video)) => {
     return {summary: "Video publicado com sucesso.", causes: [], evidence: [video.publishedAt || video.updatedAt || ""].filter(Boolean), confidence: "high"};
   }
   if (stateInfo.value === "scheduled") {
-    return {summary: "Video agendado aguardando janela de publicacao.", causes: ["scheduled"], evidence: [video.publishAt || ""].filter(Boolean), confidence: "high"};
+    return {summary: "Video agendado aguardando janela de publicacao.", causes: ["scheduled"], evidence: [video.scheduleAt || video.publishAt || ""].filter(Boolean), confidence: "high"};
   }
   if (stateInfo.value === "draft") {
     return {summary: "Video mantido como rascunho antes da publicacao.", causes: ["draft"], evidence: [video.storyboardUrl || "", video.thumbnailUrl || ""].filter(Boolean), confidence: "medium"};
@@ -408,6 +445,8 @@ export const createVideoRecord = async ({channel, fileName, filePath}) => {
   const storyboard = await readJsonFile(runPaths.storyboardPath);
   const latestJob = findLatestDisplayJobForSlug({slug, channel: channel.value}) || matchedJob;
   const persistedMetadata = await readVideoMeta(slug).catch(() => null);
+  const postText = existsSync(runPaths.postPath) ? await readTextFile(runPaths.postPath) : "";
+  const postMeta = parsePostText(postText);
   const metadata = {
     ...getVideoMetadataEntry({channel: channel.value, slug}),
     ...(persistedMetadata || {})
@@ -433,7 +472,13 @@ export const createVideoRecord = async ({channel, fileName, filePath}) => {
     String(storyboard?.videoTitle || "").trim() ||
     String(latestJob?.title || "").trim() ||
     formatFallbackTitleFromSlug(slug);
-  const caption = String(metadata.caption ?? storyboard?.postCaption ?? "").trim();
+  const caption =
+    String(metadata.caption ?? "").trim() ||
+    String(storyboard?.postCaption || "").trim() ||
+    String(postMeta.caption || "").trim();
+  const publishTitle = String(metadata.publishTitle || "").trim() || title;
+  const socialCaption = String(metadata.socialCaption || "").trim() || caption;
+  const hashtags = pickHashtags(metadata.hashtags, storyboard?.hashtags, postMeta.hashtags);
   const publishAt = normalizePublishAt(metadata.publishAt);
   const platforms = normalizePlatforms(metadata.platforms);
 
@@ -442,7 +487,10 @@ export const createVideoRecord = async ({channel, fileName, filePath}) => {
     slug,
     name: fileName,
     title,
+    publishTitle,
     caption,
+    socialCaption,
+    hashtags,
     hook: String(storyboard?.hook || "").trim(),
     channel: channel.value,
     channelHandle: channel.handle,
@@ -453,7 +501,7 @@ export const createVideoRecord = async ({channel, fileName, filePath}) => {
     storyboardUrl: (await fileExists(runPaths.storyboardPath)) ? createFileUrl(runPaths.storyboardPath, Math.trunc(details.mtimeMs)) : "",
     updatedAt: details.mtime.toISOString(),
     sizeBytes: details.size,
-    durationSeconds: getVideoDurationSeconds(filePath),
+    durationSeconds: readDurationSecondsFast({metadata, details}),
     platforms,
     publishAt,
     isDraft: metadata.isDraft === true,
@@ -503,8 +551,14 @@ export const buildVideoRecord = async ({targetPath, channelValue}) => {
     String(storyboard?.videoTitle || "").trim() ||
     String(linkedJob?.title || "").trim() ||
     slugToCaption(targetPath);
-  const caption = String(meta?.caption || "").trim() || String(postMeta.caption || "").trim() || "";
-  const hashtags = Array.isArray(meta?.hashtags) && meta.hashtags.length > 0 ? meta.hashtags : postMeta.hashtags;
+  const caption =
+    String(meta?.caption || "").trim() ||
+    String(postMeta.caption || "").trim() ||
+    String(storyboard?.postCaption || "").trim() ||
+    "";
+  const publishTitle = String(meta?.publishTitle || "").trim() || title;
+  const socialCaption = String(meta?.socialCaption || "").trim() || caption;
+  const hashtags = pickHashtags(meta?.hashtags, postMeta.hashtags, storyboard?.hashtags);
   const platforms = Array.isArray(meta?.platforms) && meta.platforms.length > 0 ? meta.platforms : ["FB", "IG", "YT"];
   const creationParams = linkedJob?.input
     ? {
@@ -530,10 +584,12 @@ export const buildVideoRecord = async ({targetPath, channelValue}) => {
     url: createFileUrl(targetPath, Math.trunc(details.mtimeMs)),
     updatedAt: details.mtime.toISOString(),
     sizeBytes: details.size,
-    durationSeconds: getVideoDurationSeconds(targetPath),
+    durationSeconds: readDurationSecondsFast({metadata: meta, details}),
     slug,
     title,
+    publishTitle,
     caption,
+    socialCaption,
     hashtags,
     channel: channel.value,
     channelHandle: channel.handle,
@@ -544,6 +600,7 @@ export const buildVideoRecord = async ({targetPath, channelValue}) => {
     canPublish: true,
     scheduleAt: String(meta?.scheduleAt || "").trim(),
     platforms,
+    hookWinner: String(meta?.hookWinner || "").trim(),
     isDraft: meta?.isDraft === true,
     thumbnailPath: thumbnail.thumbnailPath,
     thumbnailUrl: thumbnail.thumbnailUrl,

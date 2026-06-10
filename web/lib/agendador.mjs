@@ -7,14 +7,14 @@
  */
 
 import path from "node:path";
-import {existsSync} from "node:fs";
-import {readFile, stat, unlink} from "node:fs/promises";
+import {existsSync, openAsBlob} from "node:fs";
+import {stat, unlink} from "node:fs/promises";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const DEFAULT_AGENDADOR_SITE_URL = "https://agendador.online";
 const AGENDADOR_DEFAULT_PLATFORMS = ["FB", "IG", "YT"];
-const AGENDADOR_MAX_UPLOAD_MB = 24;
+const AGENDADOR_MAX_UPLOAD_MB = 900;
 
 /** @type {string} */
 let AGENDADOR_API_BASE = `${DEFAULT_AGENDADOR_SITE_URL}/api`;
@@ -211,22 +211,48 @@ export const ensureAgendadorSecrets = async () => {
  * @param {object} [opts.body] - JSON body
  * @param {FormData} [opts.form] - multipart form (takes precedence over body)
  */
-export const agendadorFetch = async (endpoint, {method = "GET", token = "", body, form} = {}) => {
-  const response = await fetch(`${AGENDADOR_API_BASE}${endpoint}`, {
-    method,
-    headers: {
-      ...(token ? {Authorization: `Bearer ${token}`} : {}),
-      ...(body ? {"Content-Type": "application/json"} : {})
-    },
-    body: form ?? (body ? JSON.stringify(body) : undefined)
-  });
+export const agendadorFetch = async (endpoint, {method = "GET", token = "", body, form, timeoutMs = 480000} = {}) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(5000, Number(timeoutMs) || 480000));
+
+  let response;
+  try {
+    response = await fetch(`${AGENDADOR_API_BASE}${endpoint}`, {
+      method,
+      headers: {
+        ...(token ? {Authorization: `Bearer ${token}`} : {}),
+        ...(body ? {"Content-Type": "application/json"} : {})
+      },
+      body: form ?? (body ? JSON.stringify(body) : undefined),
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      const timeoutError = new Error(`${method} ${endpoint} excedeu o tempo limite (${Math.round((Number(timeoutMs) || 480000) / 1000)}s). Tente novamente.`);
+      timeoutError.status = 504;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
+  let payload = null;
+  let parseFailed = false;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    // Non-JSON body — e.g. proxy/error pages like "Client Closed Request" (HTTP 499)
+    // or a gateway timeout. Don't let JSON.parse turn a recoverable upstream error
+    // into an opaque SyntaxError 500.
+    parseFailed = true;
+  }
 
-  if (!response.ok) {
-    const error = new Error(payload?.error || `${method} ${endpoint} falhou com ${response.status}.`);
-    error.status = response.status;
+  if (!response.ok || parseFailed) {
+    const detail = payload?.error || (parseFailed ? String(text).trim().slice(0, 140) : "") || "resposta inesperada";
+    const error = new Error(`${method} ${endpoint} falhou com ${response.status}: ${detail}`);
+    error.status = response.status || 502;
     error.payload = payload;
     throw error;
   }
@@ -287,9 +313,9 @@ export const ensureUploadableForAgendador = async (inputPath) => {
   const outputPath = path.join(_videoLibraryDir, `compressed-${path.basename(inputPath)}`);
   const desiredOutputOwner = await _getDesiredOwnerForPath(outputPath);
   const attempts = [
-    {videoBitrate: "1000k", audioBitrate: "96k"},
-    {videoBitrate: "800k", audioBitrate: "80k"},
-    {videoBitrate: "650k", audioBitrate: "64k"}
+    {videoBitrate: "4000k", audioBitrate: "128k"},
+    {videoBitrate: "2500k", audioBitrate: "96k"},
+    {videoBitrate: "1500k", audioBitrate: "80k"}
   ];
 
   for (const attempt of attempts) {
@@ -299,7 +325,7 @@ export const ensureUploadableForAgendador = async (inputPath) => {
       "-i",
       inputPath,
       "-vf",
-      "scale='min(720,iw)':-2:force_original_aspect_ratio=decrease",
+      "scale='min(1080,iw)':-2:force_original_aspect_ratio=decrease",
       "-r",
       "30",
       "-c:v",
@@ -346,15 +372,21 @@ export const ensureUploadableForAgendador = async (inputPath) => {
  */
 const uploadMediaToAgendador = async (token, filePath, mimeType) => {
   const prepared = await ensureUploadableForAgendador(filePath);
-  const buffer = await readFile(prepared.filePath);
-  const form = new FormData();
-  form.set("file", new Blob([buffer], {type: mimeType}), path.basename(prepared.filePath));
-  const payload = await agendadorFetch("/upload", {
-    method: "POST",
-    token,
-    form
-  });
-  return payload?.url || "";
+  try {
+    const fileBlob = await openAsBlob(prepared.filePath, {type: mimeType});
+    const form = new FormData();
+    form.set("file", fileBlob, path.basename(prepared.filePath));
+    const payload = await agendadorFetch("/upload", {
+      method: "POST",
+      token,
+      form
+    });
+    return payload?.url || "";
+  } finally {
+    if (prepared.compressed) {
+      await unlink(prepared.filePath).catch(() => {});
+    }
+  }
 };
 
 /**

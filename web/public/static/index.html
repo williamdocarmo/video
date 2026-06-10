@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simulador — Gerador de Vídeos de Certificação</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0f0f23;color:#e0e0e0;min-height:100vh}
+.container{max-width:960px;margin:0 auto;padding:20px}
+h1{color:#e94560;font-size:1.6rem;margin-bottom:4px}
+.subtitle{color:#888;font-size:.85rem;margin-bottom:20px}
+
+/* Tabs */
+.tabs{display:flex;gap:0;border-bottom:2px solid #222}
+.tab{padding:10px 24px;cursor:pointer;color:#888;border:none;background:none;font-size:.95rem;border-bottom:2px solid transparent;margin-bottom:-2px;transition:.2s}
+.tab:hover{color:#ccc}
+.tab.active{color:#e94560;border-bottom-color:#e94560}
+.panel{display:none;padding:20px 0}
+.panel.active{display:block}
+
+/* Form */
+textarea{width:100%;min-height:300px;background:#1a1a2e;border:1px solid #333;color:#e0e0e0;padding:12px;border-radius:6px;font-family:monospace;font-size:.85rem;resize:vertical}
+textarea:focus{outline:none;border-color:#e94560}
+.form-row{display:flex;gap:12px;align-items:center;margin:12px 0}
+.form-row label{color:#aaa;font-size:.85rem;min-width:60px}
+.form-row input[type=text]{flex:1;background:#1a1a2e;border:1px solid #333;color:#e0e0e0;padding:8px 12px;border-radius:4px;font-size:.9rem}
+.form-row input:focus{outline:none;border-color:#e94560}
+.btn{padding:10px 28px;border:none;border-radius:6px;cursor:pointer;font-size:.9rem;font-weight:600;transition:.2s}
+.btn-primary{background:#e94560;color:white}
+.btn-primary:hover{background:#d63851}
+.btn-primary:disabled{background:#555;cursor:not-allowed}
+.btn-secondary{background:#16213e;color:#e0e0e0;border:1px solid #333}
+.btn-secondary:hover{background:#1a2744}
+.actions{display:flex;gap:10px;margin-top:16px;align-items:center}
+.status{color:#888;font-size:.85rem;margin-left:12px}
+.status.error{color:#ff4444}
+.status.ok{color:#00ff88}
+
+/* Templates */
+.templates{margin:16px 0}
+.templates summary{color:#e94560;cursor:pointer;font-size:.9rem;margin-bottom:8px}
+.template-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:8px}
+.template-card{background:#16213e;border:1px solid #333;border-radius:8px;padding:14px;cursor:pointer;transition:.2s}
+.template-card:hover{border-color:#e94560;transform:translateY(-1px)}
+.template-card h3{color:#e94560;font-size:.9rem;margin-bottom:4px}
+.template-card p{color:#888;font-size:.8rem}
+
+/* Video list */
+.video-list{display:flex;flex-direction:column;gap:12px}
+.video-item{background:#16213e;border:1px solid #333;border-radius:8px;padding:16px;display:flex;justify-content:space-between;align-items:center}
+.video-item:hover{border-color:#444}
+.video-info h3{color:#e0e0e0;font-size:.95rem;margin-bottom:4px}
+.video-info p{color:#888;font-size:.8rem}
+.video-info .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.75rem;font-weight:600}
+.badge.done{background:#00ff8822;color:#00ff88}
+.badge.processing{background:#ffaa0022;color:#ffaa00}
+.badge.error{background:#ff444422;color:#ff4444}
+.video-actions{display:flex;gap:8px}
+.btn-sm{padding:6px 14px;font-size:.8rem}
+.empty{color:#555;text-align:center;padding:60px 0;font-size:.9rem}
+
+/* Player modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:100;justify-content:center;align-items:center}
+.modal-overlay.open{display:flex}
+.modal{background:#1a1a2e;border-radius:12px;padding:20px;max-width:500px;width:95%;max-height:90vh}
+.modal h2{color:#e94560;font-size:1.1rem;margin-bottom:12px}
+.modal video{width:100%;border-radius:8px;background:#000}
+.modal .close{float:right;background:none;border:none;color:#888;font-size:1.4rem;cursor:pointer}
+.modal .close:hover{color:#fff}
+
+/* Progress */
+.progress-bar{width:100%;height:6px;background:#222;border-radius:3px;margin-top:8px;overflow:hidden}
+.progress-fill{height:100%;background:#e94560;transition:width .3s;border-radius:3px}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🎓 Simulador</h1>
+  <p class="subtitle">Cole questões de certificação → gere vídeos com narração Azure TTS</p>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="create">Criar Vídeo</button>
+    <button class="tab" data-tab="videos">Vídeos <span id="videoCount"></span></button>
+  </div>
+
+  <!-- CREATE TAB -->
+  <div class="panel active" id="panel-create">
+    <details class="templates" open>
+      <summary>📋 Exemplos de formato (clique para usar)</summary>
+      <div class="template-grid">
+        <div class="template-card" data-template="numbered">
+          <h3>Formato Numerado</h3>
+          <p>1. Pergunta? a) ... b) ... Resposta: a Explicação: ...</p>
+        </div>
+        <div class="template-card" data-template="labeled">
+          <h3>Formato Rotulado</h3>
+          <p>Pergunta: ... Resposta: ... Explicação: ...</p>
+        </div>
+        <div class="template-card" data-template="blocks">
+          <h3>Blocos Separados</h3>
+          <p>Blocos separados por linha em branco</p>
+        </div>
+      </div>
+    </details>
+
+    <textarea id="qaText" placeholder="Cole aqui as questões no formato:
+
+1. Qual protocolo opera na camada 3 do modelo OSI?
+a) TCP
+b) IP
+c) HTTP
+d) FTP
+Resposta: b
+Explicação: O IP (Internet Protocol) opera na camada de rede (camada 3) do modelo OSI.
+
+2. Próxima pergunta..."></textarea>
+
+    <div class="form-row">
+      <label>Título:</label>
+      <input type="text" id="titleInput" placeholder="Ex: AWS Solutions Architect - Simulado 1" value="">
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="btnGenerate">🎬 Gerar Vídeo</button>
+      <span class="status" id="createStatus"></span>
+    </div>
+
+    <div class="progress-bar" id="progressBar" style="display:none">
+      <div class="progress-fill" id="progressFill" style="width:0%"></div>
+    </div>
+  </div>
+
+  <!-- VIDEOS TAB -->
+  <div class="panel" id="panel-videos">
+    <div class="video-list" id="videoList">
+      <div class="empty">Nenhum vídeo gerado ainda.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Player Modal -->
+<div class="modal-overlay" id="playerModal">
+  <div class="modal">
+    <button class="close" id="closeModal">&times;</button>
+    <h2 id="playerTitle"></h2>
+    <video id="videoPlayer" controls></video>
+  </div>
+</div>
+
+<script>
+const API = '/api/simulador';
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
+
+/* ── Templates ─────────────────────────────────────────────────────────── */
+const TEMPLATES = {
+  numbered: `1. Qual protocolo opera na camada 3 do modelo OSI?
+a) TCP
+b) IP
+c) HTTP
+d) FTP
+Resposta: b
+Explicação: O IP (Internet Protocol) opera na camada de rede (camada 3) do modelo OSI, sendo responsável pelo endereçamento e roteamento de pacotes.
+
+2. Qual serviço AWS é usado para armazenamento de objetos?
+a) EC2
+b) RDS
+c) S3
+d) Lambda
+Resposta: c
+Explicação: O Amazon S3 (Simple Storage Service) é o serviço de armazenamento de objetos da AWS, oferecendo escalabilidade, disponibilidade e durabilidade.
+
+3. O que é um container Docker?
+a) Uma máquina virtual completa
+b) Um pacote leve e portátil que contém tudo para rodar uma aplicação
+c) Um tipo de banco de dados
+d) Um protocolo de rede
+Resposta: b
+Explicação: Um container Docker é uma unidade padronizada de software que empacota código e todas as suas dependências para que a aplicação rode de forma rápida e confiável em diferentes ambientes.
+
+4. Qual comando Git cria uma nova branch?
+a) git commit
+b) git push
+c) git branch
+d) git merge
+Resposta: c
+Explicação: O comando git branch cria uma nova branch. Para criar e já mudar para ela, use git checkout -b ou git switch -c.
+
+5. Qual é a porta padrão do HTTPS?
+a) 80
+b) 8080
+c) 443
+d) 22
+Resposta: c
+Explicação: HTTPS usa a porta 443 por padrão. HTTP usa 80, SSH usa 22, e 8080 é comumente usada como porta alternativa para HTTP.`,
+
+  labeled: `Pergunta: Qual é a diferença entre TCP e UDP?
+Resposta: TCP é orientado a conexão e garante entrega; UDP é sem conexão e mais rápido mas sem garantia.
+Explicação: TCP (Transmission Control Protocol) estabelece uma conexão antes de transmitir dados e garante que todos os pacotes cheguem na ordem correta. UDP (User Datagram Protocol) envia dados sem estabelecer conexão, sendo mais rápido mas sem garantia de entrega.
+
+Pergunta: O que é DNS e qual sua função?
+Resposta: DNS traduz nomes de domínio em endereços IP.
+Explicação: O Domain Name System funciona como uma lista telefônica da internet, convertendo nomes legíveis como google.com em endereços IP numéricos que os computadores usam para se comunicar.
+
+Pergunta: O que é uma VPN?
+Resposta: Uma rede privada virtual que cria um túnel criptografado para comunicação segura.
+Explicação: VPN (Virtual Private Network) cria uma conexão segura e criptografada sobre uma rede menos segura, como a internet pública, protegendo dados em trânsito.`,
+
+  blocks: `O que é o modelo OSI e quantas camadas ele possui?
+a) 5 camadas
+b) 7 camadas
+c) 4 camadas
+d) 6 camadas
+Resposta: b
+Explicação: O modelo OSI possui 7 camadas: Física, Enlace, Rede, Transporte, Sessão, Apresentação e Aplicação.
+
+Qual a função de um firewall?
+a) Acelerar a conexão de internet
+b) Filtrar tráfego de rede baseado em regras de segurança
+c) Armazenar dados na nuvem
+d) Gerenciar bancos de dados
+Resposta: b
+Explicação: Um firewall monitora e filtra o tráfego de rede de entrada e saída com base em regras de segurança previamente estabelecidas, atuando como barreira entre redes confiáveis e não confiáveis.
+
+O que significa RAID 1?
+a) Distribuição de dados entre discos
+b) Espelhamento de dados entre dois discos
+c) Paridade distribuída
+d) Combinação de striping e espelhamento
+Resposta: b
+Explicação: RAID 1 faz espelhamento (mirroring), mantendo uma cópia idêntica dos dados em dois discos. Se um disco falhar, o outro continua funcionando normalmente.`
+};
+
+/* ── Tab switching ─────────────────────────────────────────────────────── */
+$$('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    $$('.tab').forEach(t => t.classList.remove('active'));
+    $$('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    $(`#panel-${tab.dataset.tab}`).classList.add('active');
+    if (tab.dataset.tab === 'videos') loadVideos();
+  });
+});
+
+/* ── Template cards ────────────────────────────────────────────────────── */
+$$('.template-card').forEach(card => {
+  card.addEventListener('click', () => {
+    $('#qaText').value = TEMPLATES[card.dataset.template];
+    $('#qaText').focus();
+  });
+});
+
+/* ── Generate ──────────────────────────────────────────────────────────── */
+$('#btnGenerate').addEventListener('click', async () => {
+  const text = $('#qaText').value.trim();
+  const title = $('#titleInput').value.trim() || 'Simulado';
+  if (!text) { setStatus('Cole as questões primeiro.', 'error'); return; }
+
+  const btn = $('#btnGenerate');
+  btn.disabled = true;
+  setStatus('Enviando...', '');
+  $('#progressBar').style.display = 'block';
+  $('#progressFill').style.width = '10%';
+
+  try {
+    const res = await fetch(`${API}/generate`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text, title})
+    });
+    const data = await res.json();
+
+    if (!res.ok) throw new Error(data.error || 'Erro ao gerar.');
+
+    // Poll for completion
+    const jobIds = data.jobs.map(j => j.id);
+    await pollJobs(jobIds);
+  } catch (err) {
+    setStatus(err.message, 'error');
+    $('#progressFill').style.width = '0%';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function pollJobs(jobIds) {
+  let done = false;
+  while (!done) {
+    await new Promise(r => setTimeout(r, 3000));
+    try {
+      const res = await fetch(`${API}/jobs`);
+      const jobs = await res.json();
+      const tracked = jobs.filter(j => jobIds.includes(j.id));
+      const completed = tracked.filter(j => j.status === 'done' || j.status === 'error');
+      const pct = Math.round((completed.length / tracked.length) * 100);
+      $('#progressFill').style.width = `${Math.max(pct, 10)}%`;
+
+      const processing = tracked.find(j => j.status === 'processing');
+      if (processing) {
+        setStatus(`Processando: ${processing.title}...`, '');
+      }
+
+      if (completed.length === tracked.length) {
+        done = true;
+        const errors = completed.filter(j => j.status === 'error');
+        if (errors.length) {
+          setStatus(`Concluído com ${errors.length} erro(s).`, 'error');
+        } else {
+          setStatus(`${completed.length} vídeo(s) gerado(s) com sucesso!`, 'ok');
+        }
+        $('#progressFill').style.width = '100%';
+        setTimeout(() => { $('#progressBar').style.display = 'none'; }, 2000);
+      }
+    } catch { /* retry */ }
+  }
+}
+
+function setStatus(msg, type) {
+  const el = $('#createStatus');
+  el.textContent = msg;
+  el.className = 'status' + (type ? ` ${type}` : '');
+}
+
+/* ── Video list ────────────────────────────────────────────────────────── */
+async function loadVideos() {
+  try {
+    const res = await fetch(`${API}/jobs`);
+    const jobs = await res.json();
+    const list = $('#videoList');
+
+    if (!jobs.length) {
+      list.innerHTML = '<div class="empty">Nenhum vídeo gerado ainda.</div>';
+      $('#videoCount').textContent = '';
+      return;
+    }
+
+    $('#videoCount').textContent = `(${jobs.filter(j => j.status === 'done').length})`;
+
+    list.innerHTML = jobs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map(job => `
+      <div class="video-item">
+        <div class="video-info">
+          <h3>${esc(job.title)}</h3>
+          <p>${job.questionCount} questões · ${formatDate(job.createdAt)}
+            ${job.completedAt ? ` · Concluído ${formatDate(job.completedAt)}` : ''}
+          </p>
+          <span class="badge ${job.status}">${job.status === 'done' ? '✓ Pronto' : job.status === 'processing' ? '⏳ Processando' : '✗ Erro'}</span>
+          ${job.error ? `<p style="color:#ff4444;font-size:.8rem;margin-top:4px">${esc(job.error)}</p>` : ''}
+        </div>
+        <div class="video-actions">
+          ${job.status === 'done' ? `
+            <button class="btn btn-secondary btn-sm" onclick="playVideo('${job.id}', '${esc(job.title)}')">▶ Assistir</button>
+            <a class="btn btn-secondary btn-sm" href="${API}/video/${job.id}" download>⬇ Download</a>
+          ` : ''}
+          <button class="btn btn-secondary btn-sm" onclick="deleteJob('${job.id}')" style="color:#ff4444">✗</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    $('#videoList').innerHTML = `<div class="empty" style="color:#ff4444">Erro ao carregar: ${err.message}</div>`;
+  }
+}
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function formatDate(d) { try { return new Date(d).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); } catch { return d; } }
+
+/* ── Player ────────────────────────────────────────────────────────────── */
+window.playVideo = (id, title) => {
+  $('#playerTitle').textContent = title;
+  $('#videoPlayer').src = `${API}/video/${id}`;
+  $('#playerModal').classList.add('open');
+};
+
+$('#closeModal').addEventListener('click', () => {
+  $('#playerModal').classList.remove('open');
+  $('#videoPlayer').pause();
+  $('#videoPlayer').src = '';
+});
+
+$('#playerModal').addEventListener('click', (e) => {
+  if (e.target === $('#playerModal')) {
+    $('#closeModal').click();
+  }
+});
+
+/* ── Delete ─────────────────────────────────────────────────────────────── */
+window.deleteJob = async (id) => {
+  if (!confirm('Apagar este vídeo?')) return;
+  try {
+    await fetch(`${API}/jobs/${id}`, {method: 'DELETE'});
+    loadVideos();
+  } catch (err) {
+    alert('Erro: ' + err.message);
+  }
+};
+
+/* ── Init ──────────────────────────────────────────────────────────────── */
+loadVideos();
+</script>
+</body>
+</html>

@@ -71,7 +71,7 @@ export const slugify = (input) =>
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
+    .slice(0, 80);
 
 /**
  * Extract a title (max 120 chars) from the first non-empty line of text.

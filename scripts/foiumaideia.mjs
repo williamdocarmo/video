@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 
 import {spawnSync} from "node:child_process";
-import {copyFile, mkdir, readFile, readdir, rm, writeFile} from "node:fs/promises";
+import {copyFile, cp, mkdir, readFile, readdir, rm, writeFile} from "node:fs/promises";
 import {existsSync} from "node:fs";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
-import {DEFAULT_OUTPUT_PROFILE, resolveOutputProfileConfig} from "../config/output-profiles.mjs";
+import {
+  DEFAULT_OUTPUT_PROFILE,
+  getSceneCountRangeForDuration,
+  resolveOutputProfileConfig
+} from "../config/output-profiles.mjs";
+import {channelPresets} from "../web/lib/presets.mjs";
 import {slugify, parseEnvFile} from "../shared/utils.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -176,6 +181,12 @@ const parseArgs = (argv) => {
       continue;
     }
 
+    if (item === "--reuse-assets-from-slug") {
+      parsed.reuseAssetsFromSlug = argv[index + 1];
+      index += 1;
+      continue;
+    }
+
     if (item === "--music-file") {
       parsed.musicFile = argv[index + 1];
       index += 1;
@@ -221,26 +232,7 @@ const normalizeGenerationMode = (value) => {
 const usesStoryboardAssetPipeline = (generationMode) =>
   generationMode === "image-pipeline" || generationMode === "text-to-video";
 
-const getSceneRangeForProfile = (profile, targetSeconds) => {
-  const numericTargetSeconds = Number(targetSeconds);
-  let minScenes = profile.minScenes;
-  let maxScenes = profile.maxScenes;
-
-  if (profile.id === "vertical-short") {
-    if (numericTargetSeconds <= 60) {
-      minScenes = 10;
-      maxScenes = 12;
-    } else if (numericTargetSeconds <= 90) {
-      minScenes = 12;
-      maxScenes = 14;
-    } else {
-      minScenes = 14;
-      maxScenes = 16;
-    }
-  }
-
-  return {minScenes, maxScenes};
-};
+const FOIUMAIDEIA_DEFAULT_PRESET = channelPresets.foiumaideia || {};
 
 const deriveTitleFromText = (input) => {
   const text = String(input || "").trim();
@@ -321,10 +313,32 @@ const printHelp = () => {
       "  --style-prompt <texto>",
       "  --script-guidance <texto>",
       "  --channel-handle <@canal>",
+      "  --reuse-assets-from-slug <slug>",
       "  --music-file <path>",
       "  --no-music"
     ].join("\n") + "\n"
   );
+};
+
+const reuseSceneAssetsFromSlug = async ({projectRoot, sourceSlug, targetSlug}) => {
+  const normalizedSourceSlug = String(sourceSlug || "").trim();
+  const normalizedTargetSlug = String(targetSlug || "").trim();
+
+  if (!normalizedSourceSlug || !normalizedTargetSlug || normalizedSourceSlug === normalizedTargetSlug) {
+    return false;
+  }
+
+  const sourceAssetDir = path.join(projectRoot, "assets", "envato", normalizedSourceSlug);
+  const targetAssetDir = path.join(projectRoot, "assets", "envato", normalizedTargetSlug);
+
+  if (!existsSync(sourceAssetDir) || existsSync(targetAssetDir)) {
+    return false;
+  }
+
+  await mkdir(path.dirname(targetAssetDir), {recursive: true});
+  await cp(sourceAssetDir, targetAssetDir, {recursive: true, force: true});
+  process.stdout.write(`[vertex-assets] reusing scene assets from ${normalizedSourceSlug} -> ${normalizedTargetSlug}\n`);
+  return true;
 };
 
 const cleanupIntermediates = async ({projectRoot, slug, sourceOutput}) => {
@@ -382,7 +396,7 @@ const run = async () => {
     bundledProjectRoot
   );
   const outputProfile = resolveOutputProfileConfig(
-    args.outputProfile || process.env.OUTPUT_PROFILE || fileConfig.OUTPUT_PROFILE || DEFAULT_OUTPUT_PROFILE
+    args.outputProfile || process.env.OUTPUT_PROFILE || fileConfig.OUTPUT_PROFILE || FOIUMAIDEIA_DEFAULT_PRESET.outputProfile || DEFAULT_OUTPUT_PROFILE
   );
   const exportDir = resolvePathFrom(
     wrapperRoot,
@@ -391,7 +405,7 @@ const run = async () => {
   );
   const requestedTargetSeconds = Number.isFinite(args.targetSeconds)
     ? args.targetSeconds
-    : Number(process.env.DEFAULT_TARGET_SECONDS || fileConfig.DEFAULT_TARGET_SECONDS || outputProfile.defaultTargetSeconds);
+    : Number(FOIUMAIDEIA_DEFAULT_PRESET.targetSeconds || process.env.DEFAULT_TARGET_SECONDS || fileConfig.DEFAULT_TARGET_SECONDS || outputProfile.defaultTargetSeconds);
   const targetSeconds =
     Number.isFinite(requestedTargetSeconds) && requestedTargetSeconds > 0
       ? requestedTargetSeconds
@@ -409,7 +423,7 @@ const run = async () => {
   const previewOutput = path.join(projectRoot, "runs", slug, "storyboard.json");
   const previewSlug = `${slug}-preview`;
   const previewStoryboard = path.join(projectRoot, "runs", previewSlug, "storyboard.json");
-  const sceneRange = getSceneRangeForProfile(outputProfile, targetSeconds);
+  const sceneRange = getSceneCountRangeForDuration(outputProfile.id, targetSeconds);
   const runtimeEnv = {...process.env};
 
   if (args.language) {
@@ -427,22 +441,25 @@ const run = async () => {
 
   runtimeEnv.GENERATION_MODE = generationMode;
 
-  if (args.imageStyle) {
-    runtimeEnv.IMAGE_STYLE_PRESET = args.imageStyle;
-    runtimeEnv.FLUX2_STYLE_PRESET = args.imageStyle;
-  }
+  const resolvedImageStyle = args.imageStyle || process.env.IMAGE_STYLE_PRESET || fileConfig.IMAGE_STYLE_PRESET || FOIUMAIDEIA_DEFAULT_PRESET.imageStyle || "ink";
+  runtimeEnv.IMAGE_STYLE_PRESET = resolvedImageStyle;
+  runtimeEnv.FLUX2_STYLE_PRESET = resolvedImageStyle;
 
   if (args.stylePrompt) {
     runtimeEnv.GOOGLE_TTS_STYLE_PROMPT = args.stylePrompt;
   }
 
-  if (args.scriptGuidance) {
-    runtimeEnv.VIDEO_SCRIPT_GUIDANCE = args.scriptGuidance;
-  }
+  runtimeEnv.VIDEO_SCRIPT_GUIDANCE =
+    args.scriptGuidance ||
+    process.env.VIDEO_SCRIPT_GUIDANCE ||
+    fileConfig.VIDEO_SCRIPT_GUIDANCE ||
+    FOIUMAIDEIA_DEFAULT_PRESET.scriptGuidance ||
+    "";
 
-  if (typeof args.channelHandle === "string") {
-    runtimeEnv.CHANNEL_HANDLE = args.channelHandle;
-  }
+  runtimeEnv.CHANNEL_HANDLE =
+    typeof args.channelHandle === "string"
+      ? args.channelHandle
+      : process.env.CHANNEL_HANDLE || fileConfig.CHANNEL_HANDLE || FOIUMAIDEIA_DEFAULT_PRESET.handle || "@foiumaideia";
 
   if (args.noMusic) {
     runtimeEnv.DEFAULT_MUSIC_FILE = "";
@@ -463,6 +480,14 @@ const run = async () => {
     MAX_SCENE_COUNT: String(sceneRange.maxScenes),
     TARGET_DURATION_SECONDS: String(targetSeconds)
   });
+
+  if (args.reuseAssetsFromSlug && usesStoryboardAssetPipeline(generationMode)) {
+    await reuseSceneAssetsFromSlug({
+      projectRoot,
+      sourceSlug: args.reuseAssetsFromSlug,
+      targetSlug: slug
+    });
+  }
 
   const commandArgs = [
     path.join(projectRoot, "scripts", "make-video.mjs"),

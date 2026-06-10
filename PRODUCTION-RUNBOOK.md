@@ -10,14 +10,17 @@ Validated production facts:
 
 - host: `192.168.1.70`
 - deployed repo: `/root/repo/videos-flux2`
-- service: `codex-video-ui.service`
+- observed active service: `codex-video-ui.service`
 - public site: `https://video.vamostestar.online`
-- access: Basic Auth in front of the site
+- access: Basic Auth is enforced by the Node runtime; production may also sit behind site-level protection
 
 Important operational point:
 
 - the effective runtime is a `systemd` service on the host
 - this should not be assumed to be a normal active Coolify-managed app resource path
+- the repo now also supports split units:
+  - `codex-video-api.service`
+  - `codex-video-worker.service`
 
 ## Key Paths On Host
 
@@ -40,6 +43,17 @@ sudo journalctl -u codex-video-ui.service -f
 
 Do not assume a restart is needed after every change. Many script-only fixes are picked up by new jobs without restarting the web service.
 
+If/when the split runtime is enabled, use:
+
+```bash
+sudo systemctl status codex-video-api.service
+sudo systemctl status codex-video-worker.service
+sudo systemctl restart codex-video-api.service
+sudo systemctl restart codex-video-worker.service
+sudo journalctl -u codex-video-api.service -f
+sudo journalctl -u codex-video-worker.service -f
+```
+
 ## Site API Workflow
 
 Observed workflow:
@@ -54,7 +68,9 @@ Observed workflow:
 
 Useful endpoints already validated:
 
+- `GET /api/health`
 - `GET /api/config`
+- `GET /api/openapi.yaml`
 - `POST /api/generate`
 - `POST /api/approve-preview`
 - `GET /api/jobs`
@@ -78,6 +94,7 @@ Important caution:
 
 - `heartbeatAt` is more trustworthy than stale checklist text when deciding whether a job is alive
 - `stepChecklist` and some `updatedAt` fields can lag behind real stage progress
+- in split `api` + `worker`, the practical source of truth shared between the two processes remains `.web-ui/jobs.json`
 
 ## Channel Policy
 
@@ -92,13 +109,22 @@ Current working expectations from production presets:
 ### `quiet2min`
 
 - language: `en-US`
-- calm/wellness direction
+- same editorial spine as `ate2min`, but in English
+- direction: short reflective truths that tiram da acomodação sem humilhar e terminam com autoestima restaurada
 - PT publication here is a mistake and should be treated as regression
 
 ### `ate2min`
 
 - language: `pt-BR`
-- short calm reflective content
+- same editorial spine as `quiet2min`, but in Brazilian Portuguese
+- direction: verdade curta, firme e humana, com aterrissagem acolhedora no final
+
+### Dual-channel mode (`@ate2min` + `@quiet2min`)
+
+- The site can now create both channels from a single storyboard in `pt-BR`
+- The runtime writes the Portuguese storyboard, translates only viewer-facing text to English, and enqueues a second job for `@quiet2min`
+- The English job reuses the Portuguese visual assets via `reuseAssetsFromSlug`
+- Operational implication: if the Portuguese job fails, the English mirror job must stay queued/blocked instead of generating a visually divergent second run
 
 ## Voice And Style Findings
 
@@ -112,6 +138,9 @@ Practical guidance learned:
 - `Puck` is strong for TikTok retention when the script needs faster energy
 - `Kore` is stronger when the hook needs firmness or authority
 - `ink` needs tighter prompt control, otherwise style drift becomes obvious quickly
+- TikTok cover should be treated as `1080x1920` with safe margins, not as a full-bleed poster
+- final thumbnail uses clean AI-generated image only (text overlay was removed)
+- keep the focal subject centered so the cover survives TikTok grid/player crops
 
 ## Output Policy Fixes Already Applied
 
@@ -220,6 +249,109 @@ If credentials are needed:
    - channel/language correctness
    - style coherence
 7. Only then publish or replace files.
+
+## Gemini 3.x Image Models
+
+As of 2026-04-22, the default image model is `gemini-3.1-flash-image-preview`.
+
+### Endpoint
+All Gemini image models (3.1 Flash Image, 3 Pro Image, 2.5 Flash Image) use the `generativelanguage.googleapis.com` endpoint. This is a remote API call — no local GPU or image generation.
+
+### Available models in UI dropdown
+- `gemini-3.1-flash-image-preview` (default)
+- `gemini-3-pro-image-preview`
+- `gemini-2.5-flash-image`
+- `imagen-4.0-fast-generate-001`
+- `imagen-4.0-generate-001`
+- `imagen-4.0-ultra-generate-001`
+- `image-pipeline` (multi-model pipeline)
+
+### Model selection
+The model is selected per job via the UI dropdown or `GOOGLE_IMAGE_MODEL` env var. The `generate-google-assets.mjs` script reads `GOOGLE_IMAGE_MODEL` (default: `gemini-2.5-flash-image` in the script, overridden by `presets.mjs` default `gemini-3.1-flash-image-preview` in the UI flow).
+
+### Fallback for failed image attempts
+If all attempts for a segment fail the Gemini Vision audit, the pipeline uses the best rejected attempt instead of killing the job. Log message: `"FALLBACK using rejected attempt (audit failed but usable)"`.
+
+## TTS Model Migration (2.5 → 3.1)
+
+The default TTS model changed from `gemini-2.5-flash-tts` to `gemini-3.1-flash-tts-preview`.
+
+- Configured in `tts.mjs` as the default model parameter
+- Env override: `GOOGLE_TTS_MODEL=gemini-3.1-flash-tts-preview`
+- Fallback to Chirp3-HD on transient errors is unchanged
+- No migration needed for existing runs — only affects new TTS synthesis calls
+
+## Storyboard Upload Workflow
+
+The UI now supports pasting or uploading a pre-made storyboard JSON instead of generating one via Gemini.
+
+### How it works
+1. In the "Criar" tab, paste JSON into the "Storyboard JSON" textarea or click "Carregar ficheiro .json"
+2. Inline validation checks JSON syntax and verifies `scenes[]` exists with ≥1 scene
+3. On submit, the storyboard is sent in the `POST /api/generate` payload as `storyboard` object
+4. The pipeline skips storyboard generation and preview — goes directly to assets + render
+5. If the external storyboard includes visual prompts per scene, the visual style preset is bypassed
+6. QA `sceneCountOk` is relaxed for external storyboards (accepts ≥1 scene instead of profile minimum)
+
+### Operational notes
+- External storyboards bypass the Gemini storyboard QA and repair loop
+- The `previewOnly` flag is forced to `false` when an external storyboard is provided
+- Visual prompts in the storyboard take precedence over the selected visual style preset
+
+## Job Timeout Behavior
+
+Jobs no longer rely on a single `heavy=30min` ceiling. The queue now uses per-job budgets plus inactivity detection:
+
+| Job family | Timeout |
+|------------|---------|
+| `preview` | 5 minutes |
+| `generate` | 90 minutes |
+| `render-only` | 60 minutes |
+| `scene-regenerate` | 45 minutes |
+| `audio-prep` | 20 minutes |
+| `validate-only` | 15 minutes |
+
+When a job exceeds its timeout or idles past its heartbeat budget:
+1. The runtime records an explicit termination reason
+2. The full child-process tree is terminated
+3. The lane is released
+4. The job is marked as `failed`
+
+Common causes of timeout:
+- Imagen/Gemini API rate limits causing long retry loops
+- Remotion render hanging on asset fetch
+- Network issues with GCP endpoints
+
+Practical note:
+- Stale UI stage text can lag behind real progress on disk. For long image runs, trust artifacts under `video-engine/assets/envato/<slug>/` and the worker process state over an old `updatedAt` field in the browser.
+
+## Publish copy rules
+
+Current publishing flow now distinguishes three pieces of copy:
+
+- `title`: internal library title
+- `publishTitle`: short publish title, primarily for YouTube
+- `socialCaption`: short caption for cross-post outside YouTube and for the TikTok helper
+
+Current operational limits:
+
+| Field | Limit | Practical note |
+|-------|-------|----------------|
+| `publishTitle` | 100 chars | Aim for 55–70 on YouTube |
+| `caption` | 5000 chars | Base long-form description |
+| `socialCaption` | 2200 chars | Safe cap for cross-post outside YouTube |
+
+Operational implication:
+- If publishing outside `YT`, or opening the TikTok helper, and the base description exceeds `2200`, operators must fill `socialCaption` explicitly.
+
+## .tmp Cleanup
+
+On server startup, the server scans `.tmp/system/` and removes entries older than 24 hours.
+
+- Prevents accumulation of Remotion temporary frames
+- Uses `rm({recursive: true, force: true})` for each stale entry
+- Logs count of cleaned entries if any were removed
+- TMPDIR is set to `.tmp/system` via systemd environment (avoids saturating `/tmp`)
 
 ## Current Documentation Risks
 

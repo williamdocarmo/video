@@ -98,6 +98,67 @@ export const listOutputProfileOptions = () =>
 export const getDurationOptionsForProfile = (profileValue) => resolveOutputProfileConfig(profileValue).durations;
 
 /**
+ * Resolve the recommended storyboard scene range for a profile and duration.
+ * Vertical short-form videos get a tighter range based on the target runtime.
+ * Horizontal profiles keep their profile-level defaults.
+ * @param {string} profileValue
+ * @param {number} targetSeconds
+ * @returns {{minScenes: number, maxScenes: number}}
+ */
+export const getSceneCountRangeForDuration = (profileValue, targetSeconds) => {
+  const profile = resolveOutputProfileConfig(profileValue);
+  const seconds = Number(targetSeconds);
+
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return {
+      minScenes: profile.minScenes,
+      maxScenes: profile.maxScenes
+    };
+  }
+
+  if (profile.layout === "horizontal") {
+    return {
+      minScenes: profile.minScenes,
+      maxScenes: profile.maxScenes
+    };
+  }
+
+  // TikTok-locked format for short videos (50-60s sweet spot, ≤65s penalty cliff):
+  // 9-11 scenes with 2-3 shots each. Total 24-30 images for visual variety.
+  if (seconds <= 65) {
+    return {minScenes: 9, maxScenes: 11};
+  }
+
+  if (seconds <= 85) {
+    return {minScenes: 8, maxScenes: 10};
+  }
+
+  if (seconds <= 115) {
+    return {minScenes: 10, maxScenes: 12};
+  }
+
+  if (seconds <= 155) {
+    return {minScenes: 12, maxScenes: 14};
+  }
+
+  return {
+    minScenes: profile.minScenes,
+    maxScenes: profile.maxScenes
+  };
+};
+
+/**
+ * Get a single recommended scene count for a duration.
+ * @param {string} profileValue
+ * @param {number} targetSeconds
+ * @returns {number}
+ */
+export const getRecommendedSceneCountForDuration = (profileValue, targetSeconds) => {
+  const {minScenes, maxScenes} = getSceneCountRangeForDuration(profileValue, targetSeconds);
+  return Math.max(1, Math.round((minScenes + maxScenes) / 2));
+};
+
+/**
  * Infer the best output profile from pixel dimensions.
  * @param {number} width
  * @param {number} height

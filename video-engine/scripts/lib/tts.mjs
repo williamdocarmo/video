@@ -2196,7 +2196,7 @@ const synthesizeWithCloudTtsChirp3 = async ({
 const synthesizeWithCloudTtsGemini = async ({
   text,
   mp3Path,
-  model = "gemini-2.5-flash-tts",
+  model = "gemini-3.1-flash-tts-preview",
   voiceName = "Iapetus",
   languageCode = "pt-BR",
   stylePrompt = "",
@@ -2414,7 +2414,7 @@ export const synthesizeVoiceover = async ({
       return await synthesizeWithCloudTtsGemini({
         text,
         mp3Path,
-        model: google?.model || process.env.GOOGLE_TTS_MODEL || "gemini-2.5-flash-tts",
+        model: google?.model || process.env.GOOGLE_TTS_MODEL || "gemini-3.1-flash-tts-preview",
         voiceName: google?.voiceName || process.env.GOOGLE_TTS_VOICE || "Iapetus",
         languageCode: google?.languageCode || process.env.VIDEO_LANGUAGE || "pt-BR",
         stylePrompt: google?.stylePrompt || process.env.GOOGLE_TTS_STYLE_PROMPT || "",

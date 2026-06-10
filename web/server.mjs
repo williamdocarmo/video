@@ -1,7 +1,8 @@
 import http from "node:http";
 import {spawn, spawnSync} from "node:child_process";
-import {createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync} from "node:fs";
-import {copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile} from "node:fs/promises";
+import {randomBytes} from "node:crypto";
+import {copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync} from "node:fs";
+import {copyFile, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {
@@ -88,11 +89,12 @@ import {
   voiceOptions,
   imageModelOptions,
   generationModeOptions,
-  imageStylePreviewFiles,
   buildImageStyleOptions,
   channelOptions,
   channelPublishProfiles,
-  channelPresets
+  channelPresets,
+  TIKTOK_DEFAULT_AUDIO,
+  TIKTOK_DEFAULT_AUDIO_CHANNELS
 } from "./lib/presets.mjs";
 import {addRoute, matchRoute} from "./lib/routes.mjs";
 import {
@@ -124,6 +126,8 @@ import {
   toTimestampMs,
   normalizePositiveInt
 } from "./lib/utils.mjs";
+import {callJsonProvider, resolveLlmProvider, generateHookVariants, buildVariantStoryboard} from "../video-engine/scripts/lib/llm-provider.mjs";
+import {logJsonLine, serializeError} from "./lib/logger.mjs";
 import {buildTikTokHelperHtml, readTikTokDraft, writeTikTokDraft} from "./lib/tiktok-helper.mjs";
 import {
   init as initVideoLibrary,
@@ -134,9 +138,7 @@ import {
   buildVideoCaseSummary,
   buildVideosSummary,
   getVideoMetadataKey,
-  persistVideoMetadata,
   getVideoMetadataEntry,
-  saveVideoMetadataEntry,
   removeVideoMetadataEntry,
   getVideoMetaPath,
   readVideoMeta,
@@ -150,9 +152,7 @@ import {
   getRetryStoryboardPathForJob,
   canRetryFailedJobFromStoryboard,
   getVideoDurationSeconds,
-  createVideoRecord,
   buildVideoRecord,
-  listAllExports,
   listExportVideos,
   listFailedLibraryJobs,
   resolveVideoTarget,
@@ -164,11 +164,16 @@ import {
   getJobQueueLane,
   getQueueForLane,
   getActiveJobIdForLane,
-  setActiveJobIdForLane,
   getActiveJobIds,
   getQueueLengths,
-  isLaneProcessing,
-  setLaneProcessing,
+  getLaneConcurrency,
+  laneHasCapacity,
+  addActiveJobForLane,
+  removeActiveJobForLane,
+  countLaneRunners,
+  incrementLaneRunners,
+  decrementLaneRunners,
+  rebuildQueueStateFromJobs,
   refreshQueuePositions,
   failJobAndReleaseQueue,
   enqueueJob
@@ -177,9 +182,13 @@ import {
   init as initJobExecution,
   registerJobProcess,
   clearJobProcess,
+  isJobProcessAlive,
+  getJobProcessPid,
   collectDescendantPids,
   terminateJobProcessTree,
   executeChildProcess,
+  getJobIdleTimeoutMs,
+  getJobTimeoutMs,
   createGenerateJobCommand,
   createRerenderJobCommand,
   createAudioPrepJobCommand,
@@ -187,11 +196,13 @@ import {
   createValidateOnlyJobCommand,
   createSceneRegenerateJobCommand
 } from "./lib/job-execution.mjs";
+import {parseQA, splitIntoBatches, runSimulador, loadJobs as loadSimuladorJobs, saveJobs as saveSimuladorJobs} from "../scripts/simulador.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const publicDir = path.join(projectRoot, "web", "public");
-const dataDir = path.join(projectRoot, ".web-ui");
+const defaultDataDir = path.join(projectRoot, ".web-ui");
+const dataDir = resolvePathFrom(projectRoot, process.env.WEB_DATA_DIR, defaultDataDir);
 const localTempRootDir = path.join(projectRoot, ".tmp");
 const localSystemTempDir = path.join(localTempRootDir, "system");
 const localXdgCacheDir = path.join(localTempRootDir, "xdg-cache");
@@ -199,16 +210,26 @@ const localPuppeteerCacheDir = path.join(localTempRootDir, "puppeteer-cache");
 const inputsDir = path.join(dataDir, "inputs");
 const videoLibraryDir = path.join(dataDir, "videos");
 const tiktokDraftsDir = path.join(dataDir, "tiktok-drafts");
+const runtimeAuthFile = path.join(dataDir, "runtime-auth.json");
 const jobsFile = path.join(dataDir, "jobs.json");
 const videosFile = path.join(dataDir, "videos.json");
 const rootEnvPath = path.join(projectRoot, ".env");
 const defaultVideoEngineRoot = path.join(projectRoot, "video-engine");
 const defaultPostarRoot = path.resolve(projectRoot, "..", "..", "postar");
 const DEFAULT_PORT = Number(process.env.WEB_PORT || 3210);
-const DEFAULT_HOST = process.env.WEB_HOST || "127.0.0.1";
+const DEFAULT_HOST = process.env.WEB_HOST || "0.0.0.0";
+const APP_ROLE = String(process.env.VIDEO_STUDIO_ROLE || "all").trim().toLowerCase();
+const RUN_HTTP_SERVER = APP_ROLE !== "worker";
+const RUN_QUEUE_WORKER = APP_ROLE !== "api";
+const AUTO_START_QUEUED_JOBS = String(process.env.WEB_AUTO_START_QUEUED_JOBS || "false").trim().toLowerCase() === "true";
 const RESUME_RENDER_FPS = 30;
 const MAX_LOG_LINES = 2000;
 const MAX_BODY_BYTES = 1_500_000;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const JOB_SYNC_INTERVAL_MS = 2000;
+const JOB_RETENTION_DAYS = normalizePositiveInt(process.env.WEB_JOB_RETENTION_DAYS) || 14;
+const JOB_RETENTION_COUNT = normalizePositiveInt(process.env.WEB_JOB_RETENTION_COUNT) || 500;
+const JOB_TEMP_FILE_PATTERN = /^jobs\.json\.\d+\.\d+\.tmp$/;
 const MISSING_RUN_SLUG = "__missing_run_slug__";
 const HAS_SECURITY_CLI = spawnSync("sh", ["-lc", "command -v security >/dev/null 2>&1"], {stdio: "ignore"}).status === 0;
 const stylePreviewDir = path.join(publicDir, "style-previews");
@@ -220,10 +241,34 @@ const contentTypes = {
   ".jpeg": "image/jpeg",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".md": "text/markdown; charset=utf-8",
   ".mp4": "video/mp4",
   ".png": "image/png",
-  ".txt": "text/plain; charset=utf-8"
+  ".txt": "text/plain; charset=utf-8",
+  ".yaml": "application/yaml; charset=utf-8",
+  ".yml": "application/yaml; charset=utf-8"
 };
+
+const SECURITY_RESPONSE_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "no-referrer",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+};
+
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "connect-src 'self'",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob:",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "frame-ancestors 'none'",
+  "form-action 'self'"
+].join("; ");
 
 // Presets imported from ./lib/presets.mjs
 // Utils imported from ./lib/utils.mjs
@@ -237,6 +282,8 @@ const imageStyleOptions = buildImageStyleOptions(stylePreviewDir);
 const jobs = new Map();
 const streams = new Map();
 let persistTimer = null;
+let jobsFileMtimeMs = 0;
+let jobsDiskSyncTimer = null;
 
 
 const getDatePrefixFromSlug = (slug) => {
@@ -290,10 +337,15 @@ const getPreviewStoryboardIssues = ({storyboard, targetSeconds, language, output
   }
 
   const {minWords, maxWords} = getTargetWordRange(numericTargetSeconds, language);
+  const issues = [];
   const warnings = [];
 
   if (sceneCount < minScenes || sceneCount > maxScenes) {
-    warnings.push(`cenas ${sceneCount} fora da faixa ${minScenes}-${maxScenes}`);
+    issues.push(`cenas ${sceneCount} fora da faixa ${minScenes}-${maxScenes}`);
+  }
+
+  if (wordCount < minWords || wordCount > maxWords) {
+    issues.push(`roteiro com ${wordCount} palavras fora da faixa ${minWords}-${maxWords}`);
   }
 
   const captionText = String(`${storyboard?.postCaption || ""} ${storyboard?.cta || ""}`).trim();
@@ -308,8 +360,104 @@ const getPreviewStoryboardIssues = ({storyboard, targetSeconds, language, output
     maxScenes,
     minWords,
     maxWords,
-    issues: [],
+    issues,
     warnings
+  };
+};
+
+/**
+ * Pre-flight TikTok storyboard validation. Runs at job submission, before
+ * any image generation, so deviations from the locked TikTok format are
+ * surfaced as warnings up front instead of as render-time failures.
+ *
+ * The report is non-blocking by default; only catastrophic structural
+ * issues (zero-shot scenes) set `block: true`. Everything else is a warning.
+ *
+ * @param {object} args
+ * @param {object} args.storyboard - Parsed storyboard JSON.
+ * @param {string} [args.channelValue] - Channel id to decide if a default audio preset would apply.
+ * @returns {{ok: boolean, block: boolean, warnings: string[], errors: string[], summary: object}}
+ */
+const validateTikTokStoryboard = ({storyboard = null, channelValue = ""} = {}) => {
+  const warnings = [];
+  const errors = [];
+
+  const scenes = Array.isArray(storyboard?.scenes) ? storyboard.scenes : [];
+  const totalScenes = scenes.length;
+
+  let totalShots = 0;
+  let totalDurationSec = 0;
+  let scenesWithZeroShots = 0;
+  let shotsMissingImagePrompt = 0;
+  let singleShotScenes = 0;
+
+  scenes.forEach((scene, sceneIndex) => {
+    const shots = Array.isArray(scene?.shots) ? scene.shots : [];
+    if (shots.length === 0) {
+      scenesWithZeroShots += 1;
+      errors.push(`scene ${sceneIndex + 1} (${scene?.title || "sem titulo"}) tem zero shots`);
+      return;
+    }
+    if (shots.length === 1) singleShotScenes += 1;
+    totalShots += shots.length;
+
+    shots.forEach((shot) => {
+      const duration = Number.parseFloat(String(shot?.duration ?? "").replace(/s$/i, ""));
+      if (Number.isFinite(duration) && duration > 0) {
+        totalDurationSec += duration;
+      } else if (Number.isFinite(Number(scene?.duration))) {
+        totalDurationSec += Number(scene.duration) / shots.length;
+      } else {
+        totalDurationSec += 2;
+      }
+      if (!String(shot?.imagePrompt || "").trim()) {
+        shotsMissingImagePrompt += 1;
+      }
+    });
+  });
+
+  if (totalDurationSec < 45 || totalDurationSec > 70) {
+    warnings.push(`duracao estimada ${totalDurationSec.toFixed(1)}s fora da faixa TikTok 45-70s`);
+  }
+  if (totalShots < 18) {
+    warnings.push(`apenas ${totalShots} imagens (TikTok recomenda 24-30, minimo 18 para variedade visual)`);
+  }
+  if (shotsMissingImagePrompt > 0) {
+    warnings.push(`${shotsMissingImagePrompt} shot(s) sem imagePrompt — fallback chain sera usada`);
+  }
+  if (singleShotScenes > 2) {
+    warnings.push(`${singleShotScenes} cenas com apenas 1 shot — TikTok premia variedade (2-3 shots/cena)`);
+  }
+  if (totalScenes > 0 && (totalScenes < 9 || totalScenes > 11)) {
+    warnings.push(`${totalScenes} cenas fora da faixa TikTok 9-11`);
+  }
+
+  const hasStoryboardAudio = Boolean(
+    storyboard?.audio &&
+      typeof storyboard.audio === "object" &&
+      String(storyboard.audio.provider || "").toLowerCase() === "elevenlabs" &&
+      String(storyboard.audio.voiceId || "").trim()
+  );
+  const channelHasDefaultAudioPreset = TIKTOK_DEFAULT_AUDIO_CHANNELS.includes(String(channelValue || ""));
+  if (!hasStoryboardAudio && !channelHasDefaultAudioPreset) {
+    warnings.push(`storyboard sem campo audio e channel "${channelValue}" sem preset default — TTS cairá no GCP padrao`);
+  }
+
+  return {
+    ok: errors.length === 0,
+    block: scenesWithZeroShots > 0,
+    warnings,
+    errors,
+    summary: {
+      totalScenes,
+      totalShots,
+      totalDurationSec: Number(totalDurationSec.toFixed(1)),
+      scenesWithZeroShots,
+      shotsMissingImagePrompt,
+      singleShotScenes,
+      hasStoryboardAudio,
+      channelHasDefaultAudioPreset
+    }
   };
 };
 
@@ -516,7 +664,7 @@ const buildResumeRenderProps = ({
     title: storyboard.videoTitle || job.title,
     hook: storyboard.hook || "",
     cta: storyboard.cta || "",
-    channelHandle: job.input?.channelHandle || "@teucanal",
+    channelHandle: job.input?.channelHandle || "",
     outputProfile: outputProfile.id,
     compositionId: outputProfile.compositionId,
     videoWidth: outputProfile.width,
@@ -578,6 +726,48 @@ const getChannelPreset = (value) => channelPresets[value] || channelPresets.foiu
 
 const getDefaultVoiceForLanguage = (language) =>
   String(language || "").startsWith("en") ? DEFAULT_ENGLISH_VOICE : DEFAULT_VOICE;
+
+// Resolve audio provider/voice from a storyboard-supplied audio block or a
+// channel-level default preset. Returns null when neither applies, in which
+// case the caller falls through to the legacy body.audioProvider/body.voice path.
+const resolveAudioOverride = ({body = {}, channelValue = ""}) => {
+  const storyboardAudio =
+    body && body.storyboard && typeof body.storyboard === "object" && body.storyboard.audio && typeof body.storyboard.audio === "object"
+      ? body.storyboard.audio
+      : null;
+
+  if (storyboardAudio) {
+    const provider = String(storyboardAudio.provider || "").toLowerCase().trim();
+    const voiceId = String(storyboardAudio.voiceId || storyboardAudio.voice || "").trim();
+    const modelId = String(storyboardAudio.modelId || "").trim();
+    const voiceName = String(storyboardAudio.voiceName || "").trim();
+    if (provider === "elevenlabs" && voiceId) {
+      return {
+        source: "storyboard",
+        audioProvider: "elevenlabs",
+        voice: voiceId,
+        modelId: modelId || TIKTOK_DEFAULT_AUDIO.modelId,
+        voiceName: voiceName || ""
+      };
+    }
+  }
+
+  // No storyboard audio supplied — apply the locked TikTok preset for
+  // foiumaideia/quiet2min/ate2min so storyboards no longer need to specify audio.
+  const userExplicitlyChose =
+    String(body?.audioProvider || "").toLowerCase().trim() === "elevenlabs" && String(body?.voice || "").trim();
+  if (TIKTOK_DEFAULT_AUDIO_CHANNELS.includes(channelValue) && !userExplicitlyChose) {
+    return {
+      source: "channel-preset",
+      audioProvider: TIKTOK_DEFAULT_AUDIO.provider,
+      voice: TIKTOK_DEFAULT_AUDIO.voiceId,
+      modelId: TIKTOK_DEFAULT_AUDIO.modelId,
+      voiceName: TIKTOK_DEFAULT_AUDIO.voiceName
+    };
+  }
+
+  return null;
+};
 
 const resolveRequestedVoice = ({selectedVoice, customVoice, language, channelPreset = null, audioProvider = "gcp"}) => {
   const requestedVoice = String(selectedVoice || "").trim();
@@ -646,7 +836,8 @@ const serializeImageModelOption = (option) => ({
   badge: option.badge || "",
   description: option.description || "",
   costLabel: option.costLabel || "",
-  costDetail: option.costDetail || ""
+  costDetail: option.costDetail || "",
+  previewImageUrl: option.previewFile ? `/style-gallery/images/models/${option.previewFile}` : ""
 });
 
 const serializeGenerationModeOption = (option) => ({
@@ -689,6 +880,13 @@ const sanitizeJob = (job) => {
   const recoverySourceJob = getRecoverySourceJob(job);
   const isPreview = Boolean(recoverySourceJob?.input?.previewOnly || job.input?.previewOnly);
   const effectiveStoryboardPath = findExistingStoryboardPath(job);
+  const queueLane = job.queueLane || getJobQueueLane(job);
+  const normalizedStatus = String(job.status || "").trim().toLowerCase();
+  const startAvailable =
+    !AUTO_START_QUEUED_JOBS &&
+    normalizedStatus === "queued" &&
+    !getActiveJobIdForLane(queueLane) &&
+    Number(job.queuePosition || 0) === 1;
 
   return {
     id: job.id,
@@ -697,7 +895,7 @@ const sanitizeJob = (job) => {
     slug: job.slug,
     caseId: job.caseId || null,
     attempt: job.attempt || null,
-    queueLane: job.queueLane || null,
+    queueLane: queueLane || null,
     status: job.status,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
@@ -726,6 +924,7 @@ const sanitizeJob = (job) => {
     failureSummary: getFailureSummary(job),
     resumeAvailable,
     retryFromStoryboardAvailable: !isPreview && canRetryFailedJobFromStoryboard(job),
+    startAvailable,
     forceFailAvailable: ["queued", "running"].includes(String(job.status || "").trim().toLowerCase()),
     sceneRegenerateAvailable: !isPreview && job.status === "failed" && firstMissingSceneNumber !== null,
     audioPrepAvailable: !isPreview && canPrepareAudioForJob(job) && stepMap.audio?.status !== "completed",
@@ -738,6 +937,7 @@ const sanitizeJob = (job) => {
     rca,
     failureTaxonomy,
     recommendedAction,
+    queueMode: AUTO_START_QUEUED_JOBS ? "auto" : "manual",
     caseSummary: buildCaseSummary({
       id: job.id,
       kind: "job",
@@ -765,7 +965,7 @@ const serializeJobForPersistence = (job) => {
   return {
     ...job,
     queueLane: job.queueLane || getJobQueueLane(job),
-    logTail: Array.isArray(job.logTail) ? job.logTail : [],
+    logTail: Array.isArray(job.logTail) ? job.logTail.slice(-50) : [],
     heartbeatAt: job.heartbeatAt || job.updatedAt || job.createdAt || nowIso,
     artifactEpochAt: job.artifactEpochAt || job.createdAt || nowIso,
     stageValue: job.stageValue || inferJobStageValue(job),
@@ -775,11 +975,149 @@ const serializeJobForPersistence = (job) => {
   };
 };
 
+const getJobFreshnessMs = (job) => {
+  const timestamps = [
+    job?.updatedAt,
+    job?.heartbeatAt,
+    job?.completedAt,
+    job?.startedAt,
+    job?.createdAt
+  ]
+    .map((value) => new Date(value || 0).getTime())
+    .filter((value) => Number.isFinite(value));
+
+  return timestamps.length > 0 ? Math.max(...timestamps) : 0;
+};
+
+const isTerminalJobRecord = (job) =>
+  ["completed", "failed", "cancelled", "canceled"].includes(String(job?.status || "").trim().toLowerCase());
+
+const isLocallyRunningJobRecord = (job) =>
+  Number(job?.processId || 0) > 0 &&
+  ["queued", "running"].includes(String(job?.status || "").trim().toLowerCase());
+
+const mergeJobRecords = (left, right) => {
+  if (!left) return right;
+  if (!right) return left;
+  // Terminal status in memory always wins over non-terminal from disk —
+  // prevents race where a stale "running" record on disk overwrites a
+  // "completed" or "failed" record that the close handler already applied.
+  if (isLocallyRunningJobRecord(left) && isTerminalJobRecord(right)) return left;
+  if (isTerminalJobRecord(left) && !isTerminalJobRecord(right)) return left;
+  if (isTerminalJobRecord(right) && !isTerminalJobRecord(left)) return right;
+  if (isLocallyRunningJobRecord(left) && isLocallyRunningJobRecord(right)) {
+    return getJobFreshnessMs(right) >= getJobFreshnessMs(left) ? right : left;
+  }
+  if (isLocallyRunningJobRecord(left) && !isTerminalJobRecord(right)) return left;
+  if (isLocallyRunningJobRecord(right) && !isTerminalJobRecord(left)) return right;
+  return getJobFreshnessMs(right) >= getJobFreshnessMs(left) ? right : left;
+};
+
+const hydratePersistedJob = (persistedJob, {markRunningAsFailed = false} = {}) => {
+  const nowIso = toIsoNow();
+  const hydrated = {
+    ...persistedJob,
+    queueLane: persistedJob.queueLane || getJobQueueLane(persistedJob),
+    logTail: Array.isArray(persistedJob.logTail) ? persistedJob.logTail : [],
+    heartbeatAt: persistedJob.heartbeatAt || persistedJob.updatedAt || persistedJob.createdAt || nowIso,
+    artifactEpochAt: persistedJob.artifactEpochAt || persistedJob.createdAt || nowIso,
+    stageValue: persistedJob.stageValue || inferJobStageValue(persistedJob),
+    stageSource: persistedJob.stageSource || "system",
+    stageConfidence: persistedJob.stageConfidence || "medium",
+    stageUpdatedAt: persistedJob.stageUpdatedAt || persistedJob.updatedAt || nowIso
+  };
+
+  if (markRunningAsFailed && hydrated.status === "running") {
+    const restartMessage = "Worker reiniciado antes da conclusao deste job.";
+    const failureContext = String(
+      hydrated.error ||
+      getProcessFailureMessage(hydrated, "") ||
+      ""
+    ).trim();
+
+    hydrated.status = "failed";
+    hydrated.terminationReason = hydrated.terminationReason || restartMessage;
+    hydrated.error = failureContext && failureContext !== restartMessage
+      ? `${failureContext} | ${restartMessage}`
+      : restartMessage;
+    hydrated.completedAt = hydrated.completedAt || nowIso;
+    hydrated.updatedAt = nowIso;
+    hydrated.heartbeatAt = nowIso;
+    hydrated.stageValue = getFailureStage(hydrated) || hydrated.stageValue || "pipeline";
+    hydrated.stageSource = "system";
+    hydrated.stageConfidence = "high";
+    hydrated.stageUpdatedAt = nowIso;
+  }
+
+  return hydrated;
+};
+
+const getTerminalJobTimestampMs = (job) => {
+  const timestamp = new Date(job.completedAt || job.updatedAt || job.createdAt || 0).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const pruneRetainedJobs = () => {
+  const cutoffMs = Date.now() - JOB_RETENTION_DAYS * MS_PER_DAY;
+  const terminalJobs = Array.from(jobs.values())
+    .filter((job) => ["completed", "failed"].includes(String(job.status || "").trim().toLowerCase()))
+    .sort((left, right) => getTerminalJobTimestampMs(right) - getTerminalJobTimestampMs(left));
+
+  let prunedCount = 0;
+
+  for (let index = 0; index < terminalJobs.length; index += 1) {
+    const job = terminalJobs[index];
+    const keepByCount = index < JOB_RETENTION_COUNT;
+    const keepByAge = getTerminalJobTimestampMs(job) >= cutoffMs;
+
+    if (keepByCount || keepByAge) {
+      continue;
+    }
+
+    jobs.delete(job.id);
+    streams.delete(job.id);
+    prunedCount += 1;
+  }
+
+  return prunedCount;
+};
+
+const cleanupStaleJobsTempFiles = async () => {
+  const entries = await readdir(dataDir, {withFileTypes: true}).catch(() => []);
+  let removedCount = 0;
+
+  for (const entry of entries) {
+    if (!entry?.isFile?.() || !JOB_TEMP_FILE_PATTERN.test(entry.name)) {
+      continue;
+    }
+
+    await safeUnlink(path.join(dataDir, entry.name));
+    removedCount += 1;
+  }
+
+  return removedCount;
+};
+
 const persistJobs = async () => {
   await ensureManagedDir(dataDir);
+  pruneRetainedJobs();
+  const diskJobs = await readJsonFile(jobsFile).catch(() => []);
+  const mergedJobs = new Map();
+
+  if (Array.isArray(diskJobs)) {
+    for (const persistedJob of diskJobs) {
+      const hydrated = hydratePersistedJob(persistedJob, {markRunningAsFailed: false});
+      mergedJobs.set(hydrated.id, hydrated);
+    }
+  }
+
+  for (const job of jobs.values()) {
+    const serialized = serializeJobForPersistence(job);
+    mergedJobs.set(serialized.id, mergeJobRecords(serialized, mergedJobs.get(serialized.id)));
+  }
+
   const payload = JSON.stringify(
-    Array.from(jobs.values())
-      .map((job) => serializeJobForPersistence(job))
+    Array.from(mergedJobs.values())
       .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()),
     null,
     2
@@ -787,13 +1125,39 @@ const persistJobs = async () => {
   const tempJobsFile = path.join(dataDir, `jobs.json.${process.pid}.${Date.now()}.tmp`);
   await writeManagedFile(tempJobsFile, payload);
   await rename(tempJobsFile, jobsFile);
+  // Our own write must not re-enter via the disk-sync loop: a re-ingest of a
+  // snapshot merged milliseconds ago can resurrect records the close handler
+  // or orphan detector already superseded.
+  const written = await stat(jobsFile).catch(() => null);
+  if (written) jobsFileMtimeMs = Math.max(jobsFileMtimeMs, written.mtimeMs);
 };
 
 const persistJobsSync = () => {
   mkdirSync(dataDir, {recursive: true, mode: 0o755});
+  pruneRetainedJobs();
+  const diskJobs = (() => {
+    try {
+      return JSON.parse(readFileSync(jobsFile, "utf8"));
+    } catch {
+      return [];
+    }
+  })();
+  const mergedJobs = new Map();
+
+  if (Array.isArray(diskJobs)) {
+    for (const persistedJob of diskJobs) {
+      const hydrated = hydratePersistedJob(persistedJob, {markRunningAsFailed: false});
+      mergedJobs.set(hydrated.id, hydrated);
+    }
+  }
+
+  for (const job of jobs.values()) {
+    const serialized = serializeJobForPersistence(job);
+    mergedJobs.set(serialized.id, mergeJobRecords(serialized, mergedJobs.get(serialized.id)));
+  }
+
   const payload = JSON.stringify(
-    Array.from(jobs.values())
-      .map((job) => serializeJobForPersistence(job))
+    Array.from(mergedJobs.values())
       .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()),
     null,
     2
@@ -801,6 +1165,201 @@ const persistJobsSync = () => {
   const tempJobsFile = path.join(dataDir, `jobs.json.${process.pid}.${Date.now()}.tmp`);
   writeFileSync(tempJobsFile, payload);
   renameSync(tempJobsFile, jobsFile);
+  try {
+    jobsFileMtimeMs = Math.max(jobsFileMtimeMs, statSync(jobsFile).mtimeMs);
+  } catch { /* keep previous mtime */ }
+};
+
+const syncJobsFromDisk = async ({broadcastChanges = false} = {}) => {
+  const details = await stat(jobsFile).catch(() => null);
+  if (!details) {
+    return {changed: 0, sourceCount: 0};
+  }
+
+  if (details.mtimeMs <= jobsFileMtimeMs) {
+    return {changed: 0, sourceCount: jobs.size};
+  }
+
+  const persisted = await readJsonFile(jobsFile).catch(() => null);
+  if (!Array.isArray(persisted)) {
+    jobsFileMtimeMs = details.mtimeMs;
+    return {changed: 0, sourceCount: jobs.size};
+  }
+
+  let changed = 0;
+  const seenIds = new Set();
+
+  for (const persistedJob of persisted) {
+    const hydrated = hydratePersistedJob(persistedJob, {markRunningAsFailed: false});
+    seenIds.add(hydrated.id);
+    const current = jobs.get(hydrated.id);
+
+    if (current && isLocallyRunningJobRecord(current) && isTerminalJobRecord(hydrated)) {
+      // Adopt an external terminal record (e.g. cancel via another role) only
+      // if it postdates the current attempt; a leftover terminal record from a
+      // previous attempt must not poison a freshly started process.
+      const terminalAtMs = new Date(hydrated.completedAt || hydrated.updatedAt || 0).getTime();
+      const attemptStartMs = new Date(current.processStartedAt || current.startedAt || 0).getTime();
+      if (attemptStartMs > 0 && terminalAtMs > 0 && terminalAtMs < attemptStartMs) {
+        continue;
+      }
+      Object.assign(current, hydrated, {
+        processId: current.processId,
+        processStartedAt: current.processStartedAt || hydrated.processStartedAt || null
+      });
+      changed += 1;
+      if (broadcastChanges) {
+        broadcastJob(current, {skipPersist: true});
+      }
+      continue;
+    }
+
+    const merged = mergeJobRecords(current, hydrated);
+
+    if (!current || merged !== current) {
+      jobs.set(hydrated.id, merged);
+      changed += 1;
+      if (broadcastChanges) {
+        broadcastJob(merged, {skipPersist: true});
+      }
+    }
+  }
+
+  for (const [jobId, job] of jobs.entries()) {
+    if (!seenIds.has(jobId)) {
+      const runningLocally = Number(job?.processId || 0) > 0;
+      if (!runningLocally) {
+        jobs.delete(jobId);
+        changed += 1;
+      }
+    }
+  }
+
+  if (changed === 0) {
+    jobsFileMtimeMs = details.mtimeMs;
+    return {changed, sourceCount: persisted.length};
+  }
+
+  rebuildQueueStateFromJobs();
+  refreshQueuePositions();
+  jobsFileMtimeMs = details.mtimeMs;
+
+  if (RUN_QUEUE_WORKER) {
+    for (const job of jobs.values()) {
+      const runningLocally = Number(job?.processId || 0) > 0;
+      if (runningLocally && !["running", "queued"].includes(String(job.status || "").trim().toLowerCase())) {
+        const terminalAtMs = new Date(job.completedAt || job.updatedAt || 0).getTime();
+        const attemptStartMs = new Date(job.processStartedAt || job.startedAt || 0).getTime();
+        if (attemptStartMs > 0 && terminalAtMs > 0 && terminalAtMs < attemptStartMs) {
+          continue;
+        }
+        appendLog(job, "[worker-sync] job alterado externamente; encerrando processo local.\n", "stderr");
+        void terminateJobProcessTree(job).catch(() => false);
+      }
+    }
+  }
+
+  return {changed, sourceCount: persisted.length};
+};
+
+// ── Orphan job detector ──────────────────────────────────────────────────────
+// Safety net: if a job is "running" but has no live process and heartbeat is
+// stale, resolve it as completed (if output exists) or failed.
+const ORPHAN_CHECK_INTERVAL_MS = 30_000;
+const ORPHAN_HEARTBEAT_STALE_MS = 8 * 60_000; // 8 minutes without heartbeat (tolerates slow LLM/render phases under load)
+let lastOrphanCheckMs = 0;
+
+const resolveOrphanJobs = () => {
+  const now = Date.now();
+  if (now - lastOrphanCheckMs < ORPHAN_CHECK_INTERVAL_MS) return;
+  lastOrphanCheckMs = now;
+
+  let resolvedCount = 0;
+
+  for (const job of jobs.values()) {
+    if (job.status !== "running") continue;
+
+    // Authoritative liveness: if this server still owns a live child for the job,
+    // never orphan it — even if the heartbeat is stale or job.processId was
+    // clobbered to null by the disk-sync loop. Bumping the heartbeat here also
+    // keeps quiet phases (long renders, slow image audits) fresh on disk.
+    if (isJobProcessAlive(job.id)) {
+      updateJobHeartbeat(job);
+      if (!job.processId) {
+        job.processId = getJobProcessPid(job.id);
+      }
+      continue;
+    }
+
+    const heartbeat = Math.max(
+      ...[job.heartbeatAt, job.updatedAt, job.startedAt, job.processStartedAt, job.stageUpdatedAt]
+        .map((value) => new Date(value || 0).getTime())
+        .filter((value) => Number.isFinite(value))
+    );
+    if (!Number.isFinite(heartbeat) || now - heartbeat < ORPHAN_HEARTBEAT_STALE_MS) continue;
+
+    // Fallback: check the recorded process id if one survived.
+    const pid = Number(job.processId || 0);
+    if (pid > 0) {
+      try { process.kill(pid, 0); continue; } catch { /* process is dead */ }
+    }
+
+    const paths = getRunPaths(job.slug);
+    const hasOutput = existsSync(paths.outPath);
+    const resolvedStatus = hasOutput ? "completed" : "failed";
+    const reason = `Orphan detector: job sem processo vivo ha ${Math.round((now - heartbeat) / 60_000)}min.`;
+
+    logJsonLine("warn", "orphan_job_resolved", {
+      jobId: job.id, slug: job.slug, resolvedStatus, heartbeatAge: now - heartbeat
+    });
+
+    if (hasOutput) {
+      try {
+        const exportDir = getChannelExportDir(job.input?.channel || "foiumaideia");
+        const exportPath = path.join(exportDir, `${job.slug}.mp4`);
+        if (!existsSync(exportPath) && existsSync(paths.outPath)) {
+          copyFileSync(paths.outPath, exportPath);
+        }
+        job.outputPath = job.outputPath || exportPath;
+      } catch { /* best-effort export */ }
+    }
+
+    updateJob(job, {
+      status: resolvedStatus,
+      completedAt: job.completedAt || new Date().toISOString(),
+      error: resolvedStatus === "failed" ? reason : job.error || null
+    });
+    removeActiveJobForLane(job.queueLane || getJobQueueLane(job), job.id);
+    resolvedCount += 1;
+  }
+
+  // Resolving an orphan frees a lane slot; kick the worker so the queue does
+  // not stall waiting for an external jobs.json change.
+  if (resolvedCount > 0 && RUN_QUEUE_WORKER) {
+    refreshQueuePositions();
+    void startQueueWorker("preview").catch(() => {});
+    void startQueueWorker("heavy").catch(() => {});
+  }
+};
+
+const startJobsDiskSyncLoop = () => {
+  if (jobsDiskSyncTimer) {
+    clearInterval(jobsDiskSyncTimer);
+  }
+
+  jobsDiskSyncTimer = setInterval(() => {
+    resolveOrphanJobs();
+    syncJobsFromDisk({broadcastChanges: RUN_HTTP_SERVER})
+      .then((result) => {
+        if (RUN_QUEUE_WORKER && AUTO_START_QUEUED_JOBS && result.changed > 0) {
+          void startQueueWorker("preview");
+          void startQueueWorker("heavy");
+        }
+      })
+      .catch((error) => {
+        logJsonLine("warn", "jobs_disk_sync_failed", {error: serializeError(error)});
+      });
+  }, JOB_SYNC_INTERVAL_MS);
 };
 
 const slugHasMaterializedArtifacts = (slug) => {
@@ -812,14 +1371,20 @@ const slugHasMaterializedArtifacts = (slug) => {
   );
 };
 
-const buildUniqueGenerateSlug = (title) => {
+const buildUniqueGenerateSlug = (title, {reservedSlugs = []} = {}) => {
   const slugBase = slugify(title) || "video";
   const datePrefix = new Date().toISOString().slice(0, 10);
   const rootSlug = `${datePrefix}-${slugBase}`;
+  const reserved = new Set(
+    Array.from(reservedSlugs || [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  );
   let candidate = rootSlug;
   let suffix = 2;
 
   while (
+    reserved.has(candidate) ||
     Array.from(jobs.values()).some((job) => String(job?.slug || "").trim() === candidate) ||
     slugHasMaterializedArtifacts(candidate)
   ) {
@@ -1018,6 +1583,19 @@ const sendEvent = (response, event, payload) => {
   response.write(`data: ${JSON.stringify(payload)}\n\n`);
 };
 
+const removeStreamSubscriber = (jobId, response) => {
+  const subscribers = streams.get(jobId);
+  if (!subscribers) {
+    return;
+  }
+
+  subscribers.delete(response);
+
+  if (subscribers.size === 0) {
+    streams.delete(jobId);
+  }
+};
+
 const broadcastJob = (job, {skipPersist = false} = {}) => {
   const payload = sanitizeJob(job);
   const subscribers = streams.get(job.id);
@@ -1027,7 +1605,7 @@ const broadcastJob = (job, {skipPersist = false} = {}) => {
       try {
         sendEvent(response, "update", payload);
       } catch {
-        subscribers.delete(response);
+        removeStreamSubscriber(job.id, response);
       }
     }
   }
@@ -1481,59 +2059,116 @@ const runResumedGenerateJob = async (job) => {
     appendLog(job, "[resume] a renderizar no Remotion com props reconstruidos\n");
 
     await mkdir(path.dirname(paths.outPath), {recursive: true});
+    const renderPropsPath = path.join(localSystemTempDir, `resume-render-props-${job.id}.json`);
+    await writeFile(renderPropsPath, JSON.stringify(renderProps, null, 2));
+    const exitCode = await (async () => {
+      const renderTimeoutMs = getJobTimeoutMs(job);
+      const idleTimeoutMs = getJobIdleTimeoutMs(job);
+      const formatTimeoutLabel = (timeoutMs) => {
+        const totalMinutes = Math.max(1, Math.round(timeoutMs / 60_000));
+        return totalMinutes % 60 === 0 ? `${totalMinutes / 60}h` : `${totalMinutes}min`;
+      };
+      const renderTimeoutLabel = formatTimeoutLabel(renderTimeoutMs);
+      const idleTimeoutLabel = formatTimeoutLabel(idleTimeoutMs);
 
-    const child = spawn(
-      "npx",
-      [
-        "remotion",
-        "render",
-        "src/index.ts",
-        outputProfile.compositionId,
-        paths.outPath,
-        `--props=${JSON.stringify(renderProps)}`,
-        `--timeout=${process.env.REMOTION_TIMEOUT_MS || "1800000"}`,
-        `--concurrency=${process.env.REMOTION_CONCURRENCY || "2"}`,
-        `--scale=${process.env.REMOTION_SCALE || "1"}`,
-        `--video-bitrate=${process.env.REMOTION_VIDEO_BITRATE || "9M"}`,
-        `--audio-bitrate=${process.env.REMOTION_AUDIO_BITRATE || "256k"}`,
-        `--x264-preset=${process.env.REMOTION_X264_PRESET || "medium"}`
-      ],
-      {
-        cwd: configuredVideoEngineRoot,
-        env: {
-          ...baseChildEnv,
-          CI: "1",
-          NO_COLOR: "1",
-          FORCE_COLOR: "0"
-        },
-        stdio: ["ignore", "pipe", "pipe"]
-      }
-    );
+      try {
+        const child = spawn(
+          "npx",
+          [
+            "remotion",
+            "render",
+            "src/index.ts",
+            outputProfile.compositionId,
+            paths.outPath,
+            `--props=${renderPropsPath}`,
+            `--timeout=${renderTimeoutMs}`,
+            `--concurrency=${process.env.REMOTION_CONCURRENCY || "2"}`,
+            `--scale=${process.env.REMOTION_SCALE || "1"}`,
+            `--video-bitrate=${process.env.REMOTION_VIDEO_BITRATE || "9M"}`,
+            `--audio-bitrate=${process.env.REMOTION_AUDIO_BITRATE || "256k"}`,
+            `--x264-preset=${process.env.REMOTION_X264_PRESET || "medium"}`
+          ],
+          {
+            cwd: configuredVideoEngineRoot,
+            env: {
+              ...baseChildEnv,
+              REMOTION_TIMEOUT_MS: String(renderTimeoutMs),
+              CI: "1",
+              NO_COLOR: "1",
+              FORCE_COLOR: "0"
+            },
+            stdio: ["ignore", "pipe", "pipe"]
+          }
+        );
 
-    registerJobProcess(job, child);
-    setJobStage(job, "render");
+        registerJobProcess(job, child);
+        setJobStage(job, "render");
 
-    const collect = (chunk, source) => appendLog(job, chunk, source);
-    child.stdout.on("data", (chunk) => collect(chunk, "stdout"));
-    child.stderr.on("data", (chunk) => collect(chunk, "stderr"));
+        let idleTimer = null;
+        let terminationReason = "";
+        const terminateResumeRender = (reason) => {
+          if (terminationReason) {
+            return;
+          }
 
-    const exitCode = await new Promise((resolve) => {
-      child.on("error", (error) => {
-        clearJobProcess(job);
-        updateJob(job, {
-          status: "failed",
-          completedAt: new Date().toISOString(),
-          processId: null,
-          exitCode: null,
-          error: error.message
+          terminationReason = reason;
+          updateJob(job, {terminationReason: reason});
+          appendLog(job, `${reason}\n`, "stderr");
+          void terminateJobProcessTree(job);
+        };
+        const refreshIdleTimer = () => {
+          if (idleTimer) {
+            clearTimeout(idleTimer);
+          }
+          idleTimer = setTimeout(() => {
+            terminateResumeRender(`[timeout] Resume ficou ${idleTimeoutLabel} sem atividade no processo — matando render.`);
+          }, idleTimeoutMs);
+        };
+        const renderTimeout = setTimeout(() => {
+          terminateResumeRender(`[timeout] Resume excedeu ${renderTimeoutLabel} de runtime total — matando render.`);
+        }, renderTimeoutMs);
+
+        const collect = (chunk, source) => {
+          refreshIdleTimer();
+          appendLog(job, chunk, source);
+        };
+        refreshIdleTimer();
+        child.stdout.on("data", (chunk) => collect(chunk, "stdout"));
+        child.stderr.on("data", (chunk) => collect(chunk, "stderr"));
+
+        return await new Promise((resolve) => {
+          child.on("error", (error) => {
+            clearJobProcess(job);
+            clearTimeout(renderTimeout);
+            if (idleTimer) {
+              clearTimeout(idleTimer);
+            }
+            updateJob(job, {
+              status: "failed",
+              completedAt: new Date().toISOString(),
+              processId: null,
+              exitCode: null,
+              error: error.message,
+              terminationReason: terminationReason || error.message
+            });
+            resolve(1);
+          });
+
+          child.on("close", (code) => {
+            clearTimeout(renderTimeout);
+            if (idleTimer) {
+              clearTimeout(idleTimer);
+            }
+            if (terminationReason) {
+              updateJob(job, {terminationReason});
+            }
+            resolve(typeof code === "number" ? code : 1);
+          });
         });
-        resolve(1);
-      });
-
-      child.on("close", (code) => {
-        resolve(typeof code === "number" ? code : 1);
-      });
-    });
+      } finally {
+        await safeUnlink(renderPropsPath);
+      }
+    })();
 
     job.exitCode = exitCode;
     job.completedAt = new Date().toISOString();
@@ -1542,7 +2177,8 @@ const runResumedGenerateJob = async (job) => {
     if (exitCode !== 0) {
       updateJob(job, {
         status: "failed",
-        error: getProcessFailureMessage(job, `Retomada terminou com codigo ${exitCode}`)
+        error: String(job.terminationReason || getProcessFailureMessage(job, `Retomada terminou com codigo ${exitCode}`)),
+        terminationReason: String(job.terminationReason || "")
       });
       return;
     }
@@ -1627,18 +2263,61 @@ initJobExecution({
   handleAutoContinue
 });
 
-const startQueueWorker = async (lane) => {
-  const queue = getQueueForLane(lane);
+const runQueuedJob = async (job) => {
+  const dependsOnJobId = String(job.input?.dependsOnJobId || "").trim();
+  if (dependsOnJobId) {
+    const dependencyJob = jobs.get(dependsOnJobId);
+    const dependencyError = !dependencyJob
+      ? `Dependencia ${dependsOnJobId} nao encontrada para este job.`
+      : dependencyJob.status !== "completed"
+        ? `Dependencia ${dependsOnJobId} terminou como ${dependencyJob.status}; a versao espelho nao sera executada.`
+        : "";
 
-  if (isLaneProcessing(lane) || getActiveJobIdForLane(lane) || queue.length === 0) {
-    refreshQueuePositions();
-    return;
+    if (dependencyError) {
+      appendLog(job, `[dependency] ${dependencyError}\n`, "stderr");
+      updateJob(job, {
+        status: "failed",
+        completedAt: new Date().toISOString(),
+        exitCode: 1,
+        error: dependencyError,
+        terminationReason: dependencyError
+      });
+      return;
+    }
   }
 
-  setLaneProcessing(lane, true);
+  if (job.type === "generate" && job.input?.resumeFromJobId) {
+    await runResumedGenerateJob(job);
+  } else if (job.type === "generate") {
+    const processConfig = createGenerateJobCommand(job);
+    await executeChildProcess(job, processConfig);
+  } else if (job.type === "scene-regenerate") {
+    const processConfig = createSceneRegenerateJobCommand(job);
+    await executeChildProcess(job, processConfig);
+  } else if (job.type === "audio-prep") {
+    const processConfig = createAudioPrepJobCommand(job);
+    await executeChildProcess(job, processConfig);
+  } else if (job.type === "render-only") {
+    const processConfig = createRenderOnlyJobCommand(job);
+    await executeChildProcess(job, processConfig);
+  } else if (job.type === "validate-only") {
+    const processConfig = createValidateOnlyJobCommand(job);
+    await executeChildProcess(job, processConfig);
+  } else {
+    const processConfig = createRerenderJobCommand(job);
+    await executeChildProcess(job, processConfig);
+  }
+};
+
+// One runner loop = one occupied lane slot. Each runner synchronously claims a
+// job (shift + addActive) before yielding, so concurrent runners never pick
+// the same job.
+const runLaneWorker = async (lane) => {
+  const queue = getQueueForLane(lane);
+  incrementLaneRunners(lane);
 
   try {
-    while (queue.length > 0) {
+    while (queue.length > 0 && laneHasCapacity(lane)) {
       const nextJobId = queue.shift();
       const job = jobs.get(nextJobId);
 
@@ -1646,53 +2325,168 @@ const startQueueWorker = async (lane) => {
         continue;
       }
 
-      setActiveJobIdForLane(lane, job.id);
+      addActiveJobForLane(lane, job.id);
       refreshQueuePositions();
 
       try {
-        if (job.type === "generate" && job.input?.resumeFromJobId) {
-          await runResumedGenerateJob(job);
-        } else if (job.type === "generate") {
-          const processConfig = createGenerateJobCommand(job);
-          await executeChildProcess(job, processConfig);
-        } else if (job.type === "scene-regenerate") {
-          const processConfig = createSceneRegenerateJobCommand(job);
-          await executeChildProcess(job, processConfig);
-        } else if (job.type === "audio-prep") {
-          const processConfig = createAudioPrepJobCommand(job);
-          await executeChildProcess(job, processConfig);
-        } else if (job.type === "render-only") {
-          const processConfig = createRenderOnlyJobCommand(job);
-          await executeChildProcess(job, processConfig);
-        } else if (job.type === "validate-only") {
-          const processConfig = createValidateOnlyJobCommand(job);
-          await executeChildProcess(job, processConfig);
-        } else {
-          const processConfig = createRerenderJobCommand(job);
-          await executeChildProcess(job, processConfig);
-        }
+        await runQueuedJob(job);
       } finally {
-        setActiveJobIdForLane(lane, null);
+        removeActiveJobForLane(lane, job.id);
         refreshQueuePositions();
+      }
+
+      if (!AUTO_START_QUEUED_JOBS) {
+        break;
       }
     }
   } finally {
-    setLaneProcessing(lane, false);
+    decrementLaneRunners(lane);
   }
 };
 
+const startQueueWorker = async (lane) => {
+  if (!RUN_QUEUE_WORKER) {
+    return;
+  }
+
+  const queue = getQueueForLane(lane);
+  const runners = [];
+
+  while (
+    queue.length > 0 &&
+    countLaneRunners(lane) < getLaneConcurrency(lane) &&
+    laneHasCapacity(lane)
+  ) {
+    runners.push(runLaneWorker(lane));
+  }
+
+  if (runners.length === 0) {
+    refreshQueuePositions();
+    return;
+  }
+
+  await Promise.all(runners);
+};
+
 /** @param {object} job */
-const enqueueAndStart = (job) => enqueueJob(job, startQueueWorker);
+const enqueueAndStart = (job) => {
+  const enqueued = enqueueJob(job, startQueueWorker, {autoStart: AUTO_START_QUEUED_JOBS});
+  logJsonLine("info", "job_enqueued", {
+    jobId: job.id,
+    type: job.type,
+    slug: job.slug,
+    status: job.status,
+    queueLane: job.queueLane || getJobQueueLane(job),
+    previewOnly: job.input?.previewOnly === true
+  });
+  return enqueued;
+};
 
 /** @param {object} job @param {string} errorMessage */
-const failAndRelease = (job, errorMessage) => failJobAndReleaseQueue(job, errorMessage, startQueueWorker);
+const failAndRelease = (job, errorMessage) => {
+  logJsonLine("warn", "job_force_failed", {
+    jobId: job?.id,
+    slug: job?.slug,
+    status: job?.status,
+    message: errorMessage
+  });
+  return failJobAndReleaseQueue(job, errorMessage, startQueueWorker, {autoStartNext: AUTO_START_QUEUED_JOBS});
+};
+
+const startQueuedJob = async (job) => {
+  if (!RUN_QUEUE_WORKER) {
+    throw new Error("Este processo nao executa jobs.");
+  }
+
+  if (AUTO_START_QUEUED_JOBS) {
+    throw new Error("A fila automatica esta ativa; este start manual nao e necessario.");
+  }
+
+  if (!job) {
+    throw new Error("Job nao encontrado.");
+  }
+
+  const normalizedStatus = String(job.status || "").trim().toLowerCase();
+  if (normalizedStatus !== "queued") {
+    throw new Error("So e possivel iniciar jobs queued.");
+  }
+
+  const lane = job.queueLane || getJobQueueLane(job);
+  const activeJobId = getActiveJobIdForLane(lane);
+  if (activeJobId) {
+    throw new Error(`Ja existe um job em execucao nesta fila: ${activeJobId}.`);
+  }
+
+  const queue = getQueueForLane(lane);
+  if (queue[0] !== job.id) {
+    throw new Error("So e possivel iniciar manualmente o primeiro job da fila.");
+  }
+
+  await startQueueWorker(lane);
+  return sanitizeJob(jobs.get(job.id) || job);
+};
 
 const listRecentExports = async () => listExportVideos({limit: 3});
 
+const getResponseRequestId = (response) => String(response.getHeader("X-Request-Id") || "").trim();
+
+const getRemoteAddress = (request) =>
+  String(
+    request.headers["x-forwarded-for"] ||
+    request.socket?.remoteAddress ||
+    ""
+  )
+    .split(",")[0]
+    .trim();
+
+const applySecurityHeaders = (request, response) => {
+  for (const [header, value] of Object.entries(SECURITY_RESPONSE_HEADERS)) {
+    if (!response.hasHeader(header)) {
+      response.setHeader(header, value);
+    }
+  }
+
+  if (!response.hasHeader("Content-Security-Policy")) {
+    response.setHeader("Content-Security-Policy", CONTENT_SECURITY_POLICY);
+  }
+
+  const forwardedProto = String(request.headers["x-forwarded-proto"] || "").trim().toLowerCase();
+  if (forwardedProto === "https" && !response.hasHeader("Strict-Transport-Security")) {
+    response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+};
+
 const sendJson = (response, statusCode, payload) => {
+  response.setHeader("Cache-Control", "no-store");
   response.writeHead(statusCode, {"Content-Type": "application/json; charset=utf-8"});
   response.end(JSON.stringify(payload));
 };
+
+const buildHealthPayload = () => ({
+  ok: true,
+  service: "video-studio",
+  role: APP_ROLE,
+  now: toIsoNow(),
+  uptimeSeconds: Math.round(process.uptime()),
+  queueMode: AUTO_START_QUEUED_JOBS ? "auto" : "manual",
+  queue: {
+    ...getQueueLengths(),
+    ...getActiveJobIds()
+  },
+  jobs: {
+    total: jobs.size,
+    running: Array.from(jobs.values()).filter((job) => job.status === "running").length,
+    queued: Array.from(jobs.values()).filter((job) => job.status === "queued").length,
+    failed: Array.from(jobs.values()).filter((job) => job.status === "failed").length
+  },
+  retention: {
+    days: JOB_RETENTION_DAYS,
+    count: JOB_RETENTION_COUNT
+  },
+  auth: {
+    source: BASIC_AUTH_PASSWORD_SOURCE
+  }
+});
 
 const readRequestBody = async (request) => {
   const chunks = [];
@@ -1712,10 +2506,45 @@ const readRequestBody = async (request) => {
   return rawBody ? JSON.parse(rawBody) : {};
 };
 
+const resolveRequestedJobId = ({routeJobId = "", bodyJobId = ""} = {}) => {
+  const normalizedRouteJobId = String(routeJobId || "").trim();
+  const normalizedBodyJobId = String(bodyJobId || "").trim();
+
+  if (normalizedRouteJobId && normalizedBodyJobId && normalizedRouteJobId !== normalizedBodyJobId) {
+    throw new Error("O job informado no body nao confere com o job da rota.");
+  }
+
+  return normalizedRouteJobId || normalizedBodyJobId;
+};
+
 const allowedRoots = [projectRoot, configuredVideoEngineRoot, postarRoot, dataDir].filter(Boolean);
+
+const DENIED_FILE_PATTERNS = [".env", ".key", "secrets.mjs", "secrets.json", "gcp-ate.json", "jobs.json"];
+
+const VIDEO_ENGINE_ARTIFACT_PATTERNS = [
+  /^runs\/[^/]+\/(?:storyboard(?:-qa)?\.json|voiceover\.json|asset-plan\.json|render-props\.json|agent-report\.json|orchestration-report\.json|post\.txt|thumbnail(?:\.json|\.png))$/i,
+  /^public\/runs\/[^/]+\/(?:audio\/[^/]+\.(?:mp3|wav)|video\/[^/]+\.mp4|thumbnail\.png)$/i,
+  /^assets\/envato\/[^/]+\/(?:scene-\d+\.mp4|_flux2_images\/[^/]+\.png|(?:manifest|flux2-manifest)\.json)$/i,
+  /^out\/[^/]+\.mp4$/i
+];
+
+const DATA_ARTIFACT_PATTERNS = [
+  /^videos\/thumbnails\/[^/]+\.(?:png|jpe?g|webp)$/i
+];
+
+const isPathWithinRoot = (targetPath, rootPath) =>
+  Boolean(rootPath) && (targetPath === rootPath || targetPath.startsWith(`${rootPath}${path.sep}`));
+
+const toPosixRelativePath = (rootPath, targetPath) =>
+  path.relative(rootPath, targetPath).split(path.sep).join("/");
 
 const ensureAllowedFilePath = (rawPath) => {
   const resolved = path.resolve(String(rawPath || ""));
+  const basename = path.basename(resolved).toLowerCase();
+
+  if (DENIED_FILE_PATTERNS.some((p) => basename === p || basename.endsWith(p))) {
+    throw new Error("Acesso negado a ficheiro protegido.");
+  }
 
   const isAllowed = allowedRoots.some(
     (root) => resolved === root || resolved.startsWith(`${root}${path.sep}`)
@@ -1726,6 +2555,29 @@ const ensureAllowedFilePath = (rawPath) => {
   }
 
   return resolved;
+};
+
+const ensureAllowedArtifactFilePath = (rawPath) => {
+  const resolved = path.resolve(String(rawPath || ""));
+  const basename = path.basename(resolved).toLowerCase();
+
+  if (DENIED_FILE_PATTERNS.some((pattern) => basename === pattern || basename.endsWith(pattern))) {
+    throw new Error("Acesso negado a ficheiro protegido.");
+  }
+
+  const realPath = realpathSync(resolved);
+  const inVideoEngineArtifacts = isPathWithinRoot(realPath, configuredVideoEngineRoot)
+    && VIDEO_ENGINE_ARTIFACT_PATTERNS.some((pattern) => pattern.test(toPosixRelativePath(configuredVideoEngineRoot, realPath)));
+  const inExportArtifacts = isPathWithinRoot(realPath, postarRoot)
+    && /\.mp4$/i.test(toPosixRelativePath(postarRoot, realPath));
+  const inDataArtifacts = isPathWithinRoot(realPath, dataDir)
+    && DATA_ARTIFACT_PATTERNS.some((pattern) => pattern.test(toPosixRelativePath(dataDir, realPath)));
+
+  if (!inVideoEngineArtifacts && !inExportArtifacts && !inDataArtifacts) {
+    throw new Error("Arquivo fora da lista de artefatos expostos.");
+  }
+
+  return realPath;
 };
 
 initVideoLibrary({
@@ -1790,9 +2642,9 @@ const parseRangeHeader = (rangeHeader, fileSize) => {
   };
 };
 
-const serveStaticFile = async (request, response, filePath) => {
+const serveStaticFile = async (request, response, filePath, {pathResolver = ensureAllowedFilePath} = {}) => {
   try {
-    const resolved = ensureAllowedFilePath(filePath);
+    const resolved = pathResolver(filePath);
     const details = await stat(resolved);
 
     if (!details.isFile()) {
@@ -1868,15 +2720,280 @@ const VALID_LANGUAGES = ["pt-BR", "en-US"];
 const VALID_TONES = Object.keys(tonePresets);
 const VALID_VOICES = voiceOptions.map((option) => option.value);
 const MAX_TITLE_LENGTH = 200;
+const MAX_PUBLISH_TITLE_LENGTH = 100;
 const MAX_SOURCE_TEXT_LENGTH = 50_000;
 const MAX_CUSTOM_VOICE_LENGTH = 100;
 const MAX_STYLE_PROMPT_LENGTH = 500;
+const MAX_LONG_CAPTION_LENGTH = 5000;
+const MAX_SOCIAL_CAPTION_LENGTH = 2200;
+const DUAL_WELLNESS_CHANNEL_MODE = "ate2min|quiet2min";
+const DUAL_WELLNESS_SOURCE_CHANNEL = "ate2min";
+const DUAL_WELLNESS_TARGET_CHANNEL = "quiet2min";
+const TRANSLATION_ENV_KEYS = [
+  "GOOGLE_API_KEY",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_CLOUD_PROJECT",
+  "OPENROUTER_API_KEY",
+  "LLM_PROVIDER",
+  "STORY_PROVIDER",
+  "STORY_MODEL",
+  "GEMINI_MODEL",
+  "ZAI_API_KEY",
+  "ZAI_MODEL"
+];
+const STORYBOARD_TEXT_PACK_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    videoTitle: {type: "string"},
+    hook: {type: "string"},
+    postCaption: {type: "string"},
+    cta: {type: "string"},
+    hashtags: {
+      type: "array",
+      items: {type: "string"}
+    },
+    scenes: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          title: {type: "string"},
+          narration: {type: "string"},
+          overlay: {type: "string"}
+        },
+        required: ["title", "narration", "overlay"]
+      }
+    }
+  },
+  required: ["videoTitle", "hook", "postCaption", "cta", "hashtags", "scenes"]
+};
+
+const hydrateProcessEnvForLlm = () => {
+  for (const key of TRANSLATION_ENV_KEYS) {
+    if (!process.env[key] && baseChildEnv[key]) {
+      process.env[key] = String(baseChildEnv[key]);
+    }
+  }
+};
+
+const resolveStoryboardTranslationProvider = () => {
+  hydrateProcessEnvForLlm();
+
+  if (String(baseChildEnv.GOOGLE_CLOUD_PROJECT || "").trim()) {
+    return "vertex";
+  }
+
+  if (String(baseChildEnv.GOOGLE_API_KEY || "").trim()) {
+    return "gemini";
+  }
+
+  return resolveLlmProvider(baseChildEnv.LLM_PROVIDER || baseChildEnv.STORY_PROVIDER || "codex");
+};
+
+const buildStoryboardTextPack = (storyboard) => ({
+  videoTitle: String(storyboard?.videoTitle || "").trim(),
+  hook: String(storyboard?.hook || "").trim(),
+  postCaption: String(storyboard?.postCaption || "").trim(),
+  cta: String(storyboard?.cta || "").trim(),
+  hashtags: Array.isArray(storyboard?.hashtags) ? storyboard.hashtags.map((item) => String(item || "").trim()).filter(Boolean) : [],
+  scenes: Array.isArray(storyboard?.scenes)
+    ? storyboard.scenes.map((scene) => ({
+        title: String(scene?.title || "").trim(),
+        narration: String(scene?.narration || "").trim(),
+        overlay: String(scene?.overlay || "").trim()
+      }))
+    : []
+});
+
+const applyTranslatedStoryboardTextPack = (storyboard, translatedPack) => ({
+  ...storyboard,
+  videoTitle: String(translatedPack?.videoTitle || storyboard?.videoTitle || "").trim(),
+  hook: String(translatedPack?.hook || storyboard?.hook || "").trim(),
+  postCaption: String(translatedPack?.postCaption || storyboard?.postCaption || "").trim(),
+  cta: String(translatedPack?.cta || storyboard?.cta || "").trim(),
+  hashtags: Array.isArray(translatedPack?.hashtags)
+    ? translatedPack.hashtags.map((item) => String(item || "").trim()).filter(Boolean)
+    : (Array.isArray(storyboard?.hashtags) ? storyboard.hashtags : []),
+  scenes: Array.isArray(storyboard?.scenes)
+    ? storyboard.scenes.map((scene, index) => {
+        const translatedScene = translatedPack?.scenes?.[index] || {};
+        return {
+          ...scene,
+          title: String(translatedScene.title || scene?.title || "").trim(),
+          narration: String(translatedScene.narration || scene?.narration || "").trim(),
+          overlay: String(translatedScene.overlay || scene?.overlay || "").trim()
+        };
+      })
+    : []
+});
+
+const translateStoryboardForQuiet2Min = async (storyboard) => {
+  const sourcePack = buildStoryboardTextPack(storyboard);
+  if (!Array.isArray(sourcePack.scenes) || sourcePack.scenes.length === 0) {
+    throw new Error("Storyboard em pt-BR sem cenas suficientes para gerar a versão em inglês.");
+  }
+
+  const provider = resolveStoryboardTranslationProvider();
+  const model = String(baseChildEnv.STORY_MODEL || baseChildEnv.GEMINI_MODEL || "gemini-2.5-flash").trim();
+  const translatedPack = await callJsonProvider({
+    provider,
+    apiKey: String(baseChildEnv.OPENROUTER_API_KEY || "").trim(),
+    model,
+    schema: STORYBOARD_TEXT_PACK_SCHEMA,
+    cwd: projectRoot,
+    usageContext: "dual-channel-storyboard-translation",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You localize short-form storyboard text packs from Brazilian Portuguese to native English. Keep the same scene order, emotional arc, and viewer intent. The message should gently challenge complacency with one honest truth, then end with restored self-worth, dignity, and calm confidence. Return JSON only."
+      },
+      {
+        role: "user",
+        content: [
+          "Translate this storyboard text pack from pt-BR to en-US for the channel @quiet2min.",
+          "Rules:",
+          "1. Keep the same number of scenes and the same scene order.",
+          "2. Translate only viewer-facing text: title, hook, caption, CTA, hashtags, scene title, narration, and overlay.",
+          "3. Keep overlays short and mobile-readable, ideally 2 to 5 words.",
+          "4. Make the English sound native, calm, truthful, and emotionally intelligent, never cheesy or guru-like.",
+          "5. Preserve the uncomfortable truth / wake-up energy, but end with reassurance and self-respect.",
+          `JSON:\n${JSON.stringify(sourcePack, null, 2)}`
+        ].join("\n")
+      }
+    ]
+  });
+
+  if (!Array.isArray(translatedPack?.scenes) || translatedPack.scenes.length !== sourcePack.scenes.length) {
+    throw new Error("A tradução do storyboard voltou com quantidade de cenas diferente do original.");
+  }
+
+  return applyTranslatedStoryboardTextPack(storyboard, translatedPack);
+};
+
+const buildGenerateJobRecord = ({
+  body,
+  title,
+  sourceText,
+  sourceTextFile,
+  storyboardFile,
+  channelValue,
+  language,
+  caseId,
+  slug,
+  attempt = 1,
+  reuseAssetsFromSlug = "",
+  dependsOnJobId = "",
+  dualChannelMode = ""
+}) => {
+  const selectedVoice = String(body.voice || "").trim();
+  const customVoice = String(body.customVoice || "").trim().slice(0, MAX_CUSTOM_VOICE_LENGTH);
+  const outputProfile = resolveOutputProfileConfig(body.outputProfile);
+  const channel = getChannelConfig(channelValue);
+  const channelPreset = getChannelPreset(channel.value);
+  const preferredTone = String(channelPreset?.tone || "shortform_native").trim() || "shortform_native";
+  const requestedTone = VALID_TONES.includes(String(body.tone || "").trim()) ? String(body.tone).trim() : preferredTone;
+  const imageModel = resolveImageModel(body.imageModel, resolveImageModel(baseChildEnv.GOOGLE_IMAGE_MODEL || baseChildEnv.IMAGE_MODEL));
+  const generationMode = resolveGenerationMode(body.generationMode, resolveGenerationMode(baseChildEnv.GENERATION_MODE));
+  const audioOverride = resolveAudioOverride({body, channelValue: channel.value});
+  const audioProvider = audioOverride
+    ? audioOverride.audioProvider
+    : (body.audioProvider === "elevenlabs" ? "elevenlabs" : "gcp");
+  const audioModelId = audioOverride?.modelId || "";
+  const voice = audioOverride?.voice
+    ? audioOverride.voice
+    : resolveRequestedVoice({
+        selectedVoice,
+        customVoice,
+        language,
+        channelPreset,
+        audioProvider
+      });
+
+  if (!voice) {
+    throw new Error("Escolha uma voz valida.");
+  }
+
+  const targetSeconds = getProfileTargetSeconds(
+    outputProfile.id,
+    Number(body.targetSeconds || channelPreset?.targetSeconds || outputProfile.defaultTargetSeconds)
+  );
+  const tonePreset = tonePresets[requestedTone] || tonePresets.natural_clean;
+  const explicitCustomStylePrompt = String(body.customStylePrompt || "").slice(0, MAX_STYLE_PROMPT_LENGTH).trim();
+  const channelCustomStylePrompt = resolveChannelCustomStylePrompt({channelPreset, language});
+  const preferredImageStyle = String(channelPreset?.imageStyle || DEFAULT_VISUAL_STYLE_PRESET).trim() || DEFAULT_VISUAL_STYLE_PRESET;
+  const requestedImageStyle = String(body.imageStyle || "").trim();
+  const requestedNoMusic = Object.prototype.hasOwnProperty.call(body, "noMusic")
+    ? Boolean(body.noMusic)
+    : channel.value === "foiumaideia";
+
+  return {
+    id: createId(),
+    type: "generate",
+    title,
+    slug,
+    caseId,
+    attempt,
+    status: "queued",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    logTail: [],
+    followUpJobId: null,
+    input: {
+      title,
+      hasSourceText: Boolean(sourceText),
+      sourceTextCharacters: sourceText.length,
+      sourceTextFile,
+      storyboardFile,
+      channel: channel.value,
+      outputProfile: outputProfile.id,
+      language,
+      targetSeconds,
+      imageModel,
+      generationMode,
+      imageStyle: imageStyleOptions.some((option) => option.value === requestedImageStyle)
+        ? requestedImageStyle
+        : preferredImageStyle,
+      voice,
+      audioProvider,
+      audioModelId,
+      tone: requestedTone,
+      stylePrompt: combineStylePrompt({
+        language,
+        tone: requestedTone,
+        customStylePrompt: explicitCustomStylePrompt || channelCustomStylePrompt
+      }),
+      scriptGuidance: resolveEffectiveScriptGuidance({
+        explicitScriptGuidance: body.scriptGuidance,
+        explicitTone: requestedTone,
+        channelPreset,
+        tonePreset
+      }),
+      channelHandle: channel.handle,
+      noMusic: requestedNoMusic,
+      force: body.force !== false,
+      previewOnly: storyboardFile ? false : Boolean(body.previewOnly),
+      approvedFromJobId: null,
+      reuseAssetsFromSlug: String(reuseAssetsFromSlug || "").trim(),
+      dependsOnJobId: String(dependsOnJobId || "").trim(),
+      dualChannelMode: String(dualChannelMode || "").trim()
+    },
+    outputPath: null,
+    storyboardPath: null,
+    exitCode: null,
+    error: null
+  };
+};
 
 const handleGenerateRequest = async (request, response) => {
   const body = await readRequestBody(request);
   const sourceText = String(body.sourceText || "").trim().slice(0, MAX_SOURCE_TEXT_LENGTH);
   const title = String(body.title || deriveTitleFromText(sourceText)).trim().slice(0, MAX_TITLE_LENGTH);
-  const inputValidationError = validateGenerateInputs({title, sourceText});
+  const hasStoryboardInBody = body.storyboard && typeof body.storyboard === "object" && Array.isArray(body.storyboard.scenes) && body.storyboard.scenes.length > 0;
+  const generateForBothChannels = body.generateForBothChannels === true;
+  const inputValidationError = hasStoryboardInBody ? "" : validateGenerateInputs({title, sourceText});
 
   if (!title) {
     sendJson(response, 400, {error: "Informe um titulo ou cole um texto completo."});
@@ -1888,31 +3005,6 @@ const handleGenerateRequest = async (request, response) => {
     return;
   }
 
-  const language = VALID_LANGUAGES.includes(body.language) ? body.language : "pt-BR";
-  const tone = VALID_TONES.includes(body.tone) ? body.tone : "natural_clean";
-  const selectedVoice = String(body.voice || "").trim();
-  const customVoice = String(body.customVoice || "").trim().slice(0, MAX_CUSTOM_VOICE_LENGTH);
-  const outputProfile = resolveOutputProfileConfig(body.outputProfile);
-  const channel = getChannelConfig(String(body.channel || "foiumaideia"));
-  const channelPreset = getChannelPreset(channel.value);
-  const imageModel = resolveImageModel(body.imageModel, resolveImageModel(baseChildEnv.GOOGLE_IMAGE_MODEL || baseChildEnv.IMAGE_MODEL));
-  const generationMode = resolveGenerationMode(body.generationMode, resolveGenerationMode(baseChildEnv.GENERATION_MODE));
-  const audioProvider = body.audioProvider === "elevenlabs" ? "elevenlabs" : "gcp";
-  const voice = resolveRequestedVoice({
-    selectedVoice,
-    customVoice,
-    language,
-    channelPreset,
-    audioProvider
-  });
-
-  if (!voice) {
-    sendJson(response, 400, {error: "Escolha uma voz valida."});
-    return;
-  }
-
-  const targetSeconds = getProfileTargetSeconds(outputProfile.id, Number(body.targetSeconds));
-  const slug = buildUniqueGenerateSlug(title);
   const caseId = createId();
   const sourceTextFile = sourceText ? path.join(inputsDir, `${createId()}-source.txt`) : "";
 
@@ -1921,62 +3013,105 @@ const handleGenerateRequest = async (request, response) => {
     await writeManagedFile(sourceTextFile, sourceText);
   }
 
-  const tonePreset = tonePresets[tone] || tonePresets.natural_clean;
-  const explicitCustomStylePrompt = String(body.customStylePrompt || "").slice(0, MAX_STYLE_PROMPT_LENGTH).trim();
-  const channelCustomStylePrompt = resolveChannelCustomStylePrompt({channelPreset, language});
-  const job = {
-    id: createId(),
-    type: "generate",
-    title,
-    slug,
-    caseId,
-    attempt: 1,
-    status: "queued",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    logTail: [],
-    input: {
-      title,
-      hasSourceText: Boolean(sourceText),
-      sourceTextCharacters: sourceText.length,
-      sourceTextFile,
-      storyboardFile: "",
-      channel: channel.value,
-      outputProfile: outputProfile.id,
-      language,
-      targetSeconds,
-      imageModel,
-      generationMode,
-      imageStyle: imageStyleOptions.some((option) => option.value === body.imageStyle)
-        ? String(body.imageStyle)
-        : DEFAULT_VISUAL_STYLE_PRESET,
-      voice,
-      audioProvider,
-      tone,
-      stylePrompt: combineStylePrompt({
-        language,
-        tone,
-        customStylePrompt: explicitCustomStylePrompt || channelCustomStylePrompt
-      }),
-      scriptGuidance: resolveEffectiveScriptGuidance({
-        explicitScriptGuidance: body.scriptGuidance,
-        explicitTone: body.tone,
-        channelPreset,
-        tonePreset
-      }),
-      channelHandle: channel.handle,
-      noMusic: Boolean(body.noMusic),
-      force: body.force !== false,
-      previewOnly: Boolean(body.previewOnly),
-      approvedFromJobId: null
-    },
-    outputPath: null,
-    storyboardPath: null,
-    exitCode: null,
-    error: null
-  };
+  let storyboardFile = "";
+  let storyboardValidation = null;
+  if (hasStoryboardInBody) {
+    await ensureManagedDir(inputsDir);
+    storyboardFile = path.join(inputsDir, `${createId()}-storyboard.json`);
+    await writeManagedFile(storyboardFile, JSON.stringify(body.storyboard, null, 2));
 
-  sendJson(response, 201, {job: enqueueAndStart(job)});
+    const submittedChannel = String(body.channel || "").trim() || (body.generateForBothChannels ? "foiumaideia" : "");
+    storyboardValidation = validateTikTokStoryboard({
+      storyboard: body.storyboard,
+      channelValue: submittedChannel
+    });
+    if (storyboardValidation.warnings.length > 0) {
+      process.stdout.write(`[storyboard-validation] warnings: ${storyboardValidation.warnings.join("; ")}\n`);
+    }
+    if (storyboardValidation.block) {
+      sendJson(response, 400, {
+        error: `Storyboard invalido: ${storyboardValidation.errors.join("; ")}`,
+        validation: storyboardValidation
+      });
+      return;
+    }
+  }
+
+  if (generateForBothChannels) {
+    if (!hasStoryboardInBody) {
+      sendJson(response, 400, {error: "Para gerar @ate2min + @quiet2min com os mesmos assets, cole o storyboard JSON em pt-BR."});
+      return;
+    }
+
+    const translatedStoryboard = await translateStoryboardForQuiet2Min(body.storyboard);
+    const translatedStoryboardFile = path.join(inputsDir, `${createId()}-storyboard-en.json`);
+    await writeManagedFile(translatedStoryboardFile, JSON.stringify(translatedStoryboard, null, 2));
+
+    const primaryTitle = String(body.storyboard?.videoTitle || title).trim() || title;
+    const secondaryTitle = String(translatedStoryboard?.videoTitle || primaryTitle).trim() || primaryTitle;
+    const primarySlug = buildUniqueGenerateSlug(primaryTitle);
+    const primaryJob = buildGenerateJobRecord({
+      body: {...body, channel: DUAL_WELLNESS_SOURCE_CHANNEL},
+      title: primaryTitle,
+      sourceText,
+      sourceTextFile,
+      storyboardFile,
+      channelValue: DUAL_WELLNESS_SOURCE_CHANNEL,
+      language: "pt-BR",
+      caseId,
+      slug: primarySlug,
+      attempt: 1,
+      dualChannelMode: DUAL_WELLNESS_CHANNEL_MODE
+    });
+    const secondaryJob = buildGenerateJobRecord({
+      body: {...body, channel: DUAL_WELLNESS_TARGET_CHANNEL},
+      title: secondaryTitle,
+      sourceText,
+      sourceTextFile,
+      storyboardFile: translatedStoryboardFile,
+      channelValue: DUAL_WELLNESS_TARGET_CHANNEL,
+      language: "en-US",
+      caseId,
+      slug: buildUniqueGenerateSlug(secondaryTitle, {reservedSlugs: [primarySlug]}),
+      attempt: 2,
+      reuseAssetsFromSlug: primaryJob.slug,
+      dependsOnJobId: primaryJob.id,
+      dualChannelMode: DUAL_WELLNESS_CHANNEL_MODE
+    });
+
+    primaryJob.followUpJobId = secondaryJob.id;
+    secondaryJob.input.primaryChannelJobId = primaryJob.id;
+
+    const enqueuedPrimaryJob = enqueueAndStart(primaryJob);
+    const enqueuedSecondaryJob = enqueueAndStart(secondaryJob);
+    sendJson(response, 201, {
+      job: enqueuedPrimaryJob,
+      jobs: [enqueuedPrimaryJob, enqueuedSecondaryJob],
+      dualChannelMode: true,
+      ...(storyboardValidation ? {storyboardValidation} : {})
+    });
+    return;
+  }
+
+  const language = VALID_LANGUAGES.includes(body.language) ? body.language : "pt-BR";
+  const channel = getChannelConfig(String(body.channel || "foiumaideia"));
+  const job = buildGenerateJobRecord({
+    body,
+    title,
+    sourceText,
+    sourceTextFile,
+    storyboardFile,
+    channelValue: channel.value,
+    language,
+    caseId,
+    slug: buildUniqueGenerateSlug(title),
+    attempt: 1
+  });
+
+  sendJson(response, 201, {
+    job: enqueueAndStart(job),
+    ...(storyboardValidation ? {storyboardValidation} : {})
+  });
 };
 
 const isPlainObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -1987,6 +3122,27 @@ const normalizeStoryboardText = (value, fallback = "", maxLength = 0) => {
   const chosen = normalized || safeFallback;
   return maxLength > 0 ? chosen.slice(0, maxLength) : chosen;
 };
+
+const normalizePublishTitle = (value, fallback = "") =>
+  String(value || fallback || "").trim().slice(0, MAX_PUBLISH_TITLE_LENGTH);
+
+const normalizeLongCaption = (value, fallback = "") =>
+  String(value || fallback || "").trim().slice(0, MAX_LONG_CAPTION_LENGTH);
+
+const normalizeSocialCaption = (value, fallback = "") =>
+  String(value || fallback || "").trim().slice(0, MAX_SOCIAL_CAPTION_LENGTH);
+
+const resolvePublishTitleForVideo = ({body = {}, meta = null, video = null, fallback = ""} = {}) =>
+  normalizePublishTitle(
+    body.publishTitle || meta?.publishTitle || body.title || meta?.title || video?.publishTitle || video?.title,
+    fallback
+  );
+
+const resolveSocialCaptionForVideo = ({body = {}, meta = null, video = null, fallback = ""} = {}) =>
+  normalizeSocialCaption(
+    body.socialCaption || meta?.socialCaption || body.caption || meta?.caption || video?.socialCaption || video?.caption,
+    fallback
+  );
 
 const buildApprovedStoryboardFromPreview = (previewStoryboard, editedStoryboard) => {
   if (!isPlainObject(previewStoryboard)) {
@@ -2154,6 +3310,7 @@ const handleRerenderRequest = async (request, response) => {
       slug,
       language,
       voice,
+      audioProvider: body.audioProvider === "elevenlabs" ? "elevenlabs" : "gcp",
       tone,
       outputProfile: outputProfile.id,
       stylePrompt: combineStylePrompt({
@@ -2423,7 +3580,9 @@ const buildRetryFromStoryboardGenerateJob = async (sourceJob) => {
           tonePreset
         }),
       previewOnly: false,
-      force: sourceJob.input?.force === false ? false : true,
+      force: sourceJob.input?.reuseAssetsFromSlug
+        ? false
+        : sourceJob.input?.force === false ? false : true,
       approvedFromJobId: sourceJob.id
     },
     outputPath: null,
@@ -2433,9 +3592,104 @@ const buildRetryFromStoryboardGenerateJob = async (sourceJob) => {
   };
 };
 
-const handleResumeRequest = async (request, response) => {
+const findDualChannelSecondaryTemplate = (primaryJob) => {
+  if (
+    String(primaryJob?.input?.dualChannelMode || "").trim() !== DUAL_WELLNESS_CHANNEL_MODE ||
+    String(primaryJob?.input?.channel || "").trim() !== DUAL_WELLNESS_SOURCE_CHANNEL
+  ) {
+    return null;
+  }
+
+  const directFollowUp = primaryJob.followUpJobId ? jobs.get(primaryJob.followUpJobId) || null : null;
+  if (String(directFollowUp?.input?.channel || "").trim() === DUAL_WELLNESS_TARGET_CHANNEL) {
+    return directFollowUp;
+  }
+
+  return Array.from(jobs.values())
+    .filter((job) =>
+      job?.type === "generate" &&
+      String(job?.caseId || "").trim() === String(primaryJob.caseId || "").trim() &&
+      String(job?.input?.dualChannelMode || "").trim() === DUAL_WELLNESS_CHANNEL_MODE &&
+      String(job?.input?.channel || "").trim() === DUAL_WELLNESS_TARGET_CHANNEL
+    )
+    .sort((left, right) =>
+      getJobFreshnessMs(right) - getJobFreshnessMs(left)
+    )[0] || null;
+};
+
+const buildDualChannelRetryFollowUpJob = async ({sourcePrimaryJob, retriedPrimaryJob}) => {
+  const secondaryTemplate = findDualChannelSecondaryTemplate(sourcePrimaryJob);
+  if (!secondaryTemplate) {
+    return null;
+  }
+
+  const storyboardPath = getRetryStoryboardPathForJob(secondaryTemplate);
+  if (!storyboardPath || !existsSync(storyboardPath)) {
+    return null;
+  }
+
+  const storyboard = await readJsonFile(storyboardPath).catch(() => null);
+  const title = String(storyboard?.videoTitle || secondaryTemplate.title || slugToCaption(secondaryTemplate.slug)).trim();
+  const nowIso = new Date().toISOString();
+
+  return {
+    id: createId(),
+    type: "generate",
+    title,
+    slug: buildUniqueGenerateSlug(title),
+    caseId: retriedPrimaryJob.caseId || sourcePrimaryJob.caseId || secondaryTemplate.caseId || createId(),
+    attempt: Math.max(
+      Number(retriedPrimaryJob.attempt || 0) + 1,
+      getNextAttemptForCase(retriedPrimaryJob.caseId || sourcePrimaryJob.caseId || secondaryTemplate.caseId)
+    ),
+    status: "queued",
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    logTail: [
+      `[dual-channel] refeito a partir do job ${secondaryTemplate.id}; aguardando PT ${retriedPrimaryJob.id}`
+    ],
+    followUpJobId: null,
+    input: {
+      ...secondaryTemplate.input,
+      title,
+      hasSourceText: false,
+      sourceTextCharacters: 0,
+      sourceTextFile: "",
+      storyboardFile: storyboardPath,
+      channel: DUAL_WELLNESS_TARGET_CHANNEL,
+      language: "en-US",
+      previewOnly: false,
+      force: false,
+      reuseAssetsFromSlug: retriedPrimaryJob.slug,
+      dependsOnJobId: retriedPrimaryJob.id,
+      primaryChannelJobId: retriedPrimaryJob.id,
+      approvedFromJobId: secondaryTemplate.id,
+      dualChannelMode: DUAL_WELLNESS_CHANNEL_MODE
+    },
+    outputPath: null,
+    storyboardPath,
+    artifactEpochAt: nowIso,
+    exitCode: null,
+    error: null
+  };
+};
+
+const handleResumeRequest = async (request, response, routeJobId = "") => {
   const body = await readRequestBody(request);
-  const sourceJobId = String(body.jobId || "").trim();
+  let sourceJobId = "";
+
+  try {
+    sourceJobId = resolveRequestedJobId({routeJobId, bodyJobId: body.jobId});
+  } catch (error) {
+    sendJson(response, 400, {error: error.message});
+    return;
+  }
+
+  if (!sourceJobId) {
+    sendJson(response, 400, {error: "Job ausente."});
+    return;
+  }
+
   const sourceJob = jobs.get(sourceJobId);
 
   if (!sourceJob) {
@@ -2491,6 +3745,15 @@ const handleResumeRequest = async (request, response) => {
 };
 
 const handleVideosRequest = async (response) => {
+  const nowMs = Date.now();
+  const videoLibraryCache = globalThis.__videoLibraryCache || {expiresAt: 0, payload: null};
+  globalThis.__videoLibraryCache = videoLibraryCache;
+
+  if (videoLibraryCache.payload && videoLibraryCache.expiresAt > nowMs) {
+    sendJson(response, 200, videoLibraryCache.payload);
+    return;
+  }
+
   const videos = await listExportVideos();
   const failedJobs = await listFailedLibraryJobs();
   const cases = [...videos.map((video) => video.caseSummary), ...failedJobs.map((job) => job.caseSummary)];
@@ -2505,7 +3768,7 @@ const handleVideosRequest = async (response) => {
       profileUrlSource: profile.profileUrlSource || ""
     };
   });
-  sendJson(response, 200, {
+  const payload = {
     videos,
     failedJobs,
     cases,
@@ -2517,7 +3780,10 @@ const handleVideosRequest = async (response) => {
       apiBase: getAgendadorApiBase(),
       profiles: agendadorProfiles
     }
-  });
+  };
+  videoLibraryCache.payload = payload;
+  videoLibraryCache.expiresAt = nowMs + 15000;
+  sendJson(response, 200, payload);
 };
 
 const handleVideoMetaRequest = async (request, response) => {
@@ -2528,7 +3794,9 @@ const handleVideoMetaRequest = async (request, response) => {
   });
   const existingMeta = await readVideoMeta(target.slug);
   const title = String(body.title || "").trim().slice(0, 200);
-  const caption = String(body.caption || "").trim().slice(0, 5000);
+  const publishTitle = normalizePublishTitle(body.publishTitle || "", title);
+  const caption = normalizeLongCaption(body.caption || "");
+  const socialCaption = normalizeSocialCaption(body.socialCaption || "", caption);
   const scheduleAt = String(body.scheduleAt || "").trim().slice(0, 64);
   const isDraft = body.isDraft === true;
   const channel = getChannelConfig(resolveChannelValue(body.channel || existingMeta?.channel || inferChannelValueFromPath(target.path)));
@@ -2539,16 +3807,20 @@ const handleVideoMetaRequest = async (request, response) => {
     ? body.platforms.map((item) => String(item || "").trim().toUpperCase()).filter(Boolean).slice(0, 6)
     : Array.isArray(existingMeta?.platforms) ? existingMeta.platforms : ["FB", "IG", "YT"];
   const safePlatforms = platforms.length > 0 ? platforms : ["FB", "IG", "YT"];
+  const hookWinner = String(body.hookWinner ?? existingMeta?.hookWinner ?? "").trim().slice(0, 40);
 
   await writeVideoMeta(target.slug, {
     ...existingMeta,
     title,
+    publishTitle,
     caption,
+    socialCaption,
     scheduleAt,
     isDraft,
     channel: channel.value,
     hashtags,
     platforms: safePlatforms,
+    hookWinner,
     updatedAt: new Date().toISOString()
   });
 
@@ -2657,9 +3929,17 @@ const handleVideoRefazerRequest = async (request, response) => {
   sendJson(response, 201, {job: enqueueAndStart(job)});
 };
 
-const handleRetryFailedJobRequest = async (request, response) => {
+const handleRetryFailedJobRequest = async (request, response, {params} = {}) => {
   const body = await readRequestBody(request);
-  const sourceJobId = String(body.jobId || "").trim() || String(request.url?.split("/")[3] || "").trim();
+  let sourceJobId = "";
+
+  try {
+    sourceJobId = resolveRequestedJobId({routeJobId: params?.id, bodyJobId: body.jobId});
+  } catch (error) {
+    sendJson(response, 400, {error: error.message});
+    return;
+  }
+
   const sourceJob = jobs.get(sourceJobId);
 
   if (!sourceJob) {
@@ -2673,13 +3953,35 @@ const handleRetryFailedJobRequest = async (request, response) => {
   }
 
   const retriedJob = await buildRetryFromStoryboardGenerateJob(sourceJob);
+  const dualChannelFollowUpJob = await buildDualChannelRetryFollowUpJob({
+    sourcePrimaryJob: sourceJob,
+    retriedPrimaryJob: retriedJob
+  });
 
-  sendJson(response, 201, {job: enqueueAndStart(retriedJob)});
+  if (dualChannelFollowUpJob) {
+    retriedJob.followUpJobId = dualChannelFollowUpJob.id;
+  }
+
+  const enqueuedRetriedJob = enqueueAndStart(retriedJob);
+  const enqueuedFollowUpJob = dualChannelFollowUpJob ? enqueueAndStart(dualChannelFollowUpJob) : null;
+
+  sendJson(response, 201, {
+    job: enqueuedRetriedJob,
+    ...(enqueuedFollowUpJob ? {jobs: [enqueuedRetriedJob, enqueuedFollowUpJob]} : {})
+  });
 };
 
-const handleRegenerateMissingSceneRequest = async (request, response) => {
+const handleRegenerateMissingSceneRequest = async (request, response, {params} = {}) => {
   const body = await readRequestBody(request);
-  const sourceJobId = String(body.jobId || "").trim() || String(request.url?.split("/")[3] || "").trim();
+  let sourceJobId = "";
+
+  try {
+    sourceJobId = resolveRequestedJobId({routeJobId: params?.id, bodyJobId: body.jobId});
+  } catch (error) {
+    sendJson(response, 400, {error: error.message});
+    return;
+  }
+
   const selectedJob = jobs.get(sourceJobId);
 
   if (!selectedJob) {
@@ -2756,9 +4058,17 @@ const handleRegenerateMissingSceneRequest = async (request, response) => {
   sendJson(response, 201, {job: enqueueAndStart(sceneJob)});
 };
 
-const handleGenerateAudioRequest = async (request, response) => {
+const handleGenerateAudioRequest = async (request, response, {params} = {}) => {
   const body = await readRequestBody(request);
-  const jobId = String(body.jobId || "").trim() || String(request.url?.split("/")[3] || "").trim();
+  let jobId = "";
+
+  try {
+    jobId = resolveRequestedJobId({routeJobId: params?.id, bodyJobId: body.jobId});
+  } catch (error) {
+    sendJson(response, 400, {error: error.message});
+    return;
+  }
+
   const selectedJob = jobs.get(jobId);
 
   if (!selectedJob) {
@@ -2776,9 +4086,17 @@ const handleGenerateAudioRequest = async (request, response) => {
   sendJson(response, 201, {job: enqueueAndStart(job)});
 };
 
-const handleRenderOnlyRequest = async (request, response) => {
+const handleRenderOnlyRequest = async (request, response, {params} = {}) => {
   const body = await readRequestBody(request);
-  const jobId = String(body.jobId || "").trim() || String(request.url?.split("/")[3] || "").trim();
+  let jobId = "";
+
+  try {
+    jobId = resolveRequestedJobId({routeJobId: params?.id, bodyJobId: body.jobId});
+  } catch (error) {
+    sendJson(response, 400, {error: error.message});
+    return;
+  }
+
   const selectedJob = jobs.get(jobId);
 
   if (!selectedJob) {
@@ -2796,9 +4114,17 @@ const handleRenderOnlyRequest = async (request, response) => {
   sendJson(response, 201, {job: enqueueAndStart(job)});
 };
 
-const handleValidateOnlyRequest = async (request, response) => {
+const handleValidateOnlyRequest = async (request, response, {params} = {}) => {
   const body = await readRequestBody(request);
-  const jobId = String(body.jobId || "").trim() || String(request.url?.split("/")[3] || "").trim();
+  let jobId = "";
+
+  try {
+    jobId = resolveRequestedJobId({routeJobId: params?.id, bodyJobId: body.jobId});
+  } catch (error) {
+    sendJson(response, 400, {error: error.message});
+    return;
+  }
+
   const selectedJob = jobs.get(jobId);
 
   if (!selectedJob) {
@@ -2816,9 +4142,17 @@ const handleValidateOnlyRequest = async (request, response) => {
   sendJson(response, 201, {job: enqueueAndStart(job)});
 };
 
-const handleForceFailJobRequest = async (request, response) => {
+const handleForceFailJobRequest = async (request, response, {params} = {}) => {
   const body = await readRequestBody(request);
-  const jobId = String(body.jobId || "").trim() || String(request.url?.split("/")[3] || "").trim();
+  let jobId = "";
+
+  try {
+    jobId = resolveRequestedJobId({routeJobId: params?.id, bodyJobId: body.jobId});
+  } catch (error) {
+    sendJson(response, 400, {error: error.message});
+    return;
+  }
+
   const job = jobs.get(jobId);
 
   if (!job) {
@@ -2838,6 +4172,32 @@ const handleForceFailJobRequest = async (request, response) => {
 
   failAndRelease(job, "Job marcado manualmente como travado para liberar a fila.");
   sendJson(response, 200, {job: sanitizeJob(job)});
+};
+
+const handleStartQueuedJobRequest = async (request, response, {params} = {}) => {
+  const body = await readRequestBody(request);
+  let jobId = "";
+
+  try {
+    jobId = resolveRequestedJobId({routeJobId: params?.id, bodyJobId: body.jobId});
+  } catch (error) {
+    sendJson(response, 400, {error: error.message});
+    return;
+  }
+
+  const job = jobs.get(jobId);
+
+  if (!job) {
+    sendJson(response, 404, {error: "Job nao encontrado."});
+    return;
+  }
+
+  try {
+    const startedJob = await startQueuedJob(job);
+    sendJson(response, 200, {job: startedJob});
+  } catch (error) {
+    sendJson(response, 409, {error: error instanceof Error ? error.message : String(error)});
+  }
 };
 
 const handleVideoDeleteRequest = async (request, response) => {
@@ -2862,6 +4222,31 @@ const handleVideoDeleteRequest = async (request, response) => {
   });
 };
 
+// Build + persist a TikTok manual-upload draft for a video and return its helper URL.
+// Used both by the dedicated TikTok-helper route and as the automatic fallback when
+// TikTok is requested in a publish (agendador's TikTok dispatch is unreliable / 500s).
+const createTikTokDraftForVideo = async ({target, video, meta, body, hashtags, publishTitle, socialCaption}) => {
+  const fallbackTitle = slugToCaption(target.path);
+  const caption = [socialCaption, (Array.isArray(hashtags) ? hashtags : []).join(" ")].filter(Boolean).join("\n\n");
+  const draftId = `${target.slug}-${Date.now().toString(36)}`;
+  const draft = {
+    id: draftId,
+    slug: target.slug,
+    title: publishTitle || fallbackTitle,
+    channel: String(body.channel || meta?.channel || video.channel || "").trim(),
+    channelHandle: video.channelHandle || "",
+    caption,
+    videoUrl: video.url,
+    thumbnailUrl: String(video.thumbnailUrl || video.coverUrl || "").trim(),
+    storyboardUrl: String(video.storyboardUrl || "").trim(),
+    downloadName: path.basename(target.path),
+    thumbnailDownloadName: `${target.slug}-thumbnail${path.extname(String(video.thumbnailPath || video.thumbnailUrl || ".png")) || ".png"}`,
+    createdAt: new Date().toISOString()
+  };
+  await writeTikTokDraft(tiktokDraftsDir, draftId, draft);
+  return {draftId, helperUrl: `/tiktok-helper?id=${encodeURIComponent(draftId)}`};
+};
+
 const handleVideoPublishRequest = async (request, response) => {
   const body = await readRequestBody(request);
   const target = await resolveVideoTarget({
@@ -2877,23 +4262,68 @@ const handleVideoPublishRequest = async (request, response) => {
     : Array.isArray(meta?.hashtags) && meta.hashtags.length > 0
       ? meta.hashtags
       : Array.isArray(video.hashtags) ? video.hashtags : [];
-  const captionBase = String(body.caption || meta?.caption || video.caption || slugToCaption(target.path)).trim();
-  const caption = [captionBase, hashtags.join(" ")].filter(Boolean).join("\n\n");
   const requestedPlatforms = Array.isArray(body.platforms) ? body.platforms : meta?.platforms;
   const platforms = (Array.isArray(requestedPlatforms) ? requestedPlatforms : ["FB", "IG", "YT"])
     .map((item) => String(item || "").trim().toUpperCase())
     .filter(Boolean);
   const safePlatforms = platforms.length > 0 ? platforms : ["FB", "IG", "YT"];
+  // TikTok is dispatched manually via the helper (agendador's TikTok posting 500s),
+  // so split it out: agendador handles the rest, TikTok falls back to a manual draft.
+  const tkRequested = safePlatforms.includes("TK");
+  const agendadorPlatforms = safePlatforms.filter((platform) => platform !== "TK");
+  const fallbackTitle = slugToCaption(target.path);
+  const title = String(body.title || meta?.title || video.title || "").trim().slice(0, MAX_TITLE_LENGTH);
+  const publishTitle = resolvePublishTitleForVideo({body, meta, video, fallback: fallbackTitle});
+  const descriptionCaption = normalizeLongCaption(body.caption || meta?.caption || video.caption || fallbackTitle);
+  const socialCaption = resolveSocialCaptionForVideo({body, meta, video, fallback: descriptionCaption});
+  const requiresShortCaption = safePlatforms.some((platform) => platform !== "YT");
+
+  if (safePlatforms.includes("YT") && !publishTitle) {
+    sendJson(response, 400, {error: "Informe um título de publicação para o YouTube."});
+    return;
+  }
+
+  if (requiresShortCaption && socialCaption.length > MAX_SOCIAL_CAPTION_LENGTH) {
+    sendJson(response, 400, {error: `A legenda curta para cross-post fora do YouTube deve ter até ${MAX_SOCIAL_CAPTION_LENGTH} caracteres.`});
+    return;
+  }
+
+  if (requiresShortCaption && !String(body.socialCaption || meta?.socialCaption || "").trim() && descriptionCaption.length > MAX_SOCIAL_CAPTION_LENGTH) {
+    sendJson(response, 400, {error: `A descrição atual passou de ${MAX_SOCIAL_CAPTION_LENGTH} caracteres. Preencha a legenda curta para publicar fora do YouTube.`});
+    return;
+  }
+
+  const captionBase = safePlatforms.includes("YT") && safePlatforms.length === 1
+    ? descriptionCaption
+    : socialCaption;
+  const caption = [
+    safePlatforms.includes("YT") && publishTitle ? publishTitle : "",
+    captionBase,
+    hashtags.join(" ")
+  ].filter(Boolean).join("\n\n");
   const rawPublishDate = String(body.scheduleAt || meta?.scheduleAt || "").trim() || new Date().toISOString();
   // If the resolved date is in the past (e.g. stale metadata from an old job), publish immediately instead
   const publishDate = new Date(rawPublishDate).getTime() <= Date.now()
     ? new Date().toISOString()
     : rawPublishDate;
   const isDraft = body.isDraft === true;
+
+  // TikTok-only request: skip agendador entirely and return a manual-upload draft.
+  if (agendadorPlatforms.length === 0) {
+    const {helperUrl} = await createTikTokDraftForVideo({target, video, meta, body, hashtags, publishTitle, socialCaption});
+    sendJson(response, 200, {
+      ok: true,
+      tiktokOnly: true,
+      tiktokHelperUrl: helperUrl,
+      message: "O TikTok é publicado por upload manual. Abra o helper, baixe o MP4 e poste no TikTok com a legenda já pronta."
+    });
+    return;
+  }
+
   const token = await getAgendadorToken(publishChannel.value);
   const accountsPayload = await agendadorFetch("/social-accounts", {token});
   const accounts = Array.isArray(accountsPayload?.accounts) ? accountsPayload.accounts : [];
-  const missingProviders = safePlatforms
+  const missingProviders = agendadorPlatforms
     .map((provider) => {
       const account = accounts.find((item) => String(item.provider || "").trim().toUpperCase() === provider);
       return isAccountPublishReady(account) ? null : describeAccountPublishIssue(account, provider);
@@ -2919,8 +4349,9 @@ const handleVideoPublishRequest = async (request, response) => {
   const basePostBody = {
     date: publishDate,
     mediaUrl,
+    title: publishTitle || undefined,
     caption,
-    platforms: safePlatforms,
+    platforms: agendadorPlatforms,
     isDraft
   };
   const enrichedPostBody = thumbnailUrl
@@ -2939,13 +4370,47 @@ const handleVideoPublishRequest = async (request, response) => {
       body: enrichedPostBody
     });
   } catch (error) {
-    if (thumbnailUrl && [400, 422].includes(Number(error.status || 0))) {
+    const isValidationError = [400, 422].includes(Number(error.status || 0));
+    const retryBodyWithoutThumbnail = thumbnailUrl && isValidationError
+      ? (() => {
+          const next = {...basePostBody};
+          return next;
+        })()
+      : null;
+    const retryBodyWithoutTitle = isValidationError && (basePostBody.title || enrichedPostBody.title)
+      ? (() => {
+          const next = {...(retryBodyWithoutThumbnail || basePostBody)};
+          delete next.title;
+          return next;
+        })()
+      : null;
+
+    if (retryBodyWithoutThumbnail) {
+      try {
+        created = await agendadorFetch("/posts", {
+          method: "POST",
+          token,
+          body: retryBodyWithoutThumbnail
+        });
+        thumbnailUrl = "";
+      } catch (retryError) {
+        if (retryBodyWithoutTitle && [400, 422].includes(Number(retryError.status || 0))) {
+          created = await agendadorFetch("/posts", {
+            method: "POST",
+            token,
+            body: retryBodyWithoutTitle
+          });
+          thumbnailUrl = "";
+        } else {
+          throw retryError;
+        }
+      }
+    } else if (retryBodyWithoutTitle) {
       created = await agendadorFetch("/posts", {
         method: "POST",
         token,
-        body: basePostBody
+        body: retryBodyWithoutTitle
       });
-      thumbnailUrl = "";
     } else {
       throw error;
     }
@@ -2956,8 +4421,10 @@ const handleVideoPublishRequest = async (request, response) => {
 
   await writeVideoMeta(target.slug, {
     ...meta,
-    title: String(body.title || meta?.title || video.title || "").trim(),
-    caption: captionBase,
+    title,
+    publishTitle,
+    caption: descriptionCaption,
+    socialCaption,
     hashtags,
     scheduleAt: publishDate,
     isDraft,
@@ -2977,9 +4444,21 @@ const handleVideoPublishRequest = async (request, response) => {
     publishedProfile: publishChannel.value
   });
 
+  // TikTok was also requested alongside FB/IG/YT — agendador can't post it, so
+  // attach a manual-upload helper draft to the response.
+  let tiktokHelperUrl = "";
+  if (tkRequested) {
+    try {
+      ({helperUrl: tiktokHelperUrl} = await createTikTokDraftForVideo({target, video, meta, body, hashtags, publishTitle, socialCaption}));
+    } catch (error) {
+      process.stdout.write(`[publish] aviso: não foi possível preparar o helper do TikTok: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }
+
   sendJson(response, 200, {
     ok: true,
     post: created?.post ?? created ?? null,
+    ...(tiktokHelperUrl ? {tiktokHelperUrl, tiktokMessage: "TikTok não publica automático: abra o helper e suba o MP4 manualmente."} : {}),
     video: await buildVideoRecord({targetPath: target.path})
   });
 };
@@ -2997,13 +4476,27 @@ const handleVideoTikTokHelperRequest = async (request, response) => {
     : Array.isArray(meta?.hashtags) && meta.hashtags.length > 0
       ? meta.hashtags
       : Array.isArray(video.hashtags) ? video.hashtags : [];
-  const captionBase = String(body.caption || meta?.caption || video.caption || slugToCaption(target.path)).trim();
-  const caption = [captionBase, hashtags.join(" ")].filter(Boolean).join("\n\n");
+  const fallbackTitle = slugToCaption(target.path);
+  const publishTitle = resolvePublishTitleForVideo({body, meta, video, fallback: fallbackTitle});
+  const descriptionCaption = normalizeLongCaption(body.caption || meta?.caption || video.caption || fallbackTitle);
+  const socialCaption = resolveSocialCaptionForVideo({body, meta, video, fallback: descriptionCaption});
+
+  if (!socialCaption) {
+    sendJson(response, 400, {error: "Informe uma legenda curta para abrir o helper do TikTok."});
+    return;
+  }
+
+  if (!String(body.socialCaption || meta?.socialCaption || "").trim() && descriptionCaption.length > MAX_SOCIAL_CAPTION_LENGTH) {
+    sendJson(response, 400, {error: `A descrição atual passou de ${MAX_SOCIAL_CAPTION_LENGTH} caracteres. Preencha a legenda curta para o TikTok.`});
+    return;
+  }
+
+  const caption = [socialCaption, hashtags.join(" ")].filter(Boolean).join("\n\n");
   const draftId = `${target.slug}-${Date.now().toString(36)}`;
   const draft = {
     id: draftId,
     slug: target.slug,
-    title: String(body.title || meta?.title || video.title || "").trim() || slugToCaption(target.path),
+    title: publishTitle || fallbackTitle,
     channel: String(body.channel || meta?.channel || video.channel || "").trim(),
     channelHandle: video.channelHandle || "",
     caption,
@@ -3024,18 +4517,119 @@ const handleVideoTikTokHelperRequest = async (request, response) => {
   });
 };
 
+// Generate A/B hook variants (SPEC v2) for an existing video's storyboard.
+// Returns the variants plus ready-to-render variant storyboards (same body,
+// swapped opening hook) that the UI can submit to POST /api/generate.
+const handleHookVariantsRequest = async (request, response) => {
+  const body = await readRequestBody(request);
+  const slug = String(body.slug || "").trim();
+  if (!slug) {
+    sendJson(response, 400, {error: "Informe o slug do vídeo."});
+    return;
+  }
+
+  const {storyboardPath, runDir} = getRunPaths(slug);
+  const storyboard = await readJsonFile(storyboardPath);
+  if (!storyboard || !Array.isArray(storyboard.scenes) || storyboard.scenes.length === 0) {
+    sendJson(response, 404, {error: "Storyboard não encontrado para esse vídeo."});
+    return;
+  }
+
+  const channelPreset = getChannelPreset(String(body.channel || "").trim());
+  const language = VALID_LANGUAGES.includes(body.language)
+    ? body.language
+    : (channelPreset?.language || "pt-BR");
+  const count = Math.max(2, Math.min(3, Number(body.count) || 3));
+  const provider = resolveStoryboardTranslationProvider();
+  const model = String(baseChildEnv.STORY_MODEL || baseChildEnv.GEMINI_MODEL || "gemini-2.5-flash").trim();
+
+  let variants;
+  try {
+    variants = await generateHookVariants({
+      storyboard,
+      language,
+      count,
+      provider,
+      apiKey: String(baseChildEnv.OPENROUTER_API_KEY || "").trim(),
+      model,
+      cwd: projectRoot
+    });
+  } catch (error) {
+    sendJson(response, 502, {error: `Falha ao gerar variantes de hook: ${error instanceof Error ? error.message : String(error)}`});
+    return;
+  }
+
+  try {
+    await writeManagedFile(
+      path.join(runDir, "hook-variants.json"),
+      `${JSON.stringify({slug, language, generatedAt: toIsoNow(), variants}, null, 2)}\n`
+    );
+  } catch (error) {
+    process.stdout.write(`[hook-variants] aviso: não foi possível persistir hook-variants.json: ${error instanceof Error ? error.message : String(error)}\n`);
+  }
+
+  sendJson(response, 200, {
+    ok: true,
+    slug,
+    language,
+    variants,
+    variantStoryboards: variants.map((variant) => buildVariantStoryboard(storyboard, variant))
+  });
+};
+
+// Query agendador for the per-platform status of a video's last published post,
+// so the UI can show which networks succeeded/failed and retry the failed ones.
+const handlePublishStatusRequest = async (request, response) => {
+  const body = await readRequestBody(request);
+  const slug = String(body.slug || "").trim();
+  if (!slug) {
+    sendJson(response, 400, {error: "Informe o slug do vídeo."});
+    return;
+  }
+
+  const meta = await readVideoMeta(slug).catch(() => null);
+  const channelValue = getChannelConfig(String(body.channel || meta?.channel || meta?.publishedProfile || "foiumaideia")).value;
+  const postId = Number(meta?.publishedPostId || 0);
+
+  if (!postId) {
+    sendJson(response, 200, {ok: true, postId: null, targets: [], message: "Sem publicação registrada para este vídeo."});
+    return;
+  }
+
+  try {
+    const token = await getAgendadorToken(channelValue);
+    const data = await agendadorFetch("/posts?limit=100", {token});
+    const post = (Array.isArray(data?.posts) ? data.posts : []).find((item) => Number(item.id) === postId);
+    if (!post) {
+      sendJson(response, 200, {ok: true, postId, targets: [], message: "Post não encontrado no agendador."});
+      return;
+    }
+    const targets = (Array.isArray(post.targets) ? post.targets : []).map((targetItem) => ({
+      platform: String(targetItem.provider || "").toUpperCase() || `ACCT${targetItem.social_account_id}`,
+      status: String(targetItem.status || "").toUpperCase(),
+      error: targetItem.last_error ? String(targetItem.last_error) : ""
+    }));
+    sendJson(response, 200, {ok: true, postId, postStatus: String(post.status || "").toUpperCase(), channel: channelValue, targets});
+  } catch (error) {
+    sendJson(response, 502, {error: `Falha ao consultar status: ${error instanceof Error ? error.message : String(error)}`});
+  }
+};
+
 const handleConfigRequest = async (response) => {
+  const defaultChannel = getChannelConfig("foiumaideia");
+  const defaultChannelPreset = getChannelPreset(defaultChannel.value);
+  const defaultLanguage = "pt-BR";
   sendJson(response, 200, {
     defaults: {
-      channel: channelOptions[0].value,
-      language: "pt-BR",
-      targetSeconds: 60,
+      channel: defaultChannel.value,
+      language: defaultLanguage,
+      targetSeconds: Number(defaultChannelPreset?.targetSeconds || 60),
       outputProfile: DEFAULT_OUTPUT_PROFILE,
-      imageModel: resolveImageModel(baseChildEnv.GOOGLE_IMAGE_MODEL || baseChildEnv.IMAGE_MODEL),
+      imageModel: resolveImageModel(defaultChannelPreset?.imageModel, resolveImageModel(baseChildEnv.GOOGLE_IMAGE_MODEL || baseChildEnv.IMAGE_MODEL)),
       generationMode: resolveGenerationMode(baseChildEnv.GENERATION_MODE),
-      imageStyle: DEFAULT_VISUAL_STYLE_PRESET,
-      tone: "shortform_native",
-      voice: DEFAULT_VOICE,
+      imageStyle: String(defaultChannelPreset?.imageStyle || DEFAULT_VISUAL_STYLE_PRESET),
+      tone: String(defaultChannelPreset?.tone || "shortform_native"),
+      voice: String(defaultChannelPreset?.voiceByLanguage?.[defaultLanguage] || defaultChannelPreset?.voice || DEFAULT_VOICE),
       noMusic: true,
       force: true
     },
@@ -3079,6 +4673,15 @@ const handleConfigRequest = async (response) => {
 };
 
 const validateStartup = () => {
+  if (!existsSync(rootEnvPath)) {
+    process.stderr.write(`ERRO: Arquivo .env nao encontrado em ${rootEnvPath}\n`);
+    process.exit(1);
+  }
+
+  if (!RUN_QUEUE_WORKER) {
+    return;
+  }
+
   const hasEnvValue = (value) => String(value || "").trim().length > 0;
   const requestedTtsProvider = String(baseChildEnv.TTS_PROVIDER || "auto").trim().toLowerCase();
   const llmProvider = String(baseChildEnv.LLM_PROVIDER || baseChildEnv.STORY_PROVIDER || "codex").trim().toLowerCase();
@@ -3089,7 +4692,7 @@ const validateStartup = () => {
   } else if (llmProvider === "gemini" || llmProvider === "google") {
     requiredKeys.push("GOOGLE_API_KEY");
   } else if (llmProvider === "vertex" || llmProvider === "vertexai") {
-    requiredKeys.push("GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT");
+    requiredKeys.push("GOOGLE_CLOUD_PROJECT");
   }
 
   if (
@@ -3100,7 +4703,7 @@ const validateStartup = () => {
     requestedTtsProvider === "gemini-tts" ||
     requestedTtsProvider === "gemini"
   ) {
-    requiredKeys.push("GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT");
+    requiredKeys.push("GOOGLE_CLOUD_PROJECT");
   } else if (requestedTtsProvider === "elevenlabs") {
     requiredKeys.push("ELEVENLABS_API_KEY");
   } else if (requestedTtsProvider === "azure") {
@@ -3128,7 +4731,6 @@ const validateStartup = () => {
       hasEnvValue(baseChildEnv.AZURE_SPEECH_KEY) &&
       (hasEnvValue(baseChildEnv.AZURE_SPEECH_REGION) || hasEnvValue(baseChildEnv.AZURE_SPEECH_ENDPOINT));
     const googleConfigured =
-      hasEnvValue(baseChildEnv.GOOGLE_APPLICATION_CREDENTIALS) &&
       hasEnvValue(baseChildEnv.GOOGLE_CLOUD_PROJECT);
     const elevenlabsConfigured = hasEnvValue(baseChildEnv.ELEVENLABS_API_KEY);
 
@@ -3136,11 +4738,6 @@ const validateStartup = () => {
       process.stderr.write("ERRO: TTS_PROVIDER=auto, mas nenhum provider de voz esta configurado.\n");
       process.exit(1);
     }
-  }
-
-  if (!existsSync(rootEnvPath)) {
-    process.stderr.write(`ERRO: Arquivo .env nao encontrado em ${rootEnvPath}\n`);
-    process.exit(1);
   }
 };
 
@@ -3151,6 +4748,7 @@ await ensureManagedDir(inputsDir);
 await ensureManagedDir(videoLibraryDir);
 await ensureManagedDir(tiktokDraftsDir);
 await ensureManagedDir(postarRoot);
+await cleanupStaleJobsTempFiles();
 await Promise.all(channelOptions.map((channel) => ensureManagedDir(getChannelExportDir(channel.value))));
 await normalizeManagedTree(dataDir, {maxDepth: 2});
 await Promise.all(channelOptions.map((channel) => normalizeManagedTree(getChannelExportDir(channel.value), {maxDepth: 1})));
@@ -3159,48 +4757,62 @@ const persistedJobs = await readJsonFile(jobsFile);
 
 if (Array.isArray(persistedJobs)) {
   for (const persistedJob of persistedJobs) {
-    const nowIso = toIsoNow();
-
-    if (persistedJob.status === "running" || persistedJob.status === "queued") {
-      const restartMessage = "Servidor reiniciado antes da conclusao deste job.";
-      const failureContext = String(
-        persistedJob.error ||
-        getProcessFailureMessage(persistedJob, "") ||
-        ""
-      ).trim();
-
-      persistedJob.status = "failed";
-      persistedJob.error = failureContext && failureContext !== restartMessage
-        ? `${failureContext} | ${restartMessage}`
-        : restartMessage;
-      persistedJob.completedAt = persistedJob.completedAt || nowIso;
-      persistedJob.updatedAt = nowIso;
-      persistedJob.heartbeatAt = nowIso;
-      persistedJob.stageValue = getFailureStage(persistedJob) || persistedJob.stageValue || "pipeline";
-      persistedJob.stageSource = "system";
-      persistedJob.stageConfidence = "high";
-      persistedJob.stageUpdatedAt = nowIso;
-    }
-
-    jobs.set(persistedJob.id, {
-      ...persistedJob,
-      queueLane: persistedJob.queueLane || getJobQueueLane(persistedJob),
-      logTail: Array.isArray(persistedJob.logTail) ? persistedJob.logTail : [],
-      heartbeatAt: persistedJob.heartbeatAt || persistedJob.updatedAt || persistedJob.createdAt || nowIso,
-      artifactEpochAt: persistedJob.artifactEpochAt || persistedJob.createdAt || nowIso,
-      stageValue: persistedJob.stageValue || inferJobStageValue(persistedJob),
-      stageSource: persistedJob.stageSource || "system",
-      stageConfidence: persistedJob.stageConfidence || "medium",
-      stageUpdatedAt: persistedJob.stageUpdatedAt || persistedJob.updatedAt || nowIso
-    });
+    const hydrated = hydratePersistedJob(persistedJob, {markRunningAsFailed: RUN_QUEUE_WORKER});
+    jobs.set(hydrated.id, hydrated);
   }
 }
+
+rebuildQueueStateFromJobs();
+refreshQueuePositions();
+jobsFileMtimeMs = (await stat(jobsFile).catch(() => null))?.mtimeMs || 0;
+
+const prunedJobsOnStartup = pruneRetainedJobs();
 
 if (Array.isArray(persistedJobs)) {
   await persistJobs();
 }
 
-const BASIC_AUTH_PASSWORD = process.env.VIDEO_STUDIO_PASSWORD || "007007";
+logJsonLine("info", "startup_state_loaded", {
+  persistedJobs: Array.isArray(persistedJobs) ? persistedJobs.length : 0,
+  retainedJobs: jobs.size,
+  prunedJobsOnStartup
+});
+
+const resolveBasicAuthConfig = async () => {
+  const explicitPassword = String(baseChildEnv.VIDEO_STUDIO_PASSWORD || process.env.VIDEO_STUDIO_PASSWORD || "").trim();
+  if (explicitPassword) {
+    return {
+      password: explicitPassword,
+      source: "env"
+    };
+  }
+
+  const persistedAuth = await readJsonFile(runtimeAuthFile).catch(() => null);
+  const persistedPassword = String(persistedAuth?.basicAuthPassword || "").trim();
+  if (persistedPassword) {
+    return {
+      password: persistedPassword,
+      source: "runtime-file"
+    };
+  }
+
+  const generatedPassword = randomBytes(18).toString("base64url");
+  await writeManagedFile(
+    runtimeAuthFile,
+    `${JSON.stringify({basicAuthPassword: generatedPassword, generatedAt: toIsoNow()}, null, 2)}\n`,
+    undefined,
+    0o600
+  );
+  logJsonLine("warn", "basic_auth_runtime_password_generated", {
+    authFile: runtimeAuthFile
+  });
+  return {
+    password: generatedPassword,
+    source: "runtime-file"
+  };
+};
+
+const {password: BASIC_AUTH_PASSWORD, source: BASIC_AUTH_PASSWORD_SOURCE} = await resolveBasicAuthConfig();
 const BASIC_AUTH_REALM = "Video Studio";
 
 const checkBasicAuth = (request) => {
@@ -3216,17 +4828,52 @@ const checkBasicAuth = (request) => {
 };
 
 const handleJobsListRequest = async (_req, res) => {
-  const payload = Array.from(jobs.values())
+  const url = new URL(_req.url, "http://localhost");
+  const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 50, 1), 500);
+  const offset = Math.max(Number(url.searchParams.get("offset")) || 0, 0);
+  const allJobs = Array.from(jobs.values())
     .map((job) => sanitizeJob(job))
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const payload = allJobs.slice(offset, offset + limit);
   const queueLengths = getQueueLengths();
   sendJson(res, 200, {
     jobs: payload,
+    total: allJobs.length,
+    limit,
+    offset,
     cases: payload.map((job) => job.caseSummary),
-    summary: buildJobsSummary(payload),
+    summary: buildJobsSummary(allJobs),
     ...getActiveJobIds(),
     ...queueLengths
   });
+};
+
+const handleHealthRequest = async (_req, res) => {
+  sendJson(res, 200, buildHealthPayload());
+};
+
+const getRuntimeDocPath = (name) => {
+  const normalized = String(name || "").trim().toLowerCase();
+  if (normalized === "api-reference") {
+    return path.join(projectRoot, "docs", "api-reference.md");
+  }
+  if (normalized === "operations-reference") {
+    return path.join(projectRoot, "docs", "operations-reference.md");
+  }
+  return "";
+};
+
+const handleOpenApiSpecRequest = async (req, res) => {
+  await serveStaticFile(req, res, path.join(projectRoot, "docs", "openapi.yaml"));
+};
+
+const handleRuntimeDocRequest = async (req, res, {params}) => {
+  const targetPath = getRuntimeDocPath(params.name);
+  if (!targetPath) {
+    sendJson(res, 404, {error: "Documento nao encontrado."});
+    return;
+  }
+  await serveStaticFile(req, res, targetPath);
 };
 
 const handleJobStreamRequest = async (req, res, {params}) => {
@@ -3246,10 +4893,10 @@ const handleJobStreamRequest = async (req, res, {params}) => {
   sendEvent(res, "update", sanitizeJob(job));
 
   const keepAlive = setInterval(() => {
-    try { res.write(": ping\n\n"); } catch { clearInterval(keepAlive); subscribers.delete(res); }
+    try { res.write(": ping\n\n"); } catch { clearInterval(keepAlive); removeStreamSubscriber(params.id, res); }
   }, 25000);
 
-  const cleanup = () => { clearInterval(keepAlive); subscribers.delete(res); };
+  const cleanup = () => { clearInterval(keepAlive); removeStreamSubscriber(params.id, res); };
   req.on("close", cleanup);
   res.on("error", cleanup);
 };
@@ -3267,7 +4914,7 @@ const handleRunsRequest = async (_req, res) => {
 const handleFileRequest = async (req, res, {url}) => {
   const filePath = url.searchParams.get("path");
   if (!filePath) { sendJson(res, 400, {error: "Parametro path ausente."}); return; }
-  await serveStaticFile(req, res, filePath);
+  await serveStaticFile(req, res, filePath, {pathResolver: ensureAllowedArtifactFilePath});
 };
 
 const handleTikTokHelperPageRequest = async (_req, res, {url}) => {
@@ -3298,6 +4945,336 @@ const handleResetPublishRequest = async (request, response, {params}) => {
     updatedAt: new Date().toISOString()
   });
   sendJson(response, 200, {ok: true});
+};
+
+const getSceneManifestPathCandidates = (slug) => {
+  const {assetDir} = getRunPaths(slug);
+  return [
+    path.join(assetDir, "manifest.json"),
+    path.join(assetDir, "flux2-manifest.json")
+  ];
+};
+
+const readSceneManifestEntries = async (slug) => {
+  const manifestCandidates = getSceneManifestPathCandidates(slug);
+
+  for (const manifestPath of manifestCandidates) {
+    const parsed = await readJsonFile(manifestPath).catch(() => null);
+    if (Array.isArray(parsed)) {
+      return {entries: parsed, shape: "array", manifestPath};
+    }
+    if (Array.isArray(parsed?.entries)) {
+      return {entries: parsed.entries, shape: "entries", manifestPath};
+    }
+  }
+
+  return {entries: [], shape: "array", manifestPath: manifestCandidates[0] || ""};
+};
+
+const writeSceneManifestEntries = async (slug, entries) => {
+  const manifestCandidates = getSceneManifestPathCandidates(slug);
+
+  for (const manifestPath of manifestCandidates) {
+    if (!existsSync(manifestPath)) {
+      continue;
+    }
+
+    const parsed = await readJsonFile(manifestPath).catch(() => null);
+    const payload = Array.isArray(parsed)
+      ? entries
+      : isPlainObject(parsed)
+        ? {...parsed, entries}
+        : entries;
+    await writeFile(manifestPath, `${JSON.stringify(payload, null, 2)}\n`);
+  }
+};
+
+const runCommandOrThrow = (command, args, errorPrefix) => {
+  const result = spawnSync(command, args, {encoding: "utf8"});
+
+  if (result.status !== 0) {
+    const details = String(result.stderr || result.stdout || "").trim() || `exit code ${result.status}`;
+    throw new Error(`${errorPrefix}: ${details}`);
+  }
+};
+
+const renderStaticSceneClip = ({imagePath, videoPath, durationSeconds, profile}) => {
+  const filter = [
+    `scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease`,
+    `pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2:white`,
+    "format=yuv420p"
+  ].join(",");
+
+  runCommandOrThrow(
+    "ffmpeg",
+    [
+      "-y",
+      "-loop",
+      "1",
+      "-i",
+      imagePath,
+      "-vf",
+      filter,
+      "-t",
+      String(durationSeconds),
+      "-r",
+      "30",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "fast",
+      "-crf",
+      "18",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart",
+      "-an",
+      videoPath
+    ],
+    "Falha ao gerar clip estatico da cena aprovada"
+  );
+};
+
+const concatSceneSegmentClips = async ({clips, outputPath, tempDir}) => {
+  if (clips.length === 0) {
+    throw new Error("Nenhum clip de segmento disponivel para concatenar a cena.");
+  }
+
+  if (clips.length === 1) {
+    await copyFile(clips[0], outputPath);
+    return;
+  }
+
+  const listPath = path.join(tempDir, `manual-scene-concat-${process.pid}-${Date.now()}.txt`);
+
+  try {
+    await writeFile(listPath, clips.map((clipPath) => `file '${clipPath.replaceAll("'", "'\\''")}'`).join("\n"));
+    runCommandOrThrow(
+      "ffmpeg",
+      [
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        listPath,
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        outputPath
+      ],
+      "Falha ao concatenar os clips da cena aprovada"
+    );
+  } finally {
+    await unlink(listPath).catch(() => {});
+  }
+};
+
+const getSceneReviewItemsForJob = async (selectedJob) => {
+  const sourceJob = getRecoverySourceJob(selectedJob) || selectedJob;
+  const slug = String(sourceJob?.slug || "").trim();
+
+  if (!slug) {
+    return [];
+  }
+
+  const {entries} = await readSceneManifestEntries(slug);
+  const assetDir = path.join(configuredVideoEngineRoot, "assets", "envato", slug);
+  const imagesDir = path.join(assetDir, "_flux2_images");
+  let files = [];
+
+  try {
+    files = await readdir(imagesDir);
+  } catch {
+    return [];
+  }
+
+  return entries
+    .filter((entry) => String(entry?.status || "").trim() === "failed")
+    .map((entry) => {
+      const sceneNumber = normalizePositiveInt(entry.scene);
+      const segNumber = normalizePositiveInt(entry.segment);
+      if (!sceneNumber || !segNumber) {
+        return null;
+      }
+
+      const sceneNum = String(sceneNumber).padStart(2, "0");
+      const segmentNum = String(segNumber).padStart(2, "0");
+      const attemptPrefix = `scene-${sceneNum}-seg-${segmentNum}__attempt-`;
+      const attempts = files
+        .filter((file) => file.startsWith(attemptPrefix) && file.endsWith(".png"))
+        .map((file) => {
+          const match = file.match(/__attempt-(\d+)\.png$/);
+          const attempt = normalizePositiveInt(match?.[1]) || 0;
+          const absolutePath = path.join(imagesDir, file);
+          const details = existsSync(absolutePath) ? statSync(absolutePath) : null;
+          return {
+            attempt,
+            file,
+            absolutePath,
+            url: `/api/file?path=${encodeURIComponent(absolutePath)}`,
+            sizeBytes: details?.size || 0,
+            updatedAt: details ? new Date(details.mtimeMs).toISOString() : null
+          };
+        })
+        .sort((left, right) => right.attempt - left.attempt);
+
+      if (attempts.length === 0) {
+        return null;
+      }
+
+      return {
+        sceneNumber,
+        segNumber,
+        title: String(entry.title || "").trim(),
+        error: String(entry.error || entry.localAudit?.summary || "").trim(),
+        coverageText: String(entry.coverageText || "").trim(),
+        action: String(entry.action || "").trim(),
+        prompt: String(entry.prompt || "").trim(),
+        recommendedAttempt: attempts[0]?.attempt || null,
+        attempts
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.sceneNumber - right.sceneNumber || left.segNumber - right.segNumber);
+};
+
+const approveSceneReviewAttempt = async ({selectedJob, sceneNumber, segNumber, attempt, autoContinue = true}) => {
+  const sourceJob = getRecoverySourceJob(selectedJob) || selectedJob;
+  const slug = String(sourceJob?.slug || "").trim();
+
+  if (!slug) {
+    throw new Error("Job sem slug para aprovar tentativa de cena.");
+  }
+
+  const {entries} = await readSceneManifestEntries(slug);
+  const sceneEntry = entries.find(
+    (entry) =>
+      normalizePositiveInt(entry.scene) === sceneNumber &&
+      normalizePositiveInt(entry.segment) === segNumber
+  );
+
+  if (!sceneEntry) {
+    throw new Error("Nao achei a entrada da cena/segmento no manifesto.");
+  }
+
+  const profile = resolveOutputProfileConfig(sourceJob.input?.outputProfile || DEFAULT_OUTPUT_PROFILE);
+  const paths = getRunPaths(slug);
+  const imagesDir = path.join(paths.assetDir, "_flux2_images");
+  const sceneNum = String(sceneNumber).padStart(2, "0");
+  const segmentNum = String(segNumber).padStart(2, "0");
+  const attemptImagePath = path.join(imagesDir, `scene-${sceneNum}-seg-${segmentNum}__attempt-${attempt}.png`);
+  const finalImagePath = path.join(imagesDir, `scene-${sceneNum}-seg-${segmentNum}.png`);
+  const finalSegmentClipPath = path.join(imagesDir, `scene-${sceneNum}-seg-${segmentNum}.mp4`);
+  const finalSceneClipPath = path.join(paths.assetDir, `scene-${sceneNum}.mp4`);
+
+  if (!existsSync(attemptImagePath)) {
+    throw new Error(`Nao achei a tentativa ${attempt} para a cena ${sceneNum} seg ${segmentNum}.`);
+  }
+
+  await copyFile(attemptImagePath, finalImagePath);
+  renderStaticSceneClip({
+    imagePath: finalImagePath,
+    videoPath: finalSegmentClipPath,
+    durationSeconds: Math.max(1, Number(sceneEntry.duration || 5)),
+    profile
+  });
+
+  const sceneSegmentEntries = entries
+    .filter((entry) => normalizePositiveInt(entry.scene) === sceneNumber)
+    .sort((left, right) => normalizePositiveInt(left.segment) - normalizePositiveInt(right.segment));
+  const segmentClips = sceneSegmentEntries.map((entry) => {
+    const currentSeg = String(normalizePositiveInt(entry.segment)).padStart(2, "0");
+    const clipPath = path.join(imagesDir, `scene-${sceneNum}-seg-${currentSeg}.mp4`);
+    if (!existsSync(clipPath)) {
+      throw new Error(`Ainda falta o clip do segmento ${currentSeg} da cena ${sceneNum}.`);
+    }
+    return clipPath;
+  });
+
+  await concatSceneSegmentClips({
+    clips: segmentClips,
+    outputPath: finalSceneClipPath,
+    tempDir: imagesDir
+  });
+
+  const approvedAt = new Date().toISOString();
+  const updatedEntries = entries.map((entry) => {
+    if (
+      normalizePositiveInt(entry.scene) !== sceneNumber ||
+      normalizePositiveInt(entry.segment) !== segNumber
+    ) {
+      return entry;
+    }
+
+    return {
+      ...entry,
+      status: "approved-manual",
+      error: null,
+      localAudit: {
+        ...(isPlainObject(entry.localAudit) ? entry.localAudit : {}),
+        passed: true,
+        provider: String(entry.localAudit?.provider || "manual-review"),
+        summary: `Aprovado manualmente no site a partir do attempt ${attempt}.`,
+        reasons: [],
+        manualApproval: {
+          approvedAt,
+          attempt,
+          sourcePath: attemptImagePath
+        }
+      },
+      manualApproval: {
+        approvedAt,
+        attempt,
+        sourcePath: attemptImagePath
+      }
+    };
+  });
+
+  await writeSceneManifestEntries(slug, updatedEntries);
+
+  const approvalJob = {
+    id: createId(),
+    type: "scene-regenerate",
+    title: sourceJob.title,
+    slug,
+    caseId: sourceJob.caseId || null,
+    attempt: sourceJob.attempt || null,
+    status: "completed",
+    createdAt: approvedAt,
+    updatedAt: approvedAt,
+    completedAt: approvedAt,
+    logTail: [
+      `[scene-review] cena ${sceneNumber} seg ${segNumber} aprovada manualmente`,
+      `[scene-review] attempt ${attempt} -> ${finalImagePath}`,
+      `[scene-review] clip final reconstruido em ${finalSceneClipPath}`
+    ],
+    input: {
+      ...sourceJob.input,
+      storyboardFile: getRetryStoryboardPathForJob(sourceJob) || resolveEffectiveStoryboardPath(sourceJob),
+      sceneNumber,
+      sourceJobId: sourceJob.id,
+      autoContinueAfterSceneRepair: autoContinue
+    },
+    outputPath: finalSceneClipPath,
+    storyboardPath: getRetryStoryboardPathForJob(sourceJob) || resolveEffectiveStoryboardPath(sourceJob),
+    artifactEpochAt: getRecoveryArtifactEpochAt(sourceJob),
+    exitCode: 0,
+    error: null
+  };
+
+  jobs.set(approvalJob.id, approvalJob);
+  await finalizeSceneRegenerateJob(approvalJob);
+  updateJob(approvalJob, {
+    status: "completed",
+    completedAt: approvedAt,
+    error: null
+  });
+
+  return approvalJob;
 };
 
 const handleJobScenesRequest = async (_request, response, {params}) => {
@@ -3344,6 +5321,65 @@ const handleJobScenesRequest = async (_request, response, {params}) => {
   sendJson(response, 200, {scenes});
 };
 
+const handleJobSceneReviewRequest = async (_request, response, {params}) => {
+  const job = jobs.get(params.id);
+
+  if (!job) {
+    sendJson(response, 404, {error: "Job nao encontrado."});
+    return;
+  }
+
+  const reviewItems = await getSceneReviewItemsForJob(job);
+  sendJson(response, 200, {reviewItems});
+};
+
+const handleApproveSceneAttemptRequest = async (request, response, {params} = {}) => {
+  const body = await readRequestBody(request);
+  let jobId = "";
+
+  try {
+    jobId = resolveRequestedJobId({routeJobId: params?.id, bodyJobId: body.jobId});
+  } catch (error) {
+    sendJson(response, 400, {error: error.message});
+    return;
+  }
+
+  const selectedJob = jobs.get(jobId);
+
+  if (!selectedJob) {
+    sendJson(response, 404, {error: "Job nao encontrado."});
+    return;
+  }
+
+  if (selectedJob.status !== "failed") {
+    sendJson(response, 409, {error: "A aprovacao manual so fica disponivel para jobs falhados."});
+    return;
+  }
+
+  const sceneNumber = normalizePositiveInt(body.sceneNumber);
+  const segNumber = normalizePositiveInt(body.segNumber);
+  const attempt = normalizePositiveInt(body.attempt);
+
+  if (!sceneNumber || !segNumber || !attempt) {
+    sendJson(response, 400, {error: "sceneNumber, segNumber e attempt sao obrigatorios."});
+    return;
+  }
+
+  try {
+    const approvalJob = await approveSceneReviewAttempt({
+      selectedJob,
+      sceneNumber,
+      segNumber,
+      attempt,
+      autoContinue: body.autoContinue !== false
+    });
+    const followUpJob = approvalJob.followUpJobId ? jobs.get(approvalJob.followUpJobId) || null : null;
+    sendJson(response, 201, {job: approvalJob, followUpJob});
+  } catch (error) {
+    sendJson(response, 400, {error: error instanceof Error ? error.message : String(error)});
+  }
+};
+
 let elevenLabsVoicesCache = null;
 let elevenLabsVoicesCacheAt = 0;
 const ELEVENLABS_VOICES_TTL_MS = 300_000;
@@ -3375,9 +5411,87 @@ const handleElevenLabsVoicesRequest = async (_req, res) => {
   }
 };
 
+// ── Simulador handlers ───────────────────────────────────────────────────────
+
+const simuladorDataDir = path.join(projectRoot, ".simulador");
+
+const handleSimuladorGenerate = async (req, res) => {
+  const body = await readRequestBody(req);
+  const text = String(body.text || "").trim();
+  const title = String(body.title || "Simulado").trim().slice(0, 200);
+  if (!text) { sendJson(res, 400, {error: "Texto vazio."}); return; }
+
+  const questions = parseQA(text);
+  if (!questions.length) { sendJson(res, 400, {error: "Nenhuma questão encontrada."}); return; }
+
+  const batches = splitIntoBatches(questions);
+  sendJson(res, 200, {
+    message: `${questions.length} questões → ${batches.length} vídeo(s)`,
+    questionCount: questions.length,
+    batchCount: batches.length,
+    jobs: batches.map((b, i) => ({
+      id: `pending-${i}`,
+      title: batches.length > 1 ? `${title} (Parte ${i + 1}/${batches.length})` : title,
+      questionCount: b.length,
+      status: "processing"
+    }))
+  });
+
+  // Fire and forget — run in background
+  runSimulador({text, title}).catch((err) => {
+    process.stderr.write(`[simulador] Erro: ${err.message}\n`);
+  });
+};
+
+const handleSimuladorJobs = async (_req, res) => {
+  const jobs = await loadSimuladorJobs();
+  sendJson(res, 200, jobs);
+};
+
+const handleSimuladorVideo = async (req, res, {params}) => {
+  const jobId = params.id;
+  const jobs = await loadSimuladorJobs();
+  const job = jobs.find((j) => j.id === jobId);
+  if (!job || !job.videoPath || !existsSync(job.videoPath)) {
+    sendJson(res, 404, {error: "Vídeo não encontrado."});
+    return;
+  }
+  await serveStaticFile(req, res, job.videoPath);
+};
+
+const handleSimuladorDeleteJob = async (_req, res, {params}) => {
+  const jobId = params.id;
+  const jobs = await loadSimuladorJobs();
+  const idx = jobs.findIndex((j) => j.id === jobId);
+  if (idx === -1) { sendJson(res, 404, {error: "Job não encontrado."}); return; }
+
+  const job = jobs[idx];
+  // Remove video file
+  if (job.videoPath && existsSync(job.videoPath)) {
+    try { await unlink(job.videoPath); } catch { /* ignore */ }
+  }
+  // Remove run dir
+  const runDir = path.join(simuladorDataDir, "runs", jobId);
+  if (existsSync(runDir)) {
+    try { await rm(runDir, {recursive: true, force: true}); } catch { /* ignore */ }
+  }
+
+  jobs.splice(idx, 1);
+  await saveSimuladorJobs(jobs);
+  sendJson(res, 200, {ok: true});
+};
+
 // ── Route table ──────────────────────────────────────────────────────────────
 
+addRoute("POST", "/api/simulador/generate",                  handleSimuladorGenerate);
+addRoute("GET",  "/api/simulador/jobs",                      handleSimuladorJobs);
+addRoute("GET",  "/api/simulador/video/:id",                 handleSimuladorVideo);
+addRoute("DELETE", "/api/simulador/jobs/:id",                handleSimuladorDeleteJob);
+
 addRoute("GET",  "/api/config",                              (_req, res) => handleConfigRequest(res));
+addRoute("GET",  "/api/health",                              handleHealthRequest);
+addRoute("GET",  "/api/openapi.yaml",                        handleOpenApiSpecRequest);
+addRoute("GET",  "/api/docs/:name",                          handleRuntimeDocRequest);
 addRoute("GET",  "/api/elevenlabs-voices",                   handleElevenLabsVoicesRequest);
 addRoute("GET",  "/api/jobs",                                handleJobsListRequest);
 addRoute("GET",  "/api/jobs/:id/stream",                     handleJobStreamRequest);
@@ -3394,13 +5508,18 @@ addRoute("POST", "/api/videos/refazer",                      handleVideoRefazerR
 addRoute("POST", "/api/videos/delete",                       handleVideoDeleteRequest);
 addRoute("POST", "/api/videos/publish",                      handleVideoPublishRequest);
 addRoute("POST", "/api/videos/tiktok-helper",                handleVideoTikTokHelperRequest);
+addRoute("POST", "/api/videos/hook-variants",                handleHookVariantsRequest);
+addRoute("POST", "/api/videos/publish-status",               handlePublishStatusRequest);
 addRoute("POST", "/api/videos/:slug/reset-publish",          handleResetPublishRequest);
 addRoute("GET",  "/api/jobs/:id/scenes",                     handleJobScenesRequest);
+addRoute("GET",  "/api/jobs/:id/scene-review",               handleJobSceneReviewRequest);
 addRoute("POST", "/api/jobs/:id/retry-from-storyboard",      handleRetryFailedJobRequest);
 addRoute("POST", "/api/jobs/:id/regenerate-missing-scene",   handleRegenerateMissingSceneRequest);
+addRoute("POST", "/api/jobs/:id/approve-scene-attempt",      handleApproveSceneAttemptRequest);
 addRoute("POST", "/api/jobs/:id/generate-audio",             handleGenerateAudioRequest);
 addRoute("POST", "/api/jobs/:id/render-only",                handleRenderOnlyRequest);
 addRoute("POST", "/api/jobs/:id/validate",                   handleValidateOnlyRequest);
+addRoute("POST", "/api/jobs/:id/start",                      handleStartQueuedJobRequest);
 addRoute("POST", "/api/jobs/:id/force-fail",                 handleForceFailJobRequest);
 addRoute("POST", "/api/jobs/:id/resume",                     handleJobResumeRequest);
 
@@ -3408,6 +5527,23 @@ const server = http.createServer(async (request, response) => {
   const method = request.method || "GET";
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
   const pathname = url.pathname;
+  const requestId = createId();
+  const requestStartedAt = Date.now();
+
+  response.setHeader("X-Request-Id", requestId);
+  applySecurityHeaders(request, response);
+
+  response.on("finish", () => {
+    logJsonLine("info", "http_request", {
+      requestId,
+      method,
+      pathname,
+      statusCode: response.statusCode,
+      durationMs: Date.now() - requestStartedAt,
+      remoteAddress: getRemoteAddress(request),
+      userAgent: String(request.headers["user-agent"] || "").slice(0, 200)
+    });
+  });
 
   if (!checkBasicAuth(request)) {
     response.writeHead(401, {
@@ -3415,6 +5551,12 @@ const server = http.createServer(async (request, response) => {
       "Content-Type": "text/plain"
     });
     response.end("Unauthorized");
+    logJsonLine("warn", "auth_denied", {
+      requestId,
+      method,
+      pathname,
+      remoteAddress: getRemoteAddress(request)
+    });
     return;
   }
 
@@ -3423,6 +5565,10 @@ const server = http.createServer(async (request, response) => {
     if (method === "GET") {
       if (pathname === "/") {
         await serveStaticFile(request, response, path.join(publicDir, "index.html"));
+        return;
+      }
+      if (pathname === "/static" || pathname === "/static/") {
+        await serveStaticFile(request, response, path.join(publicDir, "static", "index.html"));
         return;
       }
       if (["/app.js", "/styles.css"].includes(pathname)) {
@@ -3444,6 +5590,13 @@ const server = http.createServer(async (request, response) => {
 
     sendJson(response, 404, {error: "Rota nao encontrada."});
   } catch (error) {
+    logJsonLine("error", "http_request_failed", {
+      requestId,
+      method,
+      pathname,
+      remoteAddress: getRemoteAddress(request),
+      error: serializeError(error)
+    });
     sendJson(response, 500, {
       error: error instanceof Error ? error.message : "Erro interno."
     });
@@ -3451,11 +5604,27 @@ const server = http.createServer(async (request, response) => {
 });
 
 process.on("unhandledRejection", (reason) => {
+  logJsonLine("error", "unhandled_rejection", {error: serializeError(reason)});
   process.stderr.write(`Unhandled rejection: ${reason instanceof Error ? reason.stack : reason}\n`);
 });
 
+process.on("uncaughtException", (error) => {
+  logJsonLine("error", "uncaught_exception", {error: serializeError(error)});
+  process.stderr.write(`Uncaught exception: ${error instanceof Error ? error.stack : error}\n`);
+});
+
 const gracefulShutdown = async () => {
+  logJsonLine("info", "server_shutdown_started", {
+    activeStreams: streams.size,
+    activeJobs: Array.from(jobs.values()).filter((job) => Number(job?.processId) > 0).length,
+    role: APP_ROLE
+  });
   process.stdout.write("\nEncerrando servidor...\n");
+
+  if (jobsDiskSyncTimer) {
+    clearInterval(jobsDiskSyncTimer);
+    jobsDiskSyncTimer = null;
+  }
 
   for (const [, subscribers] of streams) {
     for (const response of subscribers) {
@@ -3473,7 +5642,11 @@ const gracefulShutdown = async () => {
   ).catch((err) => { console.error('shutdown: failed to terminate job processes:', err.message); });
 
   persistJobs().catch((err) => { console.error('shutdown: failed to persist jobs:', err.message); }).finally(() => {
-    server.close(() => process.exit(0));
+    if (RUN_HTTP_SERVER) {
+      server.close(() => process.exit(0));
+    } else {
+      process.exit(0);
+    }
     setTimeout(() => process.exit(1), 5000);
   });
 };
@@ -3482,6 +5655,11 @@ process.on("SIGINT", gracefulShutdown);
 process.on("SIGTERM", gracefulShutdown);
 
 server.on("error", (error) => {
+  logJsonLine("error", "server_listen_failed", {
+    port: DEFAULT_PORT,
+    host: DEFAULT_HOST,
+    error: serializeError(error)
+  });
   if (error.code === "EADDRINUSE") {
     process.stderr.write(`ERRO: Porta ${DEFAULT_PORT} ja esta em uso. Encerre o outro processo ou mude WEB_PORT.\n`);
   } else {
@@ -3491,8 +5669,66 @@ server.on("error", (error) => {
   process.exit(1);
 });
 
-server.listen(DEFAULT_PORT, DEFAULT_HOST, () => {
-  process.stdout.write(
-    `UI local pronta em http://${DEFAULT_HOST}:${DEFAULT_PORT}\nExportando videos em ${postarRoot}\n`
-  );
-});
+const cleanupTmpOnStartup = async () => {
+  try {
+    const tmpDir = path.join(projectRoot, ".tmp", "system");
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+    const entries = await readdir(tmpDir).catch(() => []);
+    let cleaned = 0;
+    for (const entry of entries) {
+      const fullPath = path.join(tmpDir, entry);
+      const s = await stat(fullPath).catch(() => null);
+      if (s && Date.now() - s.mtimeMs > ONE_DAY) {
+        await rm(fullPath, {recursive: true, force: true}).catch(() => {});
+        cleaned += 1;
+      }
+    }
+    if (cleaned > 0) process.stderr.write(`Limpeza: ${cleaned} itens stale removidos de .tmp/system/\n`);
+  } catch {}
+};
+
+const startRoleRuntime = async () => {
+  await cleanupTmpOnStartup();
+  startJobsDiskSyncLoop();
+
+  if (RUN_QUEUE_WORKER) {
+    await syncJobsFromDisk({broadcastChanges: false}).catch(() => ({changed: 0}));
+    if (AUTO_START_QUEUED_JOBS) {
+      await Promise.all([
+        startQueueWorker("preview"),
+        startQueueWorker("heavy")
+      ]);
+    }
+    logJsonLine("info", "queue_worker_ready", {
+      role: APP_ROLE,
+      queueMode: AUTO_START_QUEUED_JOBS ? "auto" : "manual",
+      previewQueueLength: getQueueLengths().previewQueueLength,
+      heavyQueueLength: getQueueLengths().heavyQueueLength
+    });
+  }
+};
+
+if (RUN_HTTP_SERVER) {
+  server.listen(DEFAULT_PORT, DEFAULT_HOST, () => {
+    void startRoleRuntime();
+    process.stdout.write(
+      `UI local pronta em http://${DEFAULT_HOST}:${DEFAULT_PORT}\nExportando videos em ${postarRoot}\n`
+    );
+    logJsonLine("info", "server_listening", {
+      role: APP_ROLE,
+      host: DEFAULT_HOST,
+      port: DEFAULT_PORT,
+      postarRoot,
+      authSource: BASIC_AUTH_PASSWORD_SOURCE
+    });
+  });
+} else {
+  void startRoleRuntime().then(() => {
+    process.stdout.write(`Worker pronto. Exportando videos em ${postarRoot}\n`);
+    logJsonLine("info", "worker_running", {
+      role: APP_ROLE,
+      postarRoot,
+      authSource: BASIC_AUTH_PASSWORD_SOURCE
+    });
+  });
+}

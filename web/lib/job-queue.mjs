@@ -1,6 +1,8 @@
 /**
- * Job queue management — two independent lanes (preview / heavy),
- * each allowing one active job at a time.
+ * Job queue management — two independent lanes (preview / heavy).
+ * Preview runs one job at a time; heavy runs up to HEAVY_LANE_CONCURRENCY
+ * jobs (default 1, so the historical single-slot behavior is preserved
+ * unless the env var raises it).
  *
  * Extracted from web/server.mjs. Pure queue state; execution logic stays in server.
  */
@@ -8,12 +10,18 @@
 const PREVIEW_QUEUE_LANE = "preview";
 const HEAVY_QUEUE_LANE = "heavy";
 
+const HEAVY_LANE_CONCURRENCY = Math.max(1, Number.parseInt(process.env.HEAVY_LANE_CONCURRENCY || "1", 10) || 1);
+
 const previewQueue = [];
 const heavyQueue = [];
-let activePreviewJobId = null;
-let activeHeavyJobId = null;
-let isProcessingPreviewQueue = false;
-let isProcessingHeavyQueue = false;
+const activeJobIdsByLane = {
+  [PREVIEW_QUEUE_LANE]: new Set(),
+  [HEAVY_QUEUE_LANE]: new Set()
+};
+const laneRunnerCounts = {
+  [PREVIEW_QUEUE_LANE]: 0,
+  [HEAVY_QUEUE_LANE]: 0
+};
 
 /* ── injected deps (set via init()) ─────────────────────────── */
 let _jobs = null;          // Map<id, job>
@@ -50,23 +58,46 @@ export const getJobQueueLane = (job) =>
 /** Return the underlying array for a lane. */
 export const getQueueForLane = (lane) => (lane === PREVIEW_QUEUE_LANE ? previewQueue : heavyQueue);
 
-/** Get the active job id for a lane. */
-export const getActiveJobIdForLane = (lane) => (lane === PREVIEW_QUEUE_LANE ? activePreviewJobId : activeHeavyJobId);
+/** Max simultaneous jobs allowed for a lane. */
+export const getLaneConcurrency = (lane) => (lane === HEAVY_QUEUE_LANE ? HEAVY_LANE_CONCURRENCY : 1);
 
-/** Set the active job id for a lane. */
+/** First active job id for a lane (legacy single-slot view), or null. */
+export const getActiveJobIdForLane = (lane) => {
+  for (const jobId of activeJobIdsByLane[lane] || []) return jobId;
+  return null;
+};
+
+/** Number of jobs currently marked active in a lane. */
+export const countActiveJobsForLane = (lane) => (activeJobIdsByLane[lane] || new Set()).size;
+
+/** Whether the lane still has a free slot. */
+export const laneHasCapacity = (lane) => countActiveJobsForLane(lane) < getLaneConcurrency(lane);
+
+/** Mark a job active in its lane. */
+export const addActiveJobForLane = (lane, jobId) => {
+  if (jobId) activeJobIdsByLane[lane]?.add(jobId);
+};
+
+/** Release a job slot in its lane. */
+export const removeActiveJobForLane = (lane, jobId) => {
+  activeJobIdsByLane[lane]?.delete(jobId);
+};
+
+/** Legacy setter kept for compatibility: null clears the lane, otherwise adds. */
 export const setActiveJobIdForLane = (lane, jobId) => {
-  if (lane === PREVIEW_QUEUE_LANE) {
-    activePreviewJobId = jobId;
+  if (jobId === null || jobId === undefined) {
+    activeJobIdsByLane[lane]?.clear();
     return;
   }
-  activeHeavyJobId = jobId;
+  addActiveJobForLane(lane, jobId);
 };
 
 /** Snapshot of both active ids (for API responses). */
 export const getActiveJobIds = () => ({
-  activeJobId: activeHeavyJobId || activePreviewJobId || null,
-  activePreviewJobId,
-  activeHeavyJobId
+  activeJobId: getActiveJobIdForLane(HEAVY_QUEUE_LANE) || getActiveJobIdForLane(PREVIEW_QUEUE_LANE) || null,
+  activePreviewJobId: getActiveJobIdForLane(PREVIEW_QUEUE_LANE),
+  activeHeavyJobId: getActiveJobIdForLane(HEAVY_QUEUE_LANE),
+  activeHeavyJobIds: Array.from(activeJobIdsByLane[HEAVY_QUEUE_LANE])
 });
 
 /** Queue length summary. */
@@ -76,17 +107,23 @@ export const getQueueLengths = () => ({
   queueLength: previewQueue.length + heavyQueue.length
 });
 
-/** Whether a lane's worker loop is currently running. */
-export const isLaneProcessing = (lane) => (lane === PREVIEW_QUEUE_LANE ? isProcessingPreviewQueue : isProcessingHeavyQueue);
+/** Whether a lane has at least one worker-runner loop active. */
+export const isLaneProcessing = (lane) => (laneRunnerCounts[lane] || 0) > 0;
 
-/** Set the processing flag for a lane. */
-export const setLaneProcessing = (lane, processing) => {
-  if (lane === PREVIEW_QUEUE_LANE) {
-    isProcessingPreviewQueue = processing;
-    return;
-  }
-  isProcessingHeavyQueue = processing;
+/** Number of worker-runner loops currently executing for a lane. */
+export const countLaneRunners = (lane) => laneRunnerCounts[lane] || 0;
+
+/** Track entry/exit of a worker-runner loop. */
+export const incrementLaneRunners = (lane) => {
+  laneRunnerCounts[lane] = (laneRunnerCounts[lane] || 0) + 1;
 };
+
+export const decrementLaneRunners = (lane) => {
+  laneRunnerCounts[lane] = Math.max(0, (laneRunnerCounts[lane] || 0) - 1);
+};
+
+/** Legacy compatibility: treated as a hint only; runner counts are authoritative. */
+export const setLaneProcessing = () => {};
 
 /* ── queue mutations ────────────────────────────────────────── */
 
@@ -97,6 +134,43 @@ export const removeJobFromQueues = (jobId) => {
 
   const hi = heavyQueue.indexOf(jobId);
   if (hi >= 0) heavyQueue.splice(hi, 1);
+};
+
+/** Reset all in-memory queue state. Useful when rebuilding from persisted jobs. */
+export const resetQueueState = () => {
+  previewQueue.length = 0;
+  heavyQueue.length = 0;
+  activeJobIdsByLane[PREVIEW_QUEUE_LANE].clear();
+  activeJobIdsByLane[HEAVY_QUEUE_LANE].clear();
+  // Runner counts are intentionally NOT reset: they track live async loops in
+  // server.mjs that this rebuild cannot stop.
+};
+
+/** Rebuild in-memory queues from the current jobs map snapshot. */
+export const rebuildQueueStateFromJobs = () => {
+  resetQueueState();
+
+  const queuedJobs = [];
+
+  for (const job of _jobs.values()) {
+    const lane = job.queueLane || getJobQueueLane(job);
+    job.queueLane = lane;
+
+    if (job.status === "queued") {
+      queuedJobs.push(job);
+      continue;
+    }
+
+    if (job.status === "running") {
+      addActiveJobForLane(lane, job.id);
+    }
+  }
+
+  queuedJobs
+    .sort((left, right) => new Date(left.createdAt || 0).getTime() - new Date(right.createdAt || 0).getTime())
+    .forEach((job) => {
+      getQueueForLane(job.queueLane).push(job.id);
+    });
 };
 
 /** Recalculate queuePosition for every job and broadcast updates. */
@@ -123,19 +197,19 @@ export const refreshQueuePositions = () => {
 };
 
 /**
- * Fail a job, release its lane, refresh positions and kick the worker.
+ * Fail a job, release its lane, refresh positions and optionally kick the worker.
  * @param {object} job
  * @param {string} errorMessage
  * @param {(lane: string) => Promise<void>} startWorker — startQueueWorker from server.mjs
+ * @param {{autoStartNext?: boolean}} [options]
  */
-export const failJobAndReleaseQueue = (job, errorMessage, startWorker) => {
+export const failJobAndReleaseQueue = (job, errorMessage, startWorker, options = {}) => {
+  const {autoStartNext = true} = options;
   const lane = job.queueLane || getJobQueueLane(job);
   const nowIso = _toIsoNow();
 
   removeJobFromQueues(job.id);
-  if (getActiveJobIdForLane(lane) === job.id) {
-    setActiveJobIdForLane(lane, null);
-  }
+  removeActiveJobForLane(lane, job.id);
 
   job.status = "failed";
   job.error = errorMessage;
@@ -156,18 +230,22 @@ export const failJobAndReleaseQueue = (job, errorMessage, startWorker) => {
   _appendLog(job, errorMessage, "stderr");
   refreshQueuePositions();
   _schedulePersist({immediate: true});
-  startWorker(lane).catch((error) => {
-    process.stderr.write(`Falha ao reiniciar fila ${lane} apos liberar job ${job.id}: ${error.message}\n`);
-  });
+  if (autoStartNext) {
+    startWorker(lane).catch((error) => {
+      process.stderr.write(`Falha ao reiniciar fila ${lane} apos liberar job ${job.id}: ${error.message}\n`);
+    });
+  }
 };
 
 /**
- * Enqueue a job: stamp timestamps, push to lane, persist, start worker.
+ * Enqueue a job: stamp timestamps, push to lane, persist, and optionally start worker.
  * @param {object} job
  * @param {(lane: string) => Promise<void>} startWorker — startQueueWorker from server.mjs
+ * @param {{autoStart?: boolean}} [options]
  * @returns {object} sanitized job
  */
-export const enqueueJob = (job, startWorker) => {
+export const enqueueJob = (job, startWorker, options = {}) => {
+  const {autoStart = true} = options;
   const nowIso = _toIsoNow();
   job.queueLane = getJobQueueLane(job);
   job.createdAt = job.createdAt || nowIso;
@@ -182,9 +260,11 @@ export const enqueueJob = (job, startWorker) => {
   getQueueForLane(job.queueLane).push(job.id);
   refreshQueuePositions();
   _schedulePersist({immediate: true});
-  startWorker(job.queueLane).catch((error) => {
-    process.stderr.write(`Falha ao iniciar job ${job.id}: ${error.message}\n`);
-  });
+  if (autoStart) {
+    startWorker(job.queueLane).catch((error) => {
+      process.stderr.write(`Falha ao iniciar job ${job.id}: ${error.message}\n`);
+    });
+  }
   return _sanitizeJob(job);
 };
 
